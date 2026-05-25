@@ -22,6 +22,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.setPadding
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
+import com.journeyapps.barcodescanner.ScanContract
 import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.*
@@ -50,6 +51,13 @@ class MainActivity : AppCompatActivity() {
     private val statTexts = mutableMapOf<String, TextView>()
     private var isSyncing = false
     private var autoSyncStarted = false
+    private var pendingAddressInput: EditText? = null
+    private val qrScanLauncher = registerForActivityResult(ScanContract()) { result ->
+        result.contents?.let { addr ->
+            pendingAddressInput?.setText(addr)
+            toast("Đã quét: ${addr.take(10)}...")
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -710,6 +718,24 @@ class MainActivity : AppCompatActivity() {
             setPadding(30)
         }
         val toInput = EditText(this).apply { hint = "Địa chỉ BTC (bc1... hoặc 1... hoặc 3...)" }
+        pendingAddressInput = toInput
+        
+        val scanBtn = Button(this).apply {
+            text = "📷 Quét QR như Trust"
+            setOnClickListener {
+                try {
+                    qrScanLauncher.launch(com.journeyapps.barcodescanner.ScanOptions().apply {
+                        setDesiredBarcodeFormats(com.journeyapps.barcodescanner.ScanOptions.QR_CODE)
+                        setPrompt("Quét địa chỉ BTC")
+                        setBeepEnabled(true)
+                        setOrientationLocked(false)
+                    })
+                } catch (e: Exception) {
+                    toast("Cần thêm thư viện ZXing")
+                }
+            }
+        }
+        
         val amountInput = EditText(this).apply {
             hint = "Số lượng BTC"
             inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
@@ -733,6 +759,7 @@ class MainActivity : AppCompatActivity() {
         feeGroup.addView(rNormal)
         feeGroup.addView(rFast)
         layout.addView(toInput)
+        layout.addView(scanBtn)
         layout.addView(amountInput)
         layout.addView(TextView(this).apply { text = "Chọn phí mạng:"; setPadding(0,20,0,0) })
         layout.addView(feeGroup)
@@ -741,7 +768,7 @@ class MainActivity : AppCompatActivity() {
             .setView(layout)
             .setPositiveButton("Tiếp tục") { _, _ ->
                 val to = toInput.text.toString().trim()
-                val amt = amountInput.text.toString().toDoubleOrNull()?: 0.0
+                val amt = amountInput.text.toString().toDoubleOrNull() ?: 0.0
                 if (to.length < 26 || amt <= 0) {
                     toast("Địa chỉ hoặc số tiền không hợp lệ")
                     return@setPositiveButton
