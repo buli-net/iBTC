@@ -224,13 +224,13 @@ class MainActivity : AppCompatActivity() {
         handler.post(object : Runnable {
             override fun run() {
                 fetchBlockUpdate()
-                handler.postDelayed(this, 2000)
+                handler.postDelayed(this, 5000)
             }
         })
         handler.post(object : Runnable {
             override fun run() {
                 fetchBtcStats()
-                handler.postDelayed(this, 10000)
+                handler.postDelayed(this, 30000)
             }
         })
     }
@@ -259,7 +259,7 @@ class MainActivity : AppCompatActivity() {
         val isDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
         val titleColor = if (isDark) Color.WHITE else Color.BLACK
         val logo = TextView(this).apply { text = "₿"; textSize = 72f; gravity = Gravity.CENTER; setTextColor(Color.parseColor("#F7931A")); setPadding(0, 80, 0, 20) }
-        val title = TextView(this).apply { text = "iBTC Wallet v4.5"; textSize = 26f; typeface = Typeface.DEFAULT_BOLD; gravity = Gravity.CENTER; setTextColor(titleColor) }
+        val title = TextView(this).apply { text = "iBTC Wallet v4.7"; textSize = 26f; typeface = Typeface.DEFAULT_BOLD; gravity = Gravity.CENTER; setTextColor(titleColor) }
         val subtitle = TextView(this).apply { text = "Bitcoin wallet an toàn, mã nguồn mở"; textSize = 14f; gravity = Gravity.CENTER; setTextColor(Color.GRAY); setPadding(0, 8, 0, 60) }
         val createBtn = Button(this).apply { text = "Tạo ví mới"; textSize = 16f; setPadding(0, 30, 0, 30) }
         val importBtn = Button(this).apply { text = "Import ví có sẵn"; textSize = 16f }
@@ -414,7 +414,13 @@ class MainActivity : AppCompatActivity() {
 
         btnReceive.setOnClickListener { showReceiveDialog() }
         btnSend.setOnClickListener { showSendDialog() }
-        btnRefresh.setOnClickListener { refreshWallet(); fetchBlockUpdate(); fetchBtcStats() }
+        btnRefresh.setOnClickListener {
+            it.animate().rotationBy(1080f).setDuration(1500).withEndAction { it.rotation = 0f }.start()
+            refreshWallet()
+            fetchBlockUpdate()
+            fetchBtcStats()
+            toast("Đang làm mới tất cả...")
+        }
         btnSettings.setOnClickListener { showSettings() }
 
         walletManager.onProgress { pct, txt -> runOnUiThread { syncText.text = txt; syncProgressBar.progress = pct } }
@@ -474,7 +480,7 @@ class MainActivity : AppCompatActivity() {
         Thread {
             try {
                 val writer = QRCodeWriter()
-                val bitMatrix = writer.encode(address, BarcodeFormat.QR_CODE, 512)
+                val bitMatrix = writer.encode(address, BarcodeFormat.QR_CODE, 512, 512)
                 val bmp = Bitmap.createBitmap(512, 512, Bitmap.Config.RGB_565)
                 for (x in 0 until 512) { for (y in 0 until 512) { bmp.setPixel(x, y, if (bitMatrix[x, y]) Color.BLACK else Color.WHITE) } }
                 runOnUiThread { imageView.setImageBitmap(bmp) }
@@ -575,7 +581,7 @@ class MainActivity : AppCompatActivity() {
             val id = walletManager.getActiveId()?: return@setPositiveButton
             if (walletManager.unlock(id, pass.text.toString())) {
                 val seed = walletManager.getSeed()
-                val tv = TextView(this).apply { text = seed; textSize = 16f; setTextIsSelectable(true); setPadding(40,40,40); gravity = Gravity.CENTER }
+                val tv = TextView(this).apply { text = seed; textSize = 16f; setTextIsSelectable(true); setPadding(40,40,40,40); gravity = Gravity.CENTER }
                 AlertDialog.Builder(this).setTitle("⚠️ KHÔNG CHIA SẺ SEED").setView(tv).setPositiveButton("Copy 30s") { _, _ ->
                     val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                     cm.setPrimaryClip(ClipData.newPlainText("seed", seed))
@@ -620,7 +626,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showInfo() {
-        AlertDialog.Builder(this).setTitle("iBTC v4.5").setMessage("Build: 2026-05-25\n• Pool font đồng nhất 13sp\n• Block bar đã dời xuống").setPositiveButton("OK", null).show()
+        AlertDialog.Builder(this).setTitle("iBTC v4.7").setMessage("Build: 2026-05-25\n• Giảm tần suất API (5s/30s) để hết lag\n• Nút Làm mới xoay").setPositiveButton("OK", null).show()
     }
 
     private fun toast(msg: String) {
