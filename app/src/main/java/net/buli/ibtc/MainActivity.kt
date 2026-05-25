@@ -112,20 +112,14 @@ class MainActivity : AppCompatActivity() {
             override fun run() {
                 val prefs = getSharedPreferences("wallet_prefs", MODE_PRIVATE)
                 val timeout = prefs.getInt("auto_lock_minutes", 5)
-                val lockOnBg = prefs.getBoolean("lock_on_background", true)
                 if (timeout > 0 && walletManager.isUnlocked() && System.currentTimeMillis() - lastActive > timeout * 60 * 1000) {
                     walletManager.lock()
-                    if (lockOnBg) showUnlockDialog()
+                    runOnUiThread { showUnlockDialog() }
                 }
                 handler.postDelayed(this, 30000)
             }
         }
         handler.postDelayed(runnable, 30000)
-    }
-                }
-                handler.postDelayed(this, 10000)
-            }
-        }, 10000)
     }
 
     private fun startAutoPriceSync() {
@@ -327,11 +321,6 @@ private fun fetchBtcStats() {
             hint = "Tên ví (tùy chọn)"
             inputType = InputType.TYPE_CLASS_TEXT
         }
-        if (!requirePass) {
-            // skip password, go straight to delay
-            startSendDelay(to, amt, feeRate)
-            return
-        }
         val passInput = EditText(this).apply {
             hint = "Mật khẩu (tối thiểu 8 ký tự)"
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
@@ -392,11 +381,6 @@ private fun fetchBtcStats() {
             gravity = Gravity.TOP
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
         }
-        if (!requirePass) {
-            // skip password, go straight to delay
-            startSendDelay(to, amt, feeRate)
-            return
-        }
         val passInput = EditText(this).apply {
             hint = "Đặt mật khẩu mới ≥8 ký tự"
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
@@ -449,11 +433,6 @@ private fun fetchBtcStats() {
             gravity = Gravity.CENTER
             setPadding(0, 0, 0, 40)
             setTextColor(titleColor)
-        }
-        if (!requirePass) {
-            // skip password, go straight to delay
-            startSendDelay(to, amt, feeRate)
-            return
         }
         val passInput = EditText(this).apply {
             hint = "Nhập mật khẩu"
@@ -883,24 +862,13 @@ private fun fetchBtcStats() {
 
 
     private fun confirmSend(to: String, amt: Double, feeRate: Int, estFee: Double) {
-        val prefs = getSharedPreferences("wallet_prefs", MODE_PRIVATE)
-        val requirePass = prefs.getBoolean("require_pass_send", true)
-
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(30)
         }
         val summary = TextView(this).apply {
-            text = "Gửi: $amt BTC
-Đến: $to
-Phí: ~$estFee BTC
-Tổng: ${amt + estFee} BTC"
+            text = "Gửi: $amt BTC\nĐến: $to\nPhí: ~$estFee BTC\nTổng: ${amt + estFee} BTC"
             setPadding(0,0,0,20)
-        }
-        if (!requirePass) {
-            // skip password, go straight to delay
-            startSendDelay(to, amt, feeRate)
-            return
         }
         val passInput = EditText(this).apply {
             hint = "Nhập mật khẩu để xác nhận"
@@ -963,50 +931,6 @@ Tổng: ${amt + estFee} BTC"
     }
 
 
-    private fun startSendDelay(to: String, amt: Double, feeRate: Int) {
-        val delayLayout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(40,30,40,30)
-        }
-        val tv = TextView(this).apply { text = "Đang chuẩn bị gửi sau 60 giây..."; gravity = android.view.Gravity.CENTER }
-        val progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-            max = 60
-            progress = 60
-        }
-        val countdown = TextView(this).apply { text = "60s"; gravity = android.view.Gravity.CENTER; textSize = 18f }
-        delayLayout.addView(tv); delayLayout.addView(progress); delayLayout.addView(countdown)
-        val delayDialog = AlertDialog.Builder(this).setTitle("Delay bảo mật").setView(delayLayout).setCancelable(false).create()
-        delayDialog.show()
-        var sec = 60
-        val handler = android.os.Handler(mainLooper)
-        val runnable = object : Runnable {
-            override fun run() {
-                sec--
-                progress.progress = sec
-                countdown.text = "${sec}s"
-                if (sec > 0) {
-                    handler.postDelayed(this, 1000)
-                } else {
-                    delayDialog.dismiss()
-                    Thread {
-                        try {
-                            val txid = walletManager.send(to, amt, feeRate)
-                            runOnUiThread {
-                                toast("Đã gửi! TXID: ${txid.take(8)}...")
-                                refreshWallet()
-                            }
-                        } catch (e: Exception) {
-                            runOnUiThread { toast("Lỗi gửi: ${e.message}") }
-                        }
-                    }.start()
-                }
-            }
-        }
-        handler.postDelayed(runnable, 1000)
-    }
-
-
-
     private fun showSettings() {
         val items = arrayOf("👁 Xem seed phrase", "🔑 Đổi mật khẩu", "✏️ Đổi tên ví", "🗑 Xóa ví vĩnh viễn", "🔒 Cài đặt khóa ví", "ℹ️ Thông tin")
         AlertDialog.Builder(this)
@@ -1023,69 +947,6 @@ Tổng: ${amt + estFee} BTC"
             }
             .show()
     }
-
-
-    private fun showLockSettings() {
-        val prefs = getSharedPreferences("wallet_prefs", MODE_PRIVATE)
-        val autoLock = prefs.getInt("auto_lock_minutes", 5)
-        val requirePassSend = prefs.getBoolean("require_pass_send", true)
-        val lockOnBg = prefs.getBoolean("lock_on_background", true)
-        
-        val layout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(40,30,40,10)
-        }
-        
-        val autoLockTv = TextView(this).apply { text = "Tự động khóa sau:" }
-        val autoLockGroup = RadioGroup(this)
-        val times = listOf(1 to "1 phút", 5 to "5 phút", 15 to "15 phút", 30 to "30 phút", 0 to "Không bao giờ")
-        times.forEach { (min, label) ->
-            autoLockGroup.addView(RadioButton(this).apply {
-                id = min
-                text = label
-                isChecked = min == autoLock
-            })
-        }
-        
-        val requirePassCb = CheckBox(this).apply {
-            text = "Yêu cầu mật khẩu khi gửi"
-            isChecked = requirePassSend
-        }
-        val lockBgCb = CheckBox(this).apply {
-            text = "Khóa khi app vào nền"
-            isChecked = lockOnBg
-        }
-        val lockNowBtn = Button(this).apply { text = "🔒 Khóa ví ngay" }
-        
-        layout.addView(autoLockTv)
-        layout.addView(autoLockGroup)
-        layout.addView(requirePassCb)
-        layout.addView(lockBgCb)
-        layout.addView(lockNowBtn)
-        
-        val dialog = AlertDialog.Builder(this)
-            .setTitle("Cài đặt khóa ví")
-            .setView(layout)
-            .setPositiveButton("Lưu") { _, _ ->
-                val selected = autoLockGroup.checkedRadioButtonId
-                prefs.edit()
-                    .putInt("auto_lock_minutes", selected)
-                    .putBoolean("require_pass_send", requirePassCb.isChecked)
-                    .putBoolean("lock_on_background", lockBgCb.isChecked)
-                    .apply()
-                toast("Đã lưu cài đặt khóa")
-            }
-            .setNegativeButton("Hủy", null)
-            .create()
-        
-        lockNowBtn.setOnClickListener {
-            walletManager.lock()
-            dialog.dismiss()
-            showUnlockDialog()
-        }
-        dialog.show()
-    }
-
 
     private fun showSeedDialog() {
         val pass = EditText(this).apply {
@@ -1197,3 +1058,24 @@ Tổng: ${amt + estFee} BTC"
         Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
     }
 }
+
+    private fun showLockSettings() {
+        val prefs = getSharedPreferences("wallet_prefs", MODE_PRIVATE)
+        val current = prefs.getInt("auto_lock_minutes", 5)
+        val items = arrayOf("Khóa ngay", "1 phút", "5 phút", "15 phút", "30 phút", "Không tự động khóa")
+        AlertDialog.Builder(this@MainActivity)
+            .setTitle("Cài đặt khóa ví")
+            .setSingleChoiceItems(items, when(current){1->1;5->2;15->3;30->4;0->5 else->2}) { dialog, which ->
+                when(which) {
+                    0 -> { walletManager.lock(); dialog.dismiss(); showUnlockDialog() }
+                    1 -> prefs.edit().putInt("auto_lock_minutes",1).apply()
+                    2 -> prefs.edit().putInt("auto_lock_minutes",5).apply()
+                    3 -> prefs.edit().putInt("auto_lock_minutes",15).apply()
+                    4 -> prefs.edit().putInt("auto_lock_minutes",30).apply()
+                    5 -> prefs.edit().putInt("auto_lock_minutes",0).apply()
+                }
+                if (which != 0) toast("Đã lưu: ${items[which]}")
+            }
+            .setNegativeButton("Đóng", null)
+            .show()
+    }
