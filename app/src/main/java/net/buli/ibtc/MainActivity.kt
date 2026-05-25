@@ -867,10 +867,7 @@ private fun fetchBtcStats() {
             setPadding(30)
         }
         val summary = TextView(this).apply {
-            text = "Gửi: $amt BTC
-Đến: $to
-Phí: ~$estFee BTC
-Tổng: ${amt + estFee} BTC"
+            text = "Gửi: $amt BTC\nĐến: $to\nPhí: ~$estFee BTC\nTổng: ${amt + estFee} BTC"
             setPadding(0,0,0,20)
         }
         val passInput = EditText(this).apply {
@@ -884,7 +881,8 @@ Tổng: ${amt + estFee} BTC"
             .setView(layout)
             .setPositiveButton("Xác nhận") { _, _ ->
                 val pass = passInput.text.toString()
-                if (!walletManager.checkPassword(pass)) {
+                val id = walletManager.getActiveId() ?: return@setPositiveButton
+                if (!walletManager.unlock(id, pass)) {
                     toast("Sai mật khẩu")
                     return@setPositiveButton
                 }
@@ -918,7 +916,7 @@ Tổng: ${amt + estFee} BTC"
                                     val txid = walletManager.send(to, amt, feeRate)
                                     runOnUiThread {
                                         toast("Đã gửi! TXID: ${txid.take(8)}...")
-                                        refreshBalance()
+                                        refreshWallet()
                                     }
                                 } catch (e: Exception) {
                                     runOnUiThread { toast("Lỗi gửi: ${e.message}") }
