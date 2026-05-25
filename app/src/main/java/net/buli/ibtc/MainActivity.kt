@@ -31,7 +31,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var walletManager: WalletManager
     private val handler = Handler(Looper.getMainLooper())
     private var lastInteractionTime = System.currentTimeMillis()
-    private val AUTO_LOCK_MS = 120_000L
+    private val AUTO_LOCK_MS = 120_000L // tự khóa sau 2 phút
     private val POOL_FONT = 13f
 
     private lateinit var rootLayout: LinearLayout
@@ -224,6 +224,7 @@ class MainActivity : AppCompatActivity() {
         handler.post(object : Runnable {
             override fun run() {
                 fetchBlockUpdate()
+                // ĐÃ ĐỔI: 5000 -> 2000 để update block nhanh hơn (2 giây)
                 handler.postDelayed(this, 2000)
             }
         })
@@ -415,6 +416,7 @@ class MainActivity : AppCompatActivity() {
         btnReceive.setOnClickListener { showReceiveDialog() }
         btnSend.setOnClickListener { showSendDialog() }
         btnRefresh.setOnClickListener {
+            // GIỮ NGUYÊN: nút Làm mới có animation xoay như bản gốc
             it.animate().rotationBy(1080f).setDuration(1500).withEndAction { it.rotation = 0f }.start()
             refreshWallet()
             fetchBlockUpdate()
@@ -581,7 +583,8 @@ class MainActivity : AppCompatActivity() {
             val id = walletManager.getActiveId()?: return@setPositiveButton
             if (walletManager.unlock(id, pass.text.toString())) {
                 val seed = walletManager.getSeed()
-                val tv = TextView(this).apply { text = seed; textSize = 16f; setTextIsSelectable(true); setPadding(40,40,40); gravity = Gravity.CENTER }
+                // FIX: đủ 4 tham số cho setPadding (lúc nãy thiếu gây lỗi biên dịch)
+                val tv = TextView(this).apply { text = seed; textSize = 16f; setTextIsSelectable(true); setPadding(40,40,40,40); gravity = Gravity.CENTER }
                 AlertDialog.Builder(this).setTitle("⚠️ KHÔNG CHIA SẺ SEED").setView(tv).setPositiveButton("Copy 30s") { _, _ ->
                     val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                     cm.setPrimaryClip(ClipData.newPlainText("seed", seed))
