@@ -107,19 +107,19 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startAutoLockChecker() {
-        val handler = android.os.Handler(mainLooper)
-        val runnable = object : Runnable {
+        handler.postDelayed(object : Runnable {
             override fun run() {
-                val prefs = getSharedPreferences("wallet_prefs", MODE_PRIVATE)
-                val timeout = prefs.getInt("auto_lock_minutes", 5)
-                if (timeout > 0 && walletManager.isUnlocked() && System.currentTimeMillis() - lastActive > timeout * 60 * 1000) {
+                val active = walletManager.getActive()
+                if (active!= null && System.currentTimeMillis() - lastInteractionTime > AUTO_LOCK_MS) {
                     walletManager.lock()
-                    runOnUiThread { showUnlockDialog() }
+                    runOnUiThread {
+                        Toast.makeText(this@MainActivity, "Tự động khóa sau 2 phút không dùng", Toast.LENGTH_SHORT).show()
+                        showUnlockDialog()
+                    }
                 }
-                handler.postDelayed(this, 30000)
+                handler.postDelayed(this, 10000)
             }
-        }
-        handler.postDelayed(runnable, 30000)
+        }, 10000)
     }
 
     private fun startAutoPriceSync() {
@@ -881,7 +881,8 @@ private fun fetchBtcStats() {
             .setView(layout)
             .setPositiveButton("Xác nhận") { _, _ ->
                 val pass = passInput.text.toString()
-                if (!walletManager.checkPassword(pass)) {
+                val id = walletManager.getActiveId() ?: return@setPositiveButton
+                if (!walletManager.unlock(id, pass)) {
                     toast("Sai mật khẩu")
                     return@setPositiveButton
                 }
@@ -915,7 +916,7 @@ private fun fetchBtcStats() {
                                     val txid = walletManager.send(to, amt, feeRate)
                                     runOnUiThread {
                                         toast("Đã gửi! TXID: ${txid.take(8)}...")
-                                        refreshBalance()
+                                        refreshWallet()
                                     }
                                 } catch (e: Exception) {
                                     runOnUiThread { toast("Lỗi gửi: ${e.message}") }
@@ -932,7 +933,7 @@ private fun fetchBtcStats() {
 
 
     private fun showSettings() {
-        val items = arrayOf("👁 Xem seed phrase", "🔑 Đổi mật khẩu", "✏️ Đổi tên ví", "🗑 Xóa ví vĩnh viễn", "🔒 Cài đặt khóa ví", "ℹ️ Thông tin")
+        val items = arrayOf("👁 Xem seed phrase", "🔑 Đổi mật khẩu", "✏️ Đổi tên ví", "🗑 Xóa ví vĩnh viễn", "🔒 Khóa ví ngay", "ℹ️ Thông tin")
         AlertDialog.Builder(this)
             .setTitle("Cài đặt")
             .setItems(items) { _, w ->
@@ -941,7 +942,7 @@ private fun fetchBtcStats() {
                     1 -> showChangePassDialog()
                     2 -> showRenameDialog()
                     3 -> showDeleteDialog()
-                    4 -> showLockSettings()
+                    4 -> { walletManager.lock(); showUnlockDialog() }
                     5 -> showInfo()
                 }
             }
@@ -1057,26 +1058,4 @@ private fun fetchBtcStats() {
     private fun toast(msg: String) {
         Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
     }
-
-    private fun showLockSettings() {
-        val prefs = getSharedPreferences("wallet_prefs", MODE_PRIVATE)
-        val current = prefs.getInt("auto_lock_minutes", 5)
-        val items = arrayOf("Khóa ngay", "1 phút", "5 phút", "15 phút", "30 phút", "Không tự động khóa")
-        AlertDialog.Builder(this@MainActivity)
-            .setTitle("Cài đặt khóa ví")
-            .setSingleChoiceItems(items, when(current){1->1;5->2;15->3;30->4;0->5 else->2}) { dialog, which ->
-                when(which) {
-                    0 -> { walletManager.lock(); dialog.dismiss(); showUnlockDialog() }
-                    1 -> prefs.edit().putInt("auto_lock_minutes",1).apply()
-                    2 -> prefs.edit().putInt("auto_lock_minutes",5).apply()
-                    3 -> prefs.edit().putInt("auto_lock_minutes",15).apply()
-                    4 -> prefs.edit().putInt("auto_lock_minutes",30).apply()
-                    5 -> prefs.edit().putInt("auto_lock_minutes",0).apply()
-                }
-                if (which != 0) toast("Đã lưu: ${items[which]}")
-            }
-            .setNegativeButton("Đóng", null)
-            .show()
-    }
-
 }
