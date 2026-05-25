@@ -131,8 +131,8 @@ class MainActivity : AppCompatActivity() {
         Thread {
             try {
                 val json = URL("https://mempool.space/api/v1/blocks").openStream().bufferedReader().readText()
-                val height = Regex(""height":(\d+)").find(json)?.groupValues?.get(1)?.toInt()?: 0
-                val lastTime = Regex(""timestamp":(\d+)").find(json)?.groupValues?.get(1)?.toLong()?: 0L
+                val height = Regex(""""height":(\d+)""").find(json)?.groupValues?.get(1)?.toInt()?: 0
+                val lastTime = Regex(""""timestamp":(\d+)""").find(json)?.groupValues?.get(1)?.toLong()?: 0L
                 val nextHeight = height + 1
                 val elapsed = (System.currentTimeMillis()/1000 - lastTime).coerceAtLeast(0)
                 val percent = ((elapsed * 100) / 600).toInt()
@@ -170,13 +170,13 @@ class MainActivity : AppCompatActivity() {
                 val totalSats = URL("https://blockchain.info/q/totalbc").readText().trim().toLong()
                 val totalMined = totalSats / 100000000.0
                 val diffJson = URL("https://mempool.space/api/v1/difficulty-adjustment").readText()
-                val diffProgress = Regex(""progressPercent":([\d.]+)").find(diffJson)?.groupValues?.get(1)?.toFloat()?: 0f
+                val diffProgress = Regex(""""progressPercent":([\d.]+)""").find(diffJson)?.groupValues?.get(1)?.toFloat()?: 0f
                 val mempoolJson = URL("https://mempool.space/api/mempool").readText()
-                val mempoolCount = Regex(""count":(\d+)").find(mempoolJson)?.groupValues?.get(1)?.toInt()?: 0
+                val mempoolCount = Regex(""""count":(\d+)""").find(mempoolJson)?.groupValues?.get(1)?.toInt()?: 0
                 val feesJson = URL("https://mempool.space/api/v1/fees/recommended").readText()
-                val feeFast = Regex(""fastestFee":(\d+)").find(feesJson)?.groupValues?.get(1)?.toInt()?: 0
+                val feeFast = Regex(""""fastestFee":(\d+)""").find(feesJson)?.groupValues?.get(1)?.toInt()?: 0
                 val hashJson = URL("https://mempool.space/api/v1/mining/hashrate/1w").readText()
-                val currentHash = Regex(""currentHashrate":([\d.]+)").find(hashJson)?.groupValues?.get(1)?.toDouble()?: 0.0
+                val currentHash = Regex(""""currentHashrate":([\d.]+)""").find(hashJson)?.groupValues?.get(1)?.toDouble()?: 0.0
                 runOnUiThread {
                     val minedPct = ((totalMined / 21000000.0) * 100).toInt()
                     statBars["mined"]?.progress = minedPct
