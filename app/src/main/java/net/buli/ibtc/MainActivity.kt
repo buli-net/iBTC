@@ -117,14 +117,21 @@ class MainActivity : AppCompatActivity() {
                         
                         val nextHeight = height + 1
                         val elapsed = (System.currentTimeMillis()/1000 - lastTime).coerceAtLeast(0)
-                        val percent = ((elapsed * 100) / 600).toInt().coerceAtMost(99)
-                        val remain = (600 - elapsed).coerceAtLeast(0)
-                        val mins = remain / 60
-                        val secs = remain % 60
+                        val percent = ((elapsed * 100) / 600).toInt()
+                        val remain = 600 - elapsed
                         
                         runOnUiThread {
-                            blockProgressBar.progress = percent
-                            blockText.text = "Đang khai thác block #$nextHeight — $percent% (~${mins}m${String.format("%02d", secs)}s)"
+                            blockProgressBar.progress = percent.coerceAtMost(100)
+                            if (remain >= 0) {
+                                val mins = remain / 60
+                                val secs = remain % 60
+                                blockText.text = "Đang khai thác block #$nextHeight — $percent% (~${mins}m${String.format("%02d", secs)}s)"
+                            } else {
+                                val over = -remain
+                                val mins = over / 60
+                                val secs = over % 60
+                                blockText.text = "Block #$nextHeight đã quá hạn +${mins}m${String.format("%02d", secs)}s ($percent%)"
+                            }
                         }
                     } catch (e: Exception) {
                         runOnUiThread { 
@@ -316,6 +323,6 @@ class MainActivity : AppCompatActivity() {
     private fun showChangePassDialog() { val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(30) }; val oldP = EditText(this).apply { hint = "Mật khẩu cũ"; inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD }; val newP = EditText(this).apply { hint = "Mật khẩu mới ≥8"; inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD }; layout.addView(oldP); layout.addView(newP); AlertDialog.Builder(this).setTitle("Đổi mật khẩu").setView(layout).setPositiveButton("Đổi") { _, _ -> val id = walletManager.getActiveId()?: return@setPositiveButton; if (walletManager.changePassword(id, oldP.text.toString(), newP.text.toString())) toast("Đã đổi thành công") else toast("Sai mật khẩu cũ") }.show() }
     private fun showRenameDialog() { val input = EditText(this).apply { hint = "Tên ví mới"; setText(walletManager.getActive()?.name?: "") }; AlertDialog.Builder(this).setTitle("Đổi tên").setView(input).setPositiveButton("Lưu") { _, _ -> val id = walletManager.getActiveId()?: return@setPositiveButton; walletManager.rename(id, input.text.toString()); walletNameText.text = input.text.toString(); toast("Đã đổi tên") }.show() }
     private fun showDeleteDialog() { val pass = EditText(this).apply { inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD }; AlertDialog.Builder(this).setTitle("XÓA VĨNH VIỄN").setMessage("Nhập mật khẩu để xóa. Không thể khôi phục nếu không có seed!").setView(pass).setPositiveButton("XÓA") { _, _ -> val id = walletManager.getActiveId()?: return@setPositiveButton; if (walletManager.unlock(id, pass.text.toString())) { walletManager.delete(id); showWelcome(); toast("Đã xóa") } else toast("Sai pass") }.setNegativeButton("Hủy", null).show() }
-    private fun showInfo() { AlertDialog.Builder(this).setTitle("iBTC v4.1-fix4").setMessage("Build: 2026-05-25\n• Fix mempool timeout\n• Hiện lỗi rõ ràng\n• 2 thanh progress real-time").setPositiveButton("OK", null).show() }
+    private fun showInfo() { AlertDialog.Builder(this).setTitle("iBTC v4.1-fix5").setMessage("Build: 2026-05-25\n• Block progress không giới hạn 99%\n• Hiện quá hạn khi >10 phút").setPositiveButton("OK", null).show() }
     private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
 }
