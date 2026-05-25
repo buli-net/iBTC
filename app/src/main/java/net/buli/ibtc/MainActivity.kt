@@ -764,10 +764,7 @@ class MainActivity : AppCompatActivity() {
             setPadding(30)
         }
         val summary = TextView(this).apply {
-            text = "Gửi: $amt BTC
-Đến: $to
-Phí: ~$estFee BTC
-Tổng: ${amt + estFee} BTC"
+            text = "Gửi: $amt BTC\nĐến: $to\nPhí: ~$estFee BTC\nTổng: ${amt + estFee} BTC"
             setPadding(0,0,0,20)
         }
         val passInput = EditText(this).apply {
@@ -919,9 +916,7 @@ Tổng: ${amt + estFee} BTC"
     private fun showInfo() {
         AlertDialog.Builder(this)
             .setTitle("iBTC v4.7")
-            .setMessage("Build: 2026-05-25
-• Block update 2s
-• Nút Làm mới đứng im")
+            .setMessage("Build: 2026-05-25\n• Block update 2s\n• Nút Làm mới đứng im")
             .setPositiveButton("OK", null)
             .show()
     }
