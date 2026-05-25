@@ -22,8 +22,6 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.setPadding
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
-import com.journeyapps.barcodescanner.ScanContract
-import com.journeyapps.barcodescanner.ScanOptions
 import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.*
@@ -33,7 +31,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var walletManager: WalletManager
     private val handler = Handler(Looper.getMainLooper())
     private var lastInteractionTime = System.currentTimeMillis()
-    private var autoLockMs = 120_000L
+    private val AUTO_LOCK_MS = 120_000L
     private val POOL_FONT = 13f
 
     private lateinit var rootLayout: LinearLayout
@@ -52,20 +50,11 @@ class MainActivity : AppCompatActivity() {
     private val statTexts = mutableMapOf<String, TextView>()
     private var isSyncing = false
     private var autoSyncStarted = false
-    private var pendingToInput: EditText? = null
-    private val qrScanLauncher = registerForActivityResult(ScanContract()) { result ->
-        if (result.contents != null) {
-            pendingToInput?.setText(result.contents)
-            toast("Đã quét địa chỉ")
-        }
-    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
         walletManager = WalletManager(this)
-        val prefs = getSharedPreferences("ibtc_prefs", Context.MODE_PRIVATE)
-        autoLockMs = prefs.getLong("auto_lock_ms", 120_000L)
         setupRootLayout()
         setContentView(scrollView)
         startAutoLockChecker()
@@ -113,11 +102,10 @@ class MainActivity : AppCompatActivity() {
         handler.postDelayed(object : Runnable {
             override fun run() {
                 val active = walletManager.getActive()
-                if (active!= null && autoLockMs > 0 && System.currentTimeMillis() - lastInteractionTime > autoLockMs) {
+                if (active!= null && System.currentTimeMillis() - lastInteractionTime > AUTO_LOCK_MS) {
                     walletManager.lock()
                     runOnUiThread {
-                        val msg = if (autoLockMs >= 60000) "Tự động khóa sau ${autoLockMs/60000} phút không dùng" else "Tự động khóa sau ${autoLockMs/1000} giây không dùng"
-                        Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this@MainActivity, "Tự động khóa sau 2 phút không dùng", Toast.LENGTH_SHORT).show()
                         showUnlockDialog()
                     }
                 }
@@ -517,38 +505,20 @@ class MainActivity : AppCompatActivity() {
             return
         }
         val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(30) }
-        val toRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val toInput = EditText(this).apply { hint = "Địa chỉ BTC (bc1... hoặc 1... hoặc 3...)"; layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f) }
-        val scanBtn = Button(this).apply { text = "📷"; layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = 8 } }
-        toRow.addView(toInput)
-        toRow.addView(scanBtn)
-        scanBtn.setOnClickListener {
-            pendingToInput = toInput
-            val options = ScanOptions()
-            options.setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-            options.setPrompt("Quét địa chỉ Bitcoin")
-            options.setBeepEnabled(true)
-            options.setOrientationLocked(false)
-            qrScanLauncher.launch(options)
-        }
+        val toInput = EditText(this).apply { hint = "Địa chỉ BTC (bc1... hoặc 1... hoặc 3...)" }
         val amountInput = EditText(this).apply { hint = "Số lượng BTC"; inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL }
         val feeRates = try { walletManager.getFeeRates() } catch (_: Exception) { FeeRates(5, 10, 20) }
         val feeGroup = RadioGroup(this)
         val rSlow = RadioButton(this).apply { text = "Chậm ~60 phút (${feeRates.slow} sat/vB)"; id = 1 }
         val rNormal = RadioButton(this).apply { text = "Thường ~30 phút (${feeRates.normal} sat/vB)"; id = 2; isChecked = true }
         val rFast = RadioButton(this).apply { text = "Nhanh ~10 phút (${feeRates.fast} sat/vB)"; id = 3 }
-        val rCustom = RadioButton(this).apply { text = "Tùy chỉnh (1-100 sat/vB)"; id = 4 }
         feeGroup.addView(rSlow)
         feeGroup.addView(rNormal)
         feeGroup.addView(rFast)
-        feeGroup.addView(rCustom)
-        layout.addView(toRow)
+        layout.addView(toInput)
         layout.addView(amountInput)
         layout.addView(TextView(this).apply { text = "Chọn phí mạng:"; setPadding(0,20,0,0) })
         layout.addView(feeGroup)
-        val customFeeInput = EditText(this).apply { hint = "Nhập 1-100"; inputType = InputType.TYPE_CLASS_NUMBER; isEnabled = false; setText(feeRates.normal.toString()) }
-        layout.addView(customFeeInput)
-        feeGroup.setOnCheckedChangeListener { _, checkedId -> customFeeInput.isEnabled = checkedId == 4 }
         AlertDialog.Builder(this).setTitle("Gửi BTC").setView(layout).setPositiveButton("Tiếp tục") { _, _ ->
             val to = toInput.text.toString().trim()
             val amt = amountInput.text.toString().toDoubleOrNull()?: 0.0
@@ -559,7 +529,6 @@ class MainActivity : AppCompatActivity() {
             val fee = when (feeGroup.checkedRadioButtonId) {
                 1 -> feeRates.slow
                 3 -> feeRates.fast
-                4 -> customFeeInput.text.toString().toIntOrNull()?.coerceIn(1,100) ?: feeRates.normal
                 else -> feeRates.normal
             }
             val estFee = walletManager.estimateFee(to, amt, fee)
@@ -595,44 +564,17 @@ Tổng: ${amt + estFee} BTC"; setPadding(0,0,0,20) }
     }
 
     private fun showSettings() {
-        val items = arrayOf("👁 Xem seed phrase", "🔑 Đổi mật khẩu", "✏️ Đổi tên ví", "🗑 Xóa ví vĩnh viễn", "🔒 Khóa ví", "ℹ️ Thông tin")
+        val items = arrayOf("👁 Xem seed phrase", "🔑 Đổi mật khẩu", "✏️ Đổi tên ví", "🗑 Xóa ví vĩnh viễn", "🔒 Khóa ví ngay", "ℹ️ Thông tin")
         AlertDialog.Builder(this).setTitle("Cài đặt").setItems(items) { _, w ->
             when(w) {
                 0 -> showSeedDialog()
                 1 -> showChangePassDialog()
                 2 -> showRenameDialog()
                 3 -> showDeleteDialog()
-                4 -> showLockMenu()
+                4 -> { walletManager.lock(); showUnlockDialog() }
                 5 -> showInfo()
             }
         }.show()
-    }
-
-    private fun showLockMenu() {
-        AlertDialog.Builder(this).setTitle("Khóa ví").setItems(arrayOf("Khóa ngay", "Tùy chỉnh thời gian")) { _, which ->
-            if (which == 0) {
-                walletManager.lock()
-                showUnlockDialog()
-                toast("Đã khóa")
-            } else {
-                showAutoLockSettings()
-            }
-        }.show()
-    }
-
-    private fun showAutoLockSettings() {
-        val options = arrayOf("30 giây", "1 phút", "2 phút", "5 phút", "10 phút", "Không tự khóa")
-        val values = longArrayOf(30000L, 60000L, 120000L, 300000L, 600000L, 0L)
-        val prefs = getSharedPreferences("ibtc_prefs", Context.MODE_PRIVATE)
-        val current = prefs.getLong("auto_lock_ms", 120000L)
-        val checked = values.indexOf(current).let { if (it >= 0) it else 2 }
-        AlertDialog.Builder(this).setTitle("Thời gian tự khóa").setSingleChoiceItems(options, checked) { dialog, which ->
-            autoLockMs = values[which]
-            prefs.edit().putLong("auto_lock_ms", autoLockMs).apply()
-            lastInteractionTime = System.currentTimeMillis()
-            toast("Đã đặt: ${options[which]}")
-            dialog.dismiss()
-        }.setNegativeButton("Hủy", null).show()
     }
 
     private fun showSeedDialog() {
@@ -686,7 +628,9 @@ Tổng: ${amt + estFee} BTC"; setPadding(0,0,0,20) }
     }
 
     private fun showInfo() {
-        AlertDialog.Builder(this).setTitle("iBTC v4.7").setMessage("Build: 2026-05-25\n• Giảm tần suất API (5s/30s) để hết lag\n• Nút Làm mới xoay").setPositiveButton("OK", null).show()
+        AlertDialog.Builder(this).setTitle("iBTC v4.7").setMessage("Build: 2026-05-25
+• Giảm tần suất API (5s/30s) để hết lag
+• Nút Làm mới xoay").setPositiveButton("OK", null).show()
     }
 
     private fun toast(msg: String) {
