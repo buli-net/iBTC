@@ -22,6 +22,8 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.setPadding
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
+import java.net.HttpURLConnection
+import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -98,24 +100,40 @@ class MainActivity : AppCompatActivity() {
             override fun run() {
                 Thread {
                     try {
-                        val json = java.net.URL("https://mempool.space/api/v1/blocks").openStream().bufferedReader().readText()
-                        val height = Regex("\"height\":(\\d+)").find(json)?.groupValues?.get(1)?.toInt() ?: 0
+                        val url = URL("https://mempool.space/api/blocks/tip/height")
+                        val conn = url.openConnection() as HttpURLConnection
+                        conn.connectTimeout = 5000
+                        conn.readTimeout = 5000
+                        conn.setRequestProperty("User-Agent", "iBTC-Wallet")
+                        val height = conn.inputStream.bufferedReader().readText().trim().toInt()
+                        
+                        val url2 = URL("https://mempool.space/api/block/$height")
+                        val conn2 = url2.openConnection() as HttpURLConnection
+                        conn2.connectTimeout = 5000
+                        conn2.readTimeout = 5000
+                        conn2.setRequestProperty("User-Agent", "iBTC-Wallet")
+                        val json = conn2.inputStream.bufferedReader().readText()
                         val lastTime = Regex("\"timestamp\":(\\d+)").find(json)?.groupValues?.get(1)?.toLong() ?: 0L
+                        
                         val nextHeight = height + 1
                         val elapsed = (System.currentTimeMillis()/1000 - lastTime).coerceAtLeast(0)
                         val percent = ((elapsed * 100) / 600).toInt().coerceAtMost(99)
                         val remain = (600 - elapsed).coerceAtLeast(0)
                         val mins = remain / 60
                         val secs = remain % 60
+                        
                         runOnUiThread {
                             blockProgressBar.progress = percent
                             blockText.text = "Đang khai thác block #$nextHeight — $percent% (~${mins}m${String.format("%02d", secs)}s)"
                         }
                     } catch (e: Exception) {
-                        runOnUiThread { blockText.text = "Lỗi kết nối mempool" }
+                        runOnUiThread { 
+                            blockText.text = "Lỗi mempool: ${e.javaClass.simpleName}"
+                            blockProgressBar.progress = 0
+                        }
                     }
                 }.start()
-                handler.postDelayed(this, 1000)
+                handler.postDelayed(this, 3000)
             }
         })
     }
@@ -298,6 +316,6 @@ class MainActivity : AppCompatActivity() {
     private fun showChangePassDialog() { val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(30) }; val oldP = EditText(this).apply { hint = "Mật khẩu cũ"; inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD }; val newP = EditText(this).apply { hint = "Mật khẩu mới ≥8"; inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD }; layout.addView(oldP); layout.addView(newP); AlertDialog.Builder(this).setTitle("Đổi mật khẩu").setView(layout).setPositiveButton("Đổi") { _, _ -> val id = walletManager.getActiveId()?: return@setPositiveButton; if (walletManager.changePassword(id, oldP.text.toString(), newP.text.toString())) toast("Đã đổi thành công") else toast("Sai mật khẩu cũ") }.show() }
     private fun showRenameDialog() { val input = EditText(this).apply { hint = "Tên ví mới"; setText(walletManager.getActive()?.name?: "") }; AlertDialog.Builder(this).setTitle("Đổi tên").setView(input).setPositiveButton("Lưu") { _, _ -> val id = walletManager.getActiveId()?: return@setPositiveButton; walletManager.rename(id, input.text.toString()); walletNameText.text = input.text.toString(); toast("Đã đổi tên") }.show() }
     private fun showDeleteDialog() { val pass = EditText(this).apply { inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD }; AlertDialog.Builder(this).setTitle("XÓA VĨNH VIỄN").setMessage("Nhập mật khẩu để xóa. Không thể khôi phục nếu không có seed!").setView(pass).setPositiveButton("XÓA") { _, _ -> val id = walletManager.getActiveId()?: return@setPositiveButton; if (walletManager.unlock(id, pass.text.toString())) { walletManager.delete(id); showWelcome(); toast("Đã xóa") } else toast("Sai pass") }.setNegativeButton("Hủy", null).show() }
-    private fun showInfo() { AlertDialog.Builder(this).setTitle("iBTC v4.1-fix3").setMessage("Build: 2026-05-25\n• 2 thanh progress\n• Block real-time từ mempool.space\n• Auto sync 45s\n• Dark mode fix").setPositiveButton("OK", null).show() }
+    private fun showInfo() { AlertDialog.Builder(this).setTitle("iBTC v4.1-fix4").setMessage("Build: 2026-05-25\n• Fix mempool timeout\n• Hiện lỗi rõ ràng\n• 2 thanh progress real-time").setPositiveButton("OK", null).show() }
     private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
 }
