@@ -32,12 +32,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var walletManager: WalletManager
     private val handler = Handler(Looper.getMainLooper())
     private var lastInteractionTime = System.currentTimeMillis()
-    private fun getAutoLockMs(): Long {
-        val prefs = getSharedPreferences("wallet_prefs", MODE_PRIVATE)
-        if (prefs.getBoolean("lock_on_pause", false)) return Long.MAX_VALUE
-        val mins = prefs.getInt("auto_lock_minutes", 2)
-        return mins * 60_000L
-    }
+    private val AUTO_LOCK_MS = 120_000L
     private val POOL_FONT = 13f
 
     private lateinit var rootLayout: LinearLayout
@@ -68,8 +63,6 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
         walletManager = WalletManager(this)
-        // dọn prefs cũ - xóa "không tự khóa"
-        getSharedPreferences("wallet_prefs", MODE_PRIVATE).edit().remove("never_lock").apply()
         setupRootLayout()
         setContentView(scrollView)
         startAutoLockChecker()
@@ -84,10 +77,6 @@ class MainActivity : AppCompatActivity() {
     override fun onPause() {
         super.onPause()
         lastInteractionTime = System.currentTimeMillis()
-        val prefs = getSharedPreferences("wallet_prefs", MODE_PRIVATE)
-        if (prefs.getBoolean("lock_on_pause", false) && walletManager.getActive() != null) {
-            walletManager.lock()
-        }
     }
 
     override fun onResume() {
@@ -121,12 +110,10 @@ class MainActivity : AppCompatActivity() {
         handler.postDelayed(object : Runnable {
             override fun run() {
                 val active = walletManager.getActive()
-                val lockMs = getAutoLockMs()
-                if (active!= null && lockMs != Long.MAX_VALUE && System.currentTimeMillis() - lastInteractionTime > lockMs) {
+                if (active!= null && System.currentTimeMillis() - lastInteractionTime > AUTO_LOCK_MS) {
                     walletManager.lock()
                     runOnUiThread {
-                        val mins = getSharedPreferences("wallet_prefs", MODE_PRIVATE).getInt("auto_lock_minutes", 2)
-                        Toast.makeText(this@MainActivity, "Tự động khóa sau $mins phút không dùng", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this@MainActivity, "Tự động khóa sau 2 phút không dùng", Toast.LENGTH_SHORT).show()
                         showUnlockDialog()
                     }
                 }
@@ -946,7 +933,7 @@ private fun fetchBtcStats() {
 
 
     private fun showSettings() {
-        val items = arrayOf("👁 Xem seed phrase", "🔑 Đổi mật khẩu", "✏️ Đổi tên ví", "🗑 Xóa ví vĩnh viễn", "🔒 Khóa ví ngay", "⏱ Cài đặt tự khóa", "ℹ️ Thông tin")
+        val items = arrayOf("👁 Xem seed phrase", "🔑 Đổi mật khẩu", "✏️ Đổi tên ví", "🗑 Xóa ví vĩnh viễn", "🔒 Khóa ví ngay", "ℹ️ Thông tin")
         AlertDialog.Builder(this)
             .setTitle("Cài đặt")
             .setItems(items) { _, w ->
@@ -956,46 +943,9 @@ private fun fetchBtcStats() {
                     2 -> showRenameDialog()
                     3 -> showDeleteDialog()
                     4 -> { walletManager.lock(); showUnlockDialog() }
-                    5 -> showLockSettings()
-                    6 -> showInfo()
+                    5 -> showInfo()
                 }
             }
-            .show()
-    }
-
-    
-    private fun showLockSettings() {
-        val prefs = getSharedPreferences("wallet_prefs", MODE_PRIVATE)
-        val current = prefs.getInt("auto_lock_minutes", 2)
-        val items = arrayOf("Khóa ngay khi thoát", "1 phút", "2 phút", "5 phút", "15 phút")
-        val onPause = prefs.getBoolean("lock_on_pause", false)
-        val checked = when {
-            onPause -> 0
-            current == 1 -> 1
-            current == 2 -> 2
-            current == 5 -> 3
-            current == 15 -> 4
-            else -> 2
-        }
-        AlertDialog.Builder(this)
-            .setTitle("Cài đặt tự khóa")
-            .setSingleChoiceItems(items, checked) { dialog, which ->
-                val edit = prefs.edit()
-                if (which == 0) {
-                    edit.putBoolean("lock_on_pause", true)
-                    edit.putInt("auto_lock_minutes", 2)
-                    toast("Sẽ khóa ngay khi thoát app (trong app không khóa)")
-                } else {
-                    val mins = arrayOf(0,1,2,5,15)[which]
-                    edit.putBoolean("lock_on_pause", false)
-                    edit.putInt("auto_lock_minutes", mins)
-                    toast("Đã lưu: ${items[which]}")
-                }
-                edit.apply()
-                lastInteractionTime = System.currentTimeMillis()
-                dialog.dismiss()
-            }
-            .setNegativeButton("Đóng", null)
             .show()
     }
 
@@ -1100,9 +1050,7 @@ private fun fetchBtcStats() {
     private fun showInfo() {
         AlertDialog.Builder(this)
             .setTitle("iBTC v4.7")
-            .setMessage("Build: 2026-05-25
-• Block update 2s
-• Nút Làm mới đứng im")
+            .setMessage("Build: 2026-05-25\n• Block update 2s\n• Nút Làm mới đứng im")
             .setPositiveButton("OK", null)
             .show()
     }
