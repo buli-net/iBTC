@@ -1,4 +1,3 @@
-
 package net.buli.ibtc
 
 import android.app.AlertDialog
@@ -132,8 +131,8 @@ class MainActivity : AppCompatActivity() {
         Thread {
             try {
                 val json = URL("https://mempool.space/api/v1/blocks").openStream().bufferedReader().readText()
-                val height = Regex("\"height\":(\\d+)").find(json)?.groupValues?.get(1)?.toInt()?: 0
-                val lastTime = Regex("\"timestamp\":(\\d+)").find(json)?.groupValues?.get(1)?.toLong()?: 0L
+                val height = Regex(""height":(\d+)").find(json)?.groupValues?.get(1)?.toInt()?: 0
+                val lastTime = Regex(""timestamp":(\d+)").find(json)?.groupValues?.get(1)?.toLong()?: 0L
                 val nextHeight = height + 1
                 val elapsed = (System.currentTimeMillis()/1000 - lastTime).coerceAtLeast(0)
                 val percent = ((elapsed * 100) / 600).toInt()
@@ -171,13 +170,13 @@ class MainActivity : AppCompatActivity() {
                 val totalSats = URL("https://blockchain.info/q/totalbc").readText().trim().toLong()
                 val totalMined = totalSats / 100000000.0
                 val diffJson = URL("https://mempool.space/api/v1/difficulty-adjustment").readText()
-                val diffProgress = Regex("\"progressPercent\":([\\d.]+)").find(diffJson)?.groupValues?.get(1)?.toFloat()?: 0f
+                val diffProgress = Regex(""progressPercent":([\d.]+)").find(diffJson)?.groupValues?.get(1)?.toFloat()?: 0f
                 val mempoolJson = URL("https://mempool.space/api/mempool").readText()
-                val mempoolCount = Regex("\"count\":(\\d+)").find(mempoolJson)?.groupValues?.get(1)?.toInt()?: 0
+                val mempoolCount = Regex(""count":(\d+)").find(mempoolJson)?.groupValues?.get(1)?.toInt()?: 0
                 val feesJson = URL("https://mempool.space/api/v1/fees/recommended").readText()
-                val feeFast = Regex("\"fastestFee\":(\\d+)").find(feesJson)?.groupValues?.get(1)?.toInt()?: 0
+                val feeFast = Regex(""fastestFee":(\d+)").find(feesJson)?.groupValues?.get(1)?.toInt()?: 0
                 val hashJson = URL("https://mempool.space/api/v1/mining/hashrate/1w").readText()
-                val currentHash = Regex("\"currentHashrate\":([\\d.]+)").find(hashJson)?.groupValues?.get(1)?.toDouble()?: 0.0
+                val currentHash = Regex(""currentHashrate":([\d.]+)").find(hashJson)?.groupValues?.get(1)?.toDouble()?: 0.0
                 runOnUiThread {
                     val minedPct = ((totalMined / 21000000.0) * 100).toInt()
                     statBars["mined"]?.progress = minedPct
@@ -215,7 +214,7 @@ class MainActivity : AppCompatActivity() {
         handler.post(object : Runnable {
             override fun run() {
                 fetchBlockUpdate()
-                handler.postDelayed(this, 2000) // SỬA: 5000 -> 2000
+                handler.postDelayed(this, 2000)
             }
         })
         handler.post(object : Runnable {
@@ -342,7 +341,6 @@ class MainActivity : AppCompatActivity() {
         btnReceive.setOnClickListener { showReceiveDialog() }
         btnSend.setOnClickListener { showSendDialog() }
         btnRefresh.setOnClickListener {
-            // SỬA: bỏ xoay, nút đứng im như 3 nút kia
             refreshWallet()
             fetchBlockUpdate()
             fetchBtcStats()
@@ -425,7 +423,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun confirmSend(to: String, amt: Double, feeRate: Int, estFee: Double) {
         val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(30) }
-        val summary = TextView(this).apply { text = "Gửi: $amt BTC\nĐến: $to\nPhí: ~$estFee BTC\nTổng: ${amt + estFee} BTC"; setPadding(0,0,0,20) }
+        val summary = TextView(this).apply { text = "Gửi: $amt BTC
+Đến: $to
+Phí: ~$estFee BTC
+Tổng: ${amt + estFee} BTC"; setPadding(0,0,0,20) }
         val passInput = EditText(this).apply { hint = "Nhập mật khẩu để xác nhận"; inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD; transformationMethod = PasswordTransformationMethod.getInstance() }
         layout.addView(summary); layout.addView(passInput)
         AlertDialog.Builder(this).setTitle("Xác nhận").setView(layout).setPositiveButton("Gửi ngay") { _, _ ->
@@ -472,7 +473,9 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this).setTitle("XÓA VĨNH VIỄN").setMessage("Nhập mật khẩu để xóa. Không thể khôi phục nếu không có seed!").setView(pass).setPositiveButton("XÓA") { _, _ -> val id = walletManager.getActiveId()?: return@setPositiveButton; if (walletManager.unlock(id, pass.text.toString())) { walletManager.delete(id); showWelcome(); toast("Đã xóa") } else toast("Sai pass") }.setNegativeButton("Hủy", null).show()
     }
 
-    private fun showInfo() { AlertDialog.Builder(this).setTitle("iBTC v4.7").setMessage("Build: 2026-05-25\n• Block update 2s\n• Nút Làm mới đứng im").setPositiveButton("OK", null).show() }
+    private fun showInfo() { AlertDialog.Builder(this).setTitle("iBTC v4.7").setMessage("Build: 2026-05-25
+• Block update 2s
+• Nút Làm mới đứng im").setPositiveButton("OK", null).show() }
 
     private fun toast(msg: String) { Toast.makeText(this, msg, Toast.LENGTH_SHORT).show() }
 }
