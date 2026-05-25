@@ -167,7 +167,20 @@ class MainActivity : AppCompatActivity() {
         }.start()
     }
 
-    private fun fetchBtcStats() {
+    
+    private fun fetchBtcPriceUsd(callback: (Double) -> Unit) {
+        Thread {
+            try {
+                val json = URL("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd").readText()
+                val price = Regex(""""usd":([\d.]+)""").find(json)?.groupValues?.get(1)?.toDoubleOrNull() ?: 60000.0
+                runOnUiThread { callback(price) }
+            } catch (_: Exception) {
+                runOnUiThread { callback(60000.0) }
+            }
+        }.start()
+    }
+
+private fun fetchBtcStats() {
         Thread {
             try {
                 val height = URL("https://mempool.space/api/blocks/tip/height").readText().trim().toInt()
@@ -708,6 +721,7 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+
     private fun showSendDialog() {
         if (isSyncing) {
             toast("Đang sync, vui lòng đợi")
@@ -740,50 +754,112 @@ class MainActivity : AppCompatActivity() {
             hint = "Số lượng BTC"
             inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
         }
+        
         val feeRates = try { walletManager.getFeeRates() } catch (_: Exception) { FeeRates(5, 10, 20) }
         val feeGroup = RadioGroup(this)
-        val rSlow = RadioButton(this).apply {
-            text = "Chậm ~60 phút (${feeRates.slow} sat/vB)"
-            id = 1
+        val rSlow = RadioButton(this).apply { id = 1; text = "Chậm ~60' (${feeRates.slow} sat/vB)" }
+        val rNormal = RadioButton(this).apply { id = 2; text = "Thường ~30' (${feeRates.normal} sat/vB)"; isChecked = true }
+        val rFast = RadioButton(this).apply { id = 3; text = "Nhanh ~10' (${feeRates.fast} sat/vB)" }
+        val rCustom = RadioButton(this).apply { id = 4; text = "Tùy chỉnh" }
+        val customFeeInput = EditText(this).apply {
+            hint = "1-100 sat/vB"
+            inputType = InputType.TYPE_CLASS_NUMBER
+            visibility = View.GONE
+            setText("10")
         }
-        val rNormal = RadioButton(this).apply {
-            text = "Thường ~30 phút (${feeRates.normal} sat/vB)"
-            id = 2
-            isChecked = true
-        }
-        val rFast = RadioButton(this).apply {
-            text = "Nhanh ~10 phút (${feeRates.fast} sat/vB)"
-            id = 3
-        }
-        feeGroup.addView(rSlow)
-        feeGroup.addView(rNormal)
-        feeGroup.addView(rFast)
+        feeGroup.addView(rSlow); feeGroup.addView(rNormal); feeGroup.addView(rFast); feeGroup.addView(rCustom)
+        
+        val feeEstimateTv = TextView(this).apply { text = "Ước tính phí: -"; setPadding(0,20,0,0) }
+        val totalEstimateTv = TextView(this).apply { text = "Tổng (gửi + phí): -" }
+        val balance = walletManager.getBalance()
+        val balanceTv = TextView(this).apply { text = "Số dư: ${"%.8f".format(balance)} BTC"; setTextColor(0xFF888888.toInt()) }
+        
         layout.addView(toInput)
         layout.addView(scanBtn)
         layout.addView(amountInput)
+        layout.addView(balanceTv)
         layout.addView(TextView(this).apply { text = "Chọn phí mạng:"; setPadding(0,20,0,0) })
         layout.addView(feeGroup)
-        AlertDialog.Builder(this)
+        layout.addView(customFeeInput)
+        layout.addView(feeEstimateTv)
+        layout.addView(totalEstimateTv)
+        
+        var priceUsd = 60000.0
+        fetchBtcPriceUsd { p -> priceUsd = p }
+        
+        val dialog = AlertDialog.Builder(this)
             .setTitle("Gửi BTC")
             .setView(layout)
-            .setPositiveButton("Tiếp tục") { _, _ ->
+            .setPositiveButton("Tiếp tục", null)
+            .setNegativeButton("Hủy", null)
+            .create()
+        
+        dialog.setOnShowListener {
+            val btn = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+            btn.isEnabled = false
+            
+            fun updateEstimates() {
                 val to = toInput.text.toString().trim()
                 val amt = amountInput.text.toString().toDoubleOrNull() ?: 0.0
-                if (to.length < 26 || amt <= 0) {
-                    toast("Địa chỉ hoặc số tiền không hợp lệ")
-                    return@setPositiveButton
+                val feeRate = when (feeGroup.checkedRadioButtonId) {
+                    1 -> feeRates.slow
+                    3 -> feeRates.fast
+                    4 -> customFeeInput.text.toString().toIntOrNull()?.coerceIn(1,100) ?: 10
+                    else -> feeRates.normal
                 }
+                if (to.length >= 26 && amt > 0) {
+                    try {
+                        val estFee = walletManager.estimateFee(to, amt, feeRate)
+                        val total = amt + estFee
+                        val feeUsd = estFee * priceUsd
+                        val totalUsd = total * priceUsd
+                        feeEstimateTv.text = "Ước tính phí: ${"%.8f".format(estFee)} BTC (~$${"%.2f".format(feeUsd)})"
+                        totalEstimateTv.text = "Tổng: ${"%.8f".format(total)} BTC (~$${"%.2f".format(totalUsd)})"
+                        // update radio texts with $
+                        rSlow.text = "Chậm ~60' (${feeRates.slow} sat/vB) ~ $${"%.2f".format(walletManager.estimateFee(to, amt, feeRates.slow)*priceUsd)}"
+                        rNormal.text = "Thường ~30' (${feeRates.normal} sat/vB) ~ $${"%.2f".format(walletManager.estimateFee(to, amt, feeRates.normal)*priceUsd)}"
+                        rFast.text = "Nhanh ~10' (${feeRates.fast} sat/vB) ~ $${"%.2f".format(walletManager.estimateFee(to, amt, feeRates.fast)*priceUsd)}"
+                        rCustom.text = "Tùy chỉnh (${feeRate} sat/vB) ~ $${"%.2f".format(estFee*priceUsd)}"
+                        btn.isEnabled = total <= balance
+                        btn.alpha = if (btn.isEnabled) 1f else 0.5f
+                    } catch (_: Exception) { }
+                } else {
+                    btn.isEnabled = false
+                }
+            }
+            
+            feeGroup.setOnCheckedChangeListener { _, id ->
+                customFeeInput.visibility = if (id == 4) View.VISIBLE else View.GONE
+                updateEstimates()
+            }
+            val watcher = object : android.text.TextWatcher {
+                override fun afterTextChanged(s: android.text.Editable?) { updateEstimates() }
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            }
+            toInput.addTextChangedListener(watcher)
+            amountInput.addTextChangedListener(watcher)
+            customFeeInput.addTextChangedListener(watcher)
+            
+            btn.setOnClickListener {
+                val to = toInput.text.toString().trim()
+                val amt = amountInput.text.toString().toDoubleOrNull() ?: 0.0
                 val fee = when (feeGroup.checkedRadioButtonId) {
                     1 -> feeRates.slow
                     3 -> feeRates.fast
+                    4 -> customFeeInput.text.toString().toIntOrNull()?.coerceIn(1,100) ?: 10
                     else -> feeRates.normal
                 }
                 val estFee = walletManager.estimateFee(to, amt, fee)
+                dialog.dismiss()
                 confirmSend(to, amt, fee, estFee)
             }
-            .setNegativeButton("Hủy", null)
-            .show()
+            updateEstimates()
+        }
+        dialog.show()
     }
+
+
 
     private fun confirmSend(to: String, amt: Double, feeRate: Int, estFee: Double) {
         val layout = LinearLayout(this).apply {
@@ -791,39 +867,72 @@ class MainActivity : AppCompatActivity() {
             setPadding(30)
         }
         val summary = TextView(this).apply {
-            text = "Gửi: $amt BTC\nĐến: $to\nPhí: ~$estFee BTC\nTổng: ${amt + estFee} BTC"
+            text = "Gửi: $amt BTC
+Đến: $to
+Phí: ~$estFee BTC
+Tổng: ${amt + estFee} BTC"
             setPadding(0,0,0,20)
         }
         val passInput = EditText(this).apply {
             hint = "Nhập mật khẩu để xác nhận"
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-            transformationMethod = PasswordTransformationMethod.getInstance()
         }
         layout.addView(summary)
         layout.addView(passInput)
         AlertDialog.Builder(this)
-            .setTitle("Xác nhận")
+            .setTitle("Xác nhận gửi")
             .setView(layout)
-            .setPositiveButton("Gửi ngay") { _, _ ->
-                val id = walletManager.getActiveId()?: return@setPositiveButton
-                if (!walletManager.unlock(id, passInput.text.toString())) {
+            .setPositiveButton("Xác nhận") { _, _ ->
+                val pass = passInput.text.toString()
+                if (!walletManager.checkPassword(pass)) {
                     toast("Sai mật khẩu")
                     return@setPositiveButton
                 }
-                Thread {
-                    val result = walletManager.send(to, amt, feeRate)
-                    runOnUiThread {
-                        if (result.startsWith("Lỗi")) toast(result)
-                        else {
-                            toast("Đã gửi! TXID: ${result.take(12)}...")
-                            refreshWallet()
+                // Delay 60s with progress
+                val delayLayout = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(40,30,40,30)
+                }
+                val tv = TextView(this).apply { text = "Đang chuẩn bị gửi sau 60 giây..."; gravity = android.view.Gravity.CENTER }
+                val progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+                    max = 60
+                    progress = 60
+                }
+                val countdown = TextView(this).apply { text = "60s"; gravity = android.view.Gravity.CENTER; textSize = 18f }
+                delayLayout.addView(tv); delayLayout.addView(progress); delayLayout.addView(countdown)
+                val delayDialog = AlertDialog.Builder(this).setTitle("Delay bảo mật").setView(delayLayout).setCancelable(false).create()
+                delayDialog.show()
+                var sec = 60
+                val handler = android.os.Handler(mainLooper)
+                val runnable = object : Runnable {
+                    override fun run() {
+                        sec--
+                        progress.progress = sec
+                        countdown.text = "${sec}s"
+                        if (sec > 0) {
+                            handler.postDelayed(this, 1000)
+                        } else {
+                            delayDialog.dismiss()
+                            Thread {
+                                try {
+                                    val txid = walletManager.send(to, amt, feeRate)
+                                    runOnUiThread {
+                                        toast("Đã gửi! TXID: ${txid.take(8)}...")
+                                        refreshBalance()
+                                    }
+                                } catch (e: Exception) {
+                                    runOnUiThread { toast("Lỗi gửi: ${e.message}") }
+                                }
+                            }.start()
                         }
                     }
-                }.start()
+                }
+                handler.postDelayed(runnable, 1000)
             }
             .setNegativeButton("Hủy", null)
             .show()
     }
+
 
     private fun showSettings() {
         val items = arrayOf("👁 Xem seed phrase", "🔑 Đổi mật khẩu", "✏️ Đổi tên ví", "🗑 Xóa ví vĩnh viễn", "🔒 Khóa ví ngay", "ℹ️ Thông tin")
