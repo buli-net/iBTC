@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <string name="app_name">iBTC</string>
-    <!-- Dùng cho sau này nếu cần -->
-    <string name="balance">Số dư</string>
-    <string name="receive">Nhận</string>
-    <string name="send">Gửi</string>
-    <string name="copy_address">Copy địa chỉ</string>
-</resources>
