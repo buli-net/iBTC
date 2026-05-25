@@ -118,7 +118,7 @@ class MainActivity : AppCompatActivity() {
                 }
             } catch (e: Exception) {
                 runOnUiThread { 
-                    blockText.text = "Lỗi pool - tự thử lại sau 5s"
+                    blockText.text = "Lỗi pool - tự thử lại"
                     blockProgressBar.progress = 0
                 }
             }
@@ -130,7 +130,7 @@ class MainActivity : AppCompatActivity() {
         handler.post(object : Runnable {
             override fun run() {
                 fetchBlockUpdate()
-                handler.postDelayed(this, 5000)
+                handler.postDelayed(this, 2000) // 2 GIÂY
             }
         })
     }
@@ -316,6 +316,6 @@ class MainActivity : AppCompatActivity() {
     private fun showChangePassDialog() { val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(30) }; val oldP = EditText(this).apply { hint = "Mật khẩu cũ"; inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD }; val newP = EditText(this).apply { hint = "Mật khẩu mới ≥8"; inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD }; layout.addView(oldP); layout.addView(newP); AlertDialog.Builder(this).setTitle("Đổi mật khẩu").setView(layout).setPositiveButton("Đổi") { _, _ -> val id = walletManager.getActiveId()?: return@setPositiveButton; if (walletManager.changePassword(id, oldP.text.toString(), newP.text.toString())) toast("Đã đổi thành công") else toast("Sai mật khẩu cũ") }.show() }
     private fun showRenameDialog() { val input = EditText(this).apply { hint = "Tên ví mới"; setText(walletManager.getActive()?.name?: "") }; AlertDialog.Builder(this).setTitle("Đổi tên").setView(input).setPositiveButton("Lưu") { _, _ -> val id = walletManager.getActiveId()?: return@setPositiveButton; walletManager.rename(id, input.text.toString()); walletNameText.text = input.text.toString(); toast("Đã đổi tên") }.show() }
     private fun showDeleteDialog() { val pass = EditText(this).apply { inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD }; AlertDialog.Builder(this).setTitle("XÓA VĨNH VIỄN").setMessage("Nhập mật khẩu để xóa. Không thể khôi phục nếu không có seed!").setView(pass).setPositiveButton("XÓA") { _, _ -> val id = walletManager.getActiveId()?: return@setPositiveButton; if (walletManager.unlock(id, pass.text.toString())) { walletManager.delete(id); showWelcome(); toast("Đã xóa") } else toast("Sai pass") }.setNegativeButton("Hủy", null).show() }
-    private fun showInfo() { AlertDialog.Builder(this).setTitle("iBTC v4.1-final").setMessage("Build: 2026-05-25\n• Auto retry pool 5s\n• Nút Làm mới = ví + block").setPositiveButton("OK", null).show() }
+    private fun showInfo() { AlertDialog.Builder(this).setTitle("iBTC v4.1-2s").setMessage("Build: 2026-05-25\n• Pool update 2 giây\n• Auto retry").setPositiveButton("OK", null).show() }
     private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
 }
