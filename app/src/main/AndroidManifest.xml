@@ -1,40 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-
     <uses-permission android:name="android.permission.INTERNET"/>
-
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     <application
         android:allowBackup="true"
-        android:label="iBTC Wallet"
-        android:theme="@style/Theme.AppCompat.DayNight.NoActionBar">
-
+        android:label="iBTC"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Material3.DayNight.NoActionBar">
         <activity
-            android:name=".WelcomeActivity"
+            android:name=".MainActivity"
             android:exported="true">
             <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
-
-        <activity android:name=".MainActivity" android:exported="false" />
-        <activity android:name=".BackupSeedActivity" android:exported="false" />
-        <activity android:name=".VerifySeedActivity" android:exported="false" />
-        <activity android:name=".SetPasswordActivity" android:exported="false" />
-        <activity android:name=".ImportActivity" android:exported="false" />
-
-        <!-- Màn khóa & cài đặt -->
-        <activity android:name=".LockActivity" android:exported="false" />
-        <activity android:name=".SettingsActivity" android:exported="false" />
-        <activity android:name=".ChangePasswordActivity" android:exported="false" />
-        <activity android:name=".SendActivity" android:exported="false" />
-        <activity android:name=".ReceiveActivity" android:exported="false" />
-
-        <!-- 3 tab mới cho bottom nav -->
-        <activity android:name=".MarketActivity" android:exported="false" />
-        <activity android:name=".DAppActivity" android:exported="false" />
-        <activity android:name=".SwapActivity" android:exported="false" />
-
     </application>
-
 </manifest>
