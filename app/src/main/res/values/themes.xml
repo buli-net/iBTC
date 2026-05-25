@@ -1,42 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources xmlns:tools="http://schemas.android.com/tools">
-    <!-- Base theme SafePal Dark -->
-    <style name="Theme.IBTC" parent="Theme.MaterialComponents.DayNight.NoActionBar">
-        <!-- Màu chính -->
-        <item name="colorPrimary">@color/safepal_purple</item>
-        <item name="colorPrimaryVariant">@color/safepal_bg</item>
-        <item name="colorOnPrimary">@color/safepal_text</item>
-        
-        <!-- Màu phụ -->
-        <item name="colorSecondary">@color/safepal_blue</item>
-        <item name="colorSecondaryVariant">@color/safepal_blue</item>
-        <item name="colorOnSecondary">@color/safepal_text</item>
-
-        <!-- Nền -->
-        <item name="android:statusBarColor">@color/safepal_bg</item>
-        <item name="android:navigationBarColor">@color/safepal_bg</item>
-        <item name="android:windowBackground">@color/safepal_bg</item>
-        <item name="android:windowLightStatusBar" tools:targetApi="m">false</item>
-
-        <!-- Text -->
-        <item name="android:textColorPrimary">@color/safepal_text</item>
-        <item name="android:textColorSecondary">@color/safepal_gray</item>
-
-        <!-- Button style -->
-        <item name="materialButtonStyle">@style/Widget.IBTC.Button</item>
-    </style>
-
-    <!-- Style cho button tím SafePal -->
-    <style name="Widget.IBTC.Button" parent="Widget.MaterialComponents.Button.UnelevatedButton">
-        <item name="backgroundTint">@color/safepal_purple</item>
-        <item name="android:textColor">@color/safepal_text</item>
-        <item name="cornerRadius">12dp</item>
-        <item name="android:textAllCaps">false</item>
-        <item name="android:fontFamily">sans-serif-medium</item>
-    </style>
-
-    <!-- Style cho card -->
-    <style name="Widget.IBTC.Card" parent="">
-        <item name="android:background">@drawable/card_bg</item>
-    </style>
+<resources>
+    <!-- Kế thừa trực tiếp theme Material3 từ thư viện -->
+    <style name="Theme.iBTC" parent="Theme.Material3.DayNight.NoActionBar" />
 </resources>
