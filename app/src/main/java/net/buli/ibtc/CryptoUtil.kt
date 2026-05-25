@@ -1,4 +1,5 @@
 package net.buli.ibtc
+
 import android.util.Base64
 import java.security.SecureRandom
 import javax.crypto.Cipher
@@ -8,23 +9,35 @@ import javax.crypto.spec.PBEKeySpec
 import javax.crypto.spec.SecretKeySpec
 
 object CryptoUtil {
-    private const val ITER = 200_000
-    fun encrypt(txt:String, pw:String):String {
-        val salt = ByteArray(16).also{SecureRandom().nextBytes(it)}
-        val iv = ByteArray(12).also{SecureRandom().nextBytes(it)}
-        val key = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
-            .generateSecret(PBEKeySpec(pw.toCharArray(),salt,ITER,256)).encoded
-        val c = Cipher.getInstance("AES/GCM/NoPadding")
-        c.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key,"AES"), GCMParameterSpec(128,iv))
-        return Base64.encodeToString(salt+iv+c.doFinal(txt.toByteArray()),0)
+    private const val ITERATIONS = 200_000
+    private const val KEY_LENGTH = 256
+    private const val SALT_LEN = 16
+    private const val IV_LEN = 12
+
+    fun encrypt(plain: String, password: String): String {
+        val salt = ByteArray(SALT_LEN).also { SecureRandom().nextBytes(it) }
+        val iv = ByteArray(IV_LEN).also { SecureRandom().nextBytes(it) }
+        val key = deriveKey(password, salt)
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(128, iv))
+        val ct = cipher.doFinal(plain.toByteArray(Charsets.UTF_8))
+        return Base64.encodeToString(salt + iv + ct, Base64.NO_WRAP)
     }
-    fun decrypt(enc:String, pw:String):String {
-        val d = Base64.decode(enc,0)
-        val salt=d.copyOfRange(0,16); val iv=d.copyOfRange(16,28); val ct=d.copyOfRange(28,d.size)
-        val key = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
-            .generateSecret(PBEKeySpec(pw.toCharArray(),salt,ITER,256)).encoded
-        val c = Cipher.getInstance("AES/GCM/NoPadding")
-        c.init(Cipher.DECRYPT_MODE, SecretKeySpec(key,"AES"), GCMParameterSpec(128,iv))
-        return String(c.doFinal(ct))
+
+    fun decrypt(enc: String, password: String): String {
+        val data = Base64.decode(enc, Base64.NO_WRAP)
+        val salt = data.copyOfRange(0, SALT_LEN)
+        val iv = data.copyOfRange(SALT_LEN, SALT_LEN + IV_LEN)
+        val ct = data.copyOfRange(SALT_LEN + IV_LEN, data.size)
+        val key = deriveKey(password, salt)
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, iv))
+        return String(cipher.doFinal(ct), Charsets.UTF_8)
+    }
+
+    private fun deriveKey(password: String, salt: ByteArray): SecretKeySpec {
+        val spec = PBEKeySpec(password.toCharArray(), salt, ITERATIONS, KEY_LENGTH)
+        val key = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).encoded
+        return SecretKeySpec(key, "AES")
     }
 }
