@@ -1,14 +1,12 @@
 package net.buli.ibtc
 
 import android.content.Context
-import org.bitcoinj.core.Address
 import org.bitcoinj.core.LegacyAddress
 import org.bitcoinj.crypto.HDUtils
 import org.bitcoinj.params.MainNetParams
 import org.bitcoinj.wallet.DeterministicKeyChain
 import org.bitcoinj.wallet.DeterministicSeed
 import org.json.JSONObject
-import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.SecureRandom
@@ -42,9 +40,9 @@ class WalletManager(private val ctx: Context) {
     fun unlock(id: String, password: String): Boolean {
         if (prefs.getInt("${id}_attempts", 0) >= 5) return false
         return try {
-            val enc = prefs.getString("${id}_seed", "")?: return false
+            val enc = prefs.getString("${id}_seed", "") ?: return false
             val seed = CryptoUtil.decrypt(enc, password)
-            val name = prefs.getString("${id}_name", "")?: ""
+            val name = prefs.getString("${id}_name", "") ?: ""
             cachedSeed = seed
             cachedPassword = password.toCharArray()
             active = WalletInfo(id, name)
@@ -62,12 +60,11 @@ class WalletManager(private val ctx: Context) {
         cachedPassword = null
         cachedSeed = null
         active = null
-        // KHÔNG xóa file wallet nữa - fix lỗi mất ví
     }
 
     fun changePassword(id: String, oldPass: String, newPass: String): Boolean {
         return try {
-            val enc = prefs.getString("${id}_seed", "")?: return false
+            val enc = prefs.getString("${id}_seed", "") ?: return false
             val seed = CryptoUtil.decrypt(enc, oldPass)
             val newEnc = CryptoUtil.encrypt(seed, newPass)
             prefs.edit().putString("${id}_seed", newEnc).apply()
@@ -128,7 +125,7 @@ class WalletManager(private val ctx: Context) {
         prefs.edit().remove("${id}_name").remove("${id}_seed").remove("${id}_attempts").commit()
     }
 
-    fun init() { /* bỏ SPV */ }
+    fun init() {}
     fun stop() {}
     fun onProgress(cb: (Int, String) -> Unit) { cb(100, "Đã sẵn sàng") }
 
@@ -137,14 +134,15 @@ class WalletManager(private val ctx: Context) {
         if (addr.isEmpty()) return 0.0
         return try {
             val text = httpGet("https://blockstream.info/api/address/$addr")
-            val funded = JSONObject(text).getJSONObject("chain_stats").getLong("funded_txo_sum")
-            val spent = JSONObject(text).getJSONObject("chain_stats").getLong("spent_txo_sum")
+            val json = JSONObject(text)
+            val funded = json.getJSONObject("chain_stats").getLong("funded_txo_sum")
+            val spent = json.getJSONObject("chain_stats").getLong("spent_txo_sum")
             (funded - spent) / 1e8
         } catch (_: Exception) { 0.0 }
     }
 
     fun getAddress(): String {
-        val seedStr = cachedSeed?: return ""
+        val seedStr = cachedSeed ?: return ""
         return try {
             val seed = DeterministicSeed(seedStr.split(" "), null, "", 0L)
             val chain = DeterministicKeyChain.builder().seed(seed).build()
@@ -153,14 +151,14 @@ class WalletManager(private val ctx: Context) {
         } catch (_: Exception) { "" }
     }
 
-    fun getSeed(): String = cachedSeed?: ""
+    fun getSeed(): String = cachedSeed ?: ""
 
     fun getTransactions(): List<TransactionInfo> {
-        return emptyList() // API đơn giản - có thể mở rộng sau
+        return emptyList()
     }
 
     fun send(to: String, amountBTC: Double, feeRateSatVb: Int): String {
-        return "Chức năng gửi đang phát triển - cần xây dựng giao dịch thủ công"
+        return "Chức năng gửi đang phát triển"
     }
 
     fun estimateFee(to: String, amountBTC: Double, feeRateSatVb: Int): Double {
@@ -178,7 +176,7 @@ class WalletManager(private val ctx: Context) {
     }
 
     private fun updatePrice(price: Double): Double {
-        if (price!= lastPrice) {
+        if (price != lastPrice) {
             lastPrice = price
             prefs.edit().putFloat("last_price", price.toFloat()).apply()
         }
@@ -189,7 +187,12 @@ class WalletManager(private val ctx: Context) {
         try {
             val text = httpGet("https://api.coinbase.com/v2/prices/BTC-USD/spot")
             val amount = JSONObject(text).getJSONObject("data").getString("amount").toDoubleOrNull()
-            if (amount!= null) return updatePrice(amount)
+            if (amount != null) return updatePrice(amount)
+        } catch (_: Exception) {}
+        try {
+            val text = httpGet("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT")
+            val amount = JSONObject(text).getString("price").toDoubleOrNull()
+            if (amount != null) return updatePrice(amount)
         } catch (_: Exception) {}
         return lastPrice
     }
