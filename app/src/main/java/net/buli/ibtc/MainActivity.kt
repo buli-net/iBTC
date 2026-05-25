@@ -32,6 +32,7 @@ class MainActivity : AppCompatActivity() {
     private val handler = Handler(Looper.getMainLooper())
     private var lastInteractionTime = System.currentTimeMillis()
     private val AUTO_LOCK_MS = 120_000L
+    private val POOL_FONT = 13f
 
     private lateinit var rootLayout: LinearLayout
     private lateinit var scrollView: ScrollView
@@ -237,9 +238,10 @@ class MainActivity : AppCompatActivity() {
     private fun addStat(key: String, label: String) {
         val tv = TextView(this).apply {
             text = label
-            textSize = 11f
+            textSize = POOL_FONT
             setTextColor(Color.GRAY)
             setPadding(0,8,0,2)
+            typeface = Typeface.DEFAULT
         }
         val pb = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100
@@ -257,7 +259,7 @@ class MainActivity : AppCompatActivity() {
         val isDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
         val titleColor = if (isDark) Color.WHITE else Color.BLACK
         val logo = TextView(this).apply { text = "₿"; textSize = 72f; gravity = Gravity.CENTER; setTextColor(Color.parseColor("#F7931A")); setPadding(0, 80, 0, 20) }
-        val title = TextView(this).apply { text = "iBTC Wallet v4.2"; textSize = 26f; typeface = Typeface.DEFAULT_BOLD; gravity = Gravity.CENTER; setTextColor(titleColor) }
+        val title = TextView(this).apply { text = "iBTC Wallet v4.5"; textSize = 26f; typeface = Typeface.DEFAULT_BOLD; gravity = Gravity.CENTER; setTextColor(titleColor) }
         val subtitle = TextView(this).apply { text = "Bitcoin wallet an toàn, mã nguồn mở"; textSize = 14f; gravity = Gravity.CENTER; setTextColor(Color.GRAY); setPadding(0, 8, 0, 60) }
         val createBtn = Button(this).apply { text = "Tạo ví mới"; textSize = 16f; setPadding(0, 30, 0, 30) }
         val importBtn = Button(this).apply { text = "Import ví có sẵn"; textSize = 16f }
@@ -360,9 +362,10 @@ class MainActivity : AppCompatActivity() {
         priceText = TextView(this).apply { text = "≈ $0.00"; textSize = 16f; setTextColor(subColor) }
         syncText = TextView(this).apply { text = "Chưa đồng bộ"; textSize = 13f; setTextColor(subColor) }
         syncProgressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; progress = 0 }
-        blockText = TextView(this).apply { text = "Đang kết nối mempool..."; textSize = 12f; setTextColor(subColor); setPadding(0,8,0,2); typeface = Typeface.DEFAULT_BOLD }
-        blockProgressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; progress = 0; scaleY = 0.7f }
         addressText = TextView(this).apply { textSize = 12f; isSingleLine = true; ellipsize = android.text.TextUtils.TruncateAt.MIDDLE; setTextColor(subColor); setPadding(0, 10, 0, 10) }
+
+        blockText = TextView(this).apply { text = "Đang kết nối mempool..."; textSize = POOL_FONT; setTextColor(subColor); setPadding(0,8,0,2); typeface = Typeface.DEFAULT }
+        blockProgressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; progress = 0; scaleY = 0.7f }
 
         val btnRow1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; weightSum = 2f }
         val btnReceive = Button(this).apply { text = "⬇ Nhận"; layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = 8 } }
@@ -377,8 +380,8 @@ class MainActivity : AppCompatActivity() {
         btnRow2.addView(btnRefresh)
         btnRow2.addView(btnSettings)
 
-        statsContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, 20, 0, 0) }
-        val statsTitle = TextView(this).apply { text = "📊 Thống kê Bitcoin"; textSize = 14f; typeface = Typeface.DEFAULT_BOLD; setPadding(0, 20, 0, 5); setTextColor(mainColor) }
+        statsContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, 5, 0, 0) }
+        val statsTitle = TextView(this).apply { text = "📊 Thống kê Bitcoin"; textSize = POOL_FONT; typeface = Typeface.DEFAULT; setPadding(0, 20, 0, 5); setTextColor(mainColor) }
         val txTitle = TextView(this).apply { text = "Lịch sử giao dịch"; textSize = 16f; typeface = Typeface.DEFAULT_BOLD; setPadding(0, 30, 0, 10); setTextColor(mainColor) }
         txListView = ListView(this).apply { layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 600) }
 
@@ -387,13 +390,13 @@ class MainActivity : AppCompatActivity() {
         rootLayout.addView(priceText)
         rootLayout.addView(syncText)
         rootLayout.addView(syncProgressBar)
-        rootLayout.addView(blockText)
-        rootLayout.addView(blockProgressBar)
         rootLayout.addView(addressText)
         rootLayout.addView(Space(this).apply { layoutParams = LinearLayout.LayoutParams(1, 20) })
         rootLayout.addView(btnRow1)
         rootLayout.addView(btnRow2)
         rootLayout.addView(statsTitle)
+        rootLayout.addView(blockText)
+        rootLayout.addView(blockProgressBar)
         rootLayout.addView(statsContainer)
         rootLayout.addView(txTitle)
         rootLayout.addView(txListView)
@@ -471,7 +474,7 @@ class MainActivity : AppCompatActivity() {
         Thread {
             try {
                 val writer = QRCodeWriter()
-                val bitMatrix = writer.encode(address, BarcodeFormat.QR_CODE, 512, 512)
+                val bitMatrix = writer.encode(address, BarcodeFormat.QR_CODE, 512)
                 val bmp = Bitmap.createBitmap(512, 512, Bitmap.Config.RGB_565)
                 for (x in 0 until 512) { for (y in 0 until 512) { bmp.setPixel(x, y, if (bitMatrix[x, y]) Color.BLACK else Color.WHITE) } }
                 runOnUiThread { imageView.setImageBitmap(bmp) }
@@ -572,7 +575,7 @@ class MainActivity : AppCompatActivity() {
             val id = walletManager.getActiveId()?: return@setPositiveButton
             if (walletManager.unlock(id, pass.text.toString())) {
                 val seed = walletManager.getSeed()
-                val tv = TextView(this).apply { text = seed; textSize = 16f; setTextIsSelectable(true); setPadding(40,40,40,40); gravity = Gravity.CENTER }
+                val tv = TextView(this).apply { text = seed; textSize = 16f; setTextIsSelectable(true); setPadding(40,40,40); gravity = Gravity.CENTER }
                 AlertDialog.Builder(this).setTitle("⚠️ KHÔNG CHIA SẺ SEED").setView(tv).setPositiveButton("Copy 30s") { _, _ ->
                     val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                     cm.setPrimaryClip(ClipData.newPlainText("seed", seed))
@@ -617,7 +620,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showInfo() {
-        AlertDialog.Builder(this).setTitle("iBTC v4.2").setMessage("Build: 2026-05-25\n• 12 thanh theo dõi\n• Pool 2s, Stats 10s\n• Fix build error").setPositiveButton("OK", null).show()
+        AlertDialog.Builder(this).setTitle("iBTC v4.5").setMessage("Build: 2026-05-25\n• Pool font đồng nhất 13sp\n• Block bar đã dời xuống").setPositiveButton("OK", null).show()
     }
 
     private fun toast(msg: String) {
