@@ -184,7 +184,7 @@ class MainActivity : AppCompatActivity() {
         Thread {
             try {
                 val json = URL("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd").readText()
-                val price = Regex(""""usd":([\\d.]+)""").find(json)?.groupValues?.get(1)?.toDoubleOrNull() ?: 60000.0
+                val price = Regex(""usd":([\d.]+)").find(json)?.groupValues?.get(1)?.toDoubleOrNull() ?: 60000.0
                 runOnUiThread { callback(price) }
             } catch (_: Exception) {
                 runOnUiThread { callback(60000.0) }
@@ -203,13 +203,13 @@ private fun fetchBtcStats() {
                 val totalSats = URL("https://blockchain.info/q/totalbc").readText().trim().toLong()
                 val totalMined = totalSats / 100000000.0
                 val diffJson = URL("https://mempool.space/api/v1/difficulty-adjustment").readText()
-                val diffProgress = Regex(""""progressPercent":([\\d.]+)""").find(diffJson)?.groupValues?.get(1)?.toFloat()?: 0f
+                val diffProgress = Regex(""progressPercent":([\d.]+)").find(diffJson)?.groupValues?.get(1)?.toFloat()?: 0f
                 val mempoolJson = URL("https://mempool.space/api/mempool").readText()
-                val mempoolCount = Regex(""""count":(\\d+)""").find(mempoolJson)?.groupValues?.get(1)?.toInt()?: 0
+                val mempoolCount = Regex(""count":(\d+)").find(mempoolJson)?.groupValues?.get(1)?.toInt()?: 0
                 val feesJson = URL("https://mempool.space/api/v1/fees/recommended").readText()
-                val feeFast = Regex(""""fastestFee":(\\d+)""").find(feesJson)?.groupValues?.get(1)?.toInt()?: 0
+                val feeFast = Regex(""fastestFee":(\d+)").find(feesJson)?.groupValues?.get(1)?.toInt()?: 0
                 val hashJson = URL("https://mempool.space/api/v1/mining/hashrate/1w").readText()
-                val currentHash = Regex(""""currentHashrate":([\\d.]+)""").find(hashJson)?.groupValues?.get(1)?.toDouble()?: 0.0
+                val currentHash = Regex(""currentHashrate":([\d.]+)").find(hashJson)?.groupValues?.get(1)?.toDouble()?: 0.0
                 runOnUiThread {
                     val minedPct = ((totalMined / 21000000.0) * 100).toInt()
                     statBars["mined"]?.progress = minedPct
@@ -879,7 +879,10 @@ private fun fetchBtcStats() {
             setPadding(30)
         }
         val summary = TextView(this).apply {
-            text = "Gửi: $amt BTC\nĐến: $to\nPhí: ~$estFee BTC\nTổng: ${amt + estFee} BTC"
+            text = "Gửi: $amt BTC
+Đến: $to
+Phí: ~$estFee BTC
+Tổng: ${amt + estFee} BTC"
             setPadding(0,0,0,20)
         }
         val passInput = EditText(this).apply {
@@ -1093,7 +1096,9 @@ private fun fetchBtcStats() {
     private fun showInfo() {
         AlertDialog.Builder(this)
             .setTitle("iBTC v4.7")
-            .setMessage("Build: 2026-05-25\n• Block update 2s\n• Nút Làm mới đứng im")
+            .setMessage("Build: 2026-05-25
+• Block update 2s
+• Nút Làm mới đứng im")
             .setPositiveButton("OK", null)
             .show()
     }
