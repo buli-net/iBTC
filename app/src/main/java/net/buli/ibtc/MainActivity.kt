@@ -53,7 +53,6 @@ class MainActivity : AppCompatActivity() {
     private var isSyncing = false
     private var autoSyncStarted = false
     private var pendingToInput: EditText? = null
-
     private val qrScanLauncher = registerForActivityResult(ScanContract()) { result ->
         if (result.contents != null) {
             pendingToInput?.setText(result.contents)
@@ -117,7 +116,7 @@ class MainActivity : AppCompatActivity() {
                 if (active!= null && autoLockMs > 0 && System.currentTimeMillis() - lastInteractionTime > autoLockMs) {
                     walletManager.lock()
                     runOnUiThread {
-                        val msg = if (autoLockMs >= 60000) "Tự động khóa sau ${autoLockMs/60000} phút" else "Tự động khóa sau ${autoLockMs/1000}s"
+                        val msg = if (autoLockMs >= 60000) "Tự động khóa sau ${autoLockMs/60000} phút không dùng" else "Tự động khóa sau ${autoLockMs/1000} giây không dùng"
                         Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
                         showUnlockDialog()
                     }
@@ -135,9 +134,9 @@ class MainActivity : AppCompatActivity() {
                 if (walletManager.getActive()!= null &&!isSyncing) {
                     refreshWallet()
                 }
-                handler.postDelayed(this, 120000)
+                handler.postDelayed(this, 45000)
             }
-        }, 120000)
+        }, 45000)
     }
 
     private fun fetchBlockUpdate() {
@@ -243,7 +242,7 @@ class MainActivity : AppCompatActivity() {
         handler.post(object : Runnable {
             override fun run() {
                 fetchBtcStats()
-                handler.postDelayed(this, 60000)
+                handler.postDelayed(this, 30000)
             }
         })
     }
@@ -272,7 +271,7 @@ class MainActivity : AppCompatActivity() {
         val isDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
         val titleColor = if (isDark) Color.WHITE else Color.BLACK
         val logo = TextView(this).apply { text = "₿"; textSize = 72f; gravity = Gravity.CENTER; setTextColor(Color.parseColor("#F7931A")); setPadding(0, 80, 0, 20) }
-        val title = TextView(this).apply { text = "iBTC Wallet v4.8"; textSize = 26f; typeface = Typeface.DEFAULT_BOLD; gravity = Gravity.CENTER; setTextColor(titleColor) }
+        val title = TextView(this).apply { text = "iBTC Wallet v4.7"; textSize = 26f; typeface = Typeface.DEFAULT_BOLD; gravity = Gravity.CENTER; setTextColor(titleColor) }
         val subtitle = TextView(this).apply { text = "Bitcoin wallet an toàn, mã nguồn mở"; textSize = 14f; gravity = Gravity.CENTER; setTextColor(Color.GRAY); setPadding(0, 8, 0, 60) }
         val createBtn = Button(this).apply { text = "Tạo ví mới"; textSize = 16f; setPadding(0, 30, 0, 30) }
         val importBtn = Button(this).apply { text = "Import ví có sẵn"; textSize = 16f }
@@ -428,7 +427,6 @@ class MainActivity : AppCompatActivity() {
         btnReceive.setOnClickListener { showReceiveDialog() }
         btnSend.setOnClickListener { showSendDialog() }
         btnRefresh.setOnClickListener {
-            if (isSyncing) return@setOnClickListener
             refreshWallet()
             fetchBlockUpdate()
             fetchBtcStats()
@@ -518,9 +516,7 @@ class MainActivity : AppCompatActivity() {
             toast("Đang sync, vui lòng đợi")
             return
         }
-        if (walletManager.getActive() == null) { toast("Ví chưa mở"); return }
         val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(30) }
-        
         val toRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         val toInput = EditText(this).apply { hint = "Địa chỉ BTC (bc1... hoặc 1... hoặc 3...)"; layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f) }
         val scanBtn = Button(this).apply { text = "📷"; layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginStart = 8 } }
@@ -535,35 +531,24 @@ class MainActivity : AppCompatActivity() {
             options.setOrientationLocked(false)
             qrScanLauncher.launch(options)
         }
-        
         val amountInput = EditText(this).apply { hint = "Số lượng BTC"; inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL }
         val feeRates = try { walletManager.getFeeRates() } catch (_: Exception) { FeeRates(5, 10, 20) }
         val feeGroup = RadioGroup(this)
         val rSlow = RadioButton(this).apply { text = "Chậm ~60 phút (${feeRates.slow} sat/vB)"; id = 1 }
         val rNormal = RadioButton(this).apply { text = "Thường ~30 phút (${feeRates.normal} sat/vB)"; id = 2; isChecked = true }
         val rFast = RadioButton(this).apply { text = "Nhanh ~10 phút (${feeRates.fast} sat/vB)"; id = 3 }
-        val rCustom = RadioButton(this).apply { text = "Tùy chỉnh (1-100)"; id = 4 }
+        val rCustom = RadioButton(this).apply { text = "Tùy chỉnh (1-100 sat/vB)"; id = 4 }
         feeGroup.addView(rSlow)
         feeGroup.addView(rNormal)
         feeGroup.addView(rFast)
         feeGroup.addView(rCustom)
-        
-        val customFeeInput = EditText(this).apply { 
-            hint = "Nhập 1-100 sat/vB"; 
-            inputType = InputType.TYPE_CLASS_NUMBER
-            isEnabled = false
-            setText(feeRates.normal.toString())
-        }
-        feeGroup.setOnCheckedChangeListener { _, checkedId ->
-            customFeeInput.isEnabled = checkedId == 4
-        }
-        
         layout.addView(toRow)
         layout.addView(amountInput)
         layout.addView(TextView(this).apply { text = "Chọn phí mạng:"; setPadding(0,20,0,0) })
         layout.addView(feeGroup)
+        val customFeeInput = EditText(this).apply { hint = "Nhập 1-100"; inputType = InputType.TYPE_CLASS_NUMBER; isEnabled = false; setText(feeRates.normal.toString()) }
         layout.addView(customFeeInput)
-        
+        feeGroup.setOnCheckedChangeListener { _, checkedId -> customFeeInput.isEnabled = checkedId == 4 }
         AlertDialog.Builder(this).setTitle("Gửi BTC").setView(layout).setPositiveButton("Tiếp tục") { _, _ ->
             val to = toInput.text.toString().trim()
             val amt = amountInput.text.toString().toDoubleOrNull()?: 0.0
@@ -586,7 +571,7 @@ class MainActivity : AppCompatActivity() {
         val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(30) }
         val summary = TextView(this).apply { text = "Gửi: $amt BTC
 Đến: $to
-Phí: ~$estFee BTC ($feeRate sat/vB)
+Phí: ~$estFee BTC
 Tổng: ${amt + estFee} BTC"; setPadding(0,0,0,20) }
         val passInput = EditText(this).apply { hint = "Nhập mật khẩu để xác nhận"; inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD; transformationMethod = PasswordTransformationMethod.getInstance() }
         layout.addView(summary)
@@ -624,11 +609,11 @@ Tổng: ${amt + estFee} BTC"; setPadding(0,0,0,20) }
     }
 
     private fun showLockMenu() {
-        AlertDialog.Builder(this).setTitle("Khóa ví").setItems(arrayOf("Khóa ngay", "Tùy chỉnh thời gian tự khóa")) { _, which ->
+        AlertDialog.Builder(this).setTitle("Khóa ví").setItems(arrayOf("Khóa ngay", "Tùy chỉnh thời gian")) { _, which ->
             if (which == 0) {
                 walletManager.lock()
                 showUnlockDialog()
-                toast("Đã khóa ví")
+                toast("Đã khóa")
             } else {
                 showAutoLockSettings()
             }
@@ -637,11 +622,11 @@ Tổng: ${amt + estFee} BTC"; setPadding(0,0,0,20) }
 
     private fun showAutoLockSettings() {
         val options = arrayOf("30 giây", "1 phút", "2 phút", "5 phút", "10 phút", "Không tự khóa")
-        val values = longArrayOf(30_000L, 60_000L, 120_000L, 300_000L, 600_000L, 0L)
+        val values = longArrayOf(30000L, 60000L, 120000L, 300000L, 600000L, 0L)
         val prefs = getSharedPreferences("ibtc_prefs", Context.MODE_PRIVATE)
-        val current = prefs.getLong("auto_lock_ms", 120_000L)
-        val checked = values.indexOf(current).let { if (it >=0) it else 2 }
-        AlertDialog.Builder(this).setTitle("Tự khóa khi không dùng").setSingleChoiceItems(options, checked) { dialog, which ->
+        val current = prefs.getLong("auto_lock_ms", 120000L)
+        val checked = values.indexOf(current).let { if (it >= 0) it else 2 }
+        AlertDialog.Builder(this).setTitle("Thời gian tự khóa").setSingleChoiceItems(options, checked) { dialog, which ->
             autoLockMs = values[which]
             prefs.edit().putLong("auto_lock_ms", autoLockMs).apply()
             lastInteractionTime = System.currentTimeMillis()
@@ -701,12 +686,9 @@ Tổng: ${amt + estFee} BTC"; setPadding(0,0,0,20) }
     }
 
     private fun showInfo() {
-        AlertDialog.Builder(this).setTitle("iBTC v4.8").setMessage("Build: 2026-05-25
-• Block update 2s
-• Nút Làm mới giống các nút khác
-• Gửi có quét QR
-• Phí tùy chỉnh 1-100 sat/vB
-• Khóa ví có tùy chỉnh thời gian").setPositiveButton("OK", null).show()
+        AlertDialog.Builder(this).setTitle("iBTC v4.7").setMessage("Build: 2026-05-25
+• Giảm tần suất API (5s/30s) để hết lag
+• Nút Làm mới xoay").setPositiveButton("OK", null).show()
     }
 
     private fun toast(msg: String) {
