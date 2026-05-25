@@ -34,9 +34,10 @@ class MainActivity : AppCompatActivity() {
     private var lastInteractionTime = System.currentTimeMillis()
     private fun getAutoLockMs(): Long {
         val prefs = getSharedPreferences("wallet_prefs", MODE_PRIVATE)
+        if (prefs.getBoolean("never_lock", false)) return Long.MAX_VALUE
         if (prefs.getBoolean("lock_on_pause", false)) return 0L
         val mins = prefs.getInt("auto_lock_minutes", 2)
-        return mins * 60_000L
+        return if (mins == 0) 2 * 60_000L else mins * 60_000L
     }
     private val POOL_FONT = 13f
 
@@ -150,8 +151,8 @@ class MainActivity : AppCompatActivity() {
         Thread {
             try {
                 val json = URL("https://mempool.space/api/v1/blocks").openStream().bufferedReader().readText()
-                val height = Regex(""""height":(\\d+)""").find(json)?.groupValues?.get(1)?.toInt()?: 0
-                val lastTime = Regex(""""timestamp":(\\d+)""").find(json)?.groupValues?.get(1)?.toLong()?: 0L
+                val height = Regex(""""height":(\d+)""").find(json)?.groupValues?.get(1)?.toInt()?: 0
+                val lastTime = Regex(""""timestamp":(\d+)""").find(json)?.groupValues?.get(1)?.toLong()?: 0L
                 val nextHeight = height + 1
                 val elapsed = (System.currentTimeMillis()/1000 - lastTime).coerceAtLeast(0)
                 val percent = ((elapsed * 100) / 600).toInt()
@@ -183,7 +184,7 @@ class MainActivity : AppCompatActivity() {
         Thread {
             try {
                 val json = URL("https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd").readText()
-                val price = Regex(""usd":([\d.]+)").find(json)?.groupValues?.get(1)?.toDoubleOrNull() ?: 60000.0
+                val price = Regex(""""usd":([\d.]+)""").find(json)?.groupValues?.get(1)?.toDoubleOrNull() ?: 60000.0
                 runOnUiThread { callback(price) }
             } catch (_: Exception) {
                 runOnUiThread { callback(60000.0) }
@@ -202,13 +203,13 @@ private fun fetchBtcStats() {
                 val totalSats = URL("https://blockchain.info/q/totalbc").readText().trim().toLong()
                 val totalMined = totalSats / 100000000.0
                 val diffJson = URL("https://mempool.space/api/v1/difficulty-adjustment").readText()
-                val diffProgress = Regex(""progressPercent":([\d.]+)").find(diffJson)?.groupValues?.get(1)?.toFloat()?: 0f
+                val diffProgress = Regex(""""progressPercent":([\d.]+)""").find(diffJson)?.groupValues?.get(1)?.toFloat()?: 0f
                 val mempoolJson = URL("https://mempool.space/api/mempool").readText()
-                val mempoolCount = Regex(""count":(\d+)").find(mempoolJson)?.groupValues?.get(1)?.toInt()?: 0
+                val mempoolCount = Regex(""""count":(\d+)""").find(mempoolJson)?.groupValues?.get(1)?.toInt()?: 0
                 val feesJson = URL("https://mempool.space/api/v1/fees/recommended").readText()
-                val feeFast = Regex(""fastestFee":(\d+)").find(feesJson)?.groupValues?.get(1)?.toInt()?: 0
+                val feeFast = Regex(""""fastestFee":(\d+)""").find(feesJson)?.groupValues?.get(1)?.toInt()?: 0
                 val hashJson = URL("https://mempool.space/api/v1/mining/hashrate/1w").readText()
-                val currentHash = Regex(""currentHashrate":([\d.]+)").find(hashJson)?.groupValues?.get(1)?.toDouble()?: 0.0
+                val currentHash = Regex(""""currentHashrate":([\d.]+)""").find(hashJson)?.groupValues?.get(1)?.toDouble()?: 0.0
                 runOnUiThread {
                     val minedPct = ((totalMined / 21000000.0) * 100).toInt()
                     statBars["mined"]?.progress = minedPct
@@ -878,10 +879,7 @@ private fun fetchBtcStats() {
             setPadding(30)
         }
         val summary = TextView(this).apply {
-            text = "Gửi: $amt BTC
-Đến: $to
-Phí: ~$estFee BTC
-Tổng: ${amt + estFee} BTC"
+            text = "Gửi: $amt BTC\nĐến: $to\nPhí: ~$estFee BTC\nTổng: ${amt + estFee} BTC"
             setPadding(0,0,0,20)
         }
         val passInput = EditText(this).apply {
@@ -967,33 +965,27 @@ Tổng: ${amt + estFee} BTC"
     
     private fun showLockSettings() {
         val prefs = getSharedPreferences("wallet_prefs", MODE_PRIVATE)
-        val items = arrayOf("Khóa ngay khi thoát", "1 phút", "2 phút", "5 phút", "15 phút")
         val current = prefs.getInt("auto_lock_minutes", 2)
-        val onPause = prefs.getBoolean("lock_on_pause", false)
-        val checked = when {
-            onPause -> 0
-            current == 1 -> 1
-            current == 2 -> 2
-            current == 5 -> 3
-            current == 15 -> 4
-            else -> 2
-        }
+        val items = arrayOf("Khóa ngay khi thoát", "1 phút", "2 phút", "5 phút", "15 phút", "Không tự khóa")
+        val checked = when(current) { 0 -> 0; 1 -> 1; 2 -> 2; 5 -> 3; 15 -> 4; else -> 5 }
         AlertDialog.Builder(this)
             .setTitle("Cài đặt tự khóa")
             .setSingleChoiceItems(items, checked) { dialog, which ->
-                val edit = prefs.edit()
-                if (which == 0) {
-                    edit.putBoolean("lock_on_pause", true)
-                    edit.putInt("auto_lock_minutes", 2)
+                val mins = when(which) { 0 -> 0; 1 -> 1; 2 -> 2; 3 -> 5; 4 -> 15; else -> 0 }
+                // 0 means immediate on pause, else use value; use 999 for never
+                val saveVal = if (which == 5) 0 else mins
+                prefs.edit().putInt("auto_lock_minutes", if (which==5) 0 else if (which==0) 0 else mins).apply()
+                // For "không tự khóa" we store 0 and handle separately
+                if (which == 5) {
+                    prefs.edit().putInt("auto_lock_minutes", 0).putBoolean("never_lock", true).apply()
+                    toast("Đã tắt tự khóa")
+                } else if (which == 0) {
+                    prefs.edit().putInt("auto_lock_minutes", 0).putBoolean("lock_on_pause", true).apply()
                     toast("Sẽ khóa ngay khi thoát app")
                 } else {
-                    val mins = arrayOf(0,1,2,5,15)[which]
-                    edit.putBoolean("lock_on_pause", false)
-                    edit.putInt("auto_lock_minutes", mins)
-                    toast("Đã lưu: ${items[which]} - sẽ tự khóa")
+                    prefs.edit().putBoolean("never_lock", false).putBoolean("lock_on_pause", false).apply()
+                    toast("Đã lưu: ${items[which]}")
                 }
-                edit.apply()
-                lastInteractionTime = System.currentTimeMillis()
                 dialog.dismiss()
             }
             .setNegativeButton("Đóng", null)
@@ -1101,9 +1093,7 @@ Tổng: ${amt + estFee} BTC"
     private fun showInfo() {
         AlertDialog.Builder(this)
             .setTitle("iBTC v4.7")
-            .setMessage("Build: 2026-05-25
-• Block update 2s
-• Nút Làm mới đứng im")
+            .setMessage("Build: 2026-05-25\n• Block update 2s\n• Nút Làm mới đứng im")
             .setPositiveButton("OK", null)
             .show()
     }
