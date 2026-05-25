@@ -1,27 +1,570 @@
 package net.buli.ibtc
+
 import android.app.AlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.Typeface
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.text.InputType
+import android.text.method.PasswordTransformationMethod
+import android.view.Gravity
+import android.view.View
+import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.setPadding
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
+import java.text.SimpleDateFormat
+import java.util.*
 
 class MainActivity : AppCompatActivity() {
-    private lateinit var wm:WalletManager
-    private val h=Handler(Looper.getMainLooper())
-    private var last=System.currentTimeMillis()
-    override fun onCreate(b:Bundle?){super.onCreate(b); window.setFlags(WindowManager.LayoutParams.FLAG_SECURE,WindowManager.LayoutParams.FLAG_SECURE); wm=WalletManager(this); val l=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL}; setContentView(l); if(wm.hasWallets()) unlock() else create() }
-    override fun onDestroy(){ h.removeCallbacksAndMessages(null); wm.lock(); super.onDestroy() }
-    private fun create(){ val n=EditText(this); val p=EditText(this); AlertDialog.Builder(this).setView(LinearLayout(this).apply{addView(n);addView(p)}).setPositiveButton("OK"){_,_-> wm.create(n.text.toString(),p.text.toString()); main() }.show() }
-    private fun unlock(){ val id=wm.getActiveId()!!; val p=EditText(this); AlertDialog.Builder(this).setView(p).setPositiveButton("OK"){_,_-> if(wm.unlock(id,p.text.toString())) main() }.show() }
-    private fun main(){ val t=TextView(this); val a=TextView(this); val b=Button(this).apply{text="QR"}; b.setOnClickListener{ val iv=ImageView(this); Thread{ val bmp=Bitmap.createBitmap(512,512,Bitmap.Config.RGB_565); val bit=QRCodeWriter().encode(wm.getAddress(),BarcodeFormat.QR_CODE,512,512); for(x in 0 until 512) for(y in 0 until 512) bmp.setPixel(x,y,if(bit[x,y])Color.BLACK else Color.WHITE); runOnUiThread{iv.setImageBitmap(bmp)} }.start(); AlertDialog.Builder(this).setView(iv).show() }; Thread{ val bal=wm.getBalance(); runOnUiThread{ t.text="%.8f BTC".format(bal); a.text=wm.getAddress() } }.start(); (findViewById<LinearLayout>(android.R.id.content).getChildAt(0) as LinearLayout).apply{removeAllViews();addView(t);addView(a);addView(b)} }
+
+    private lateinit var walletManager: WalletManager
+    private val handler = Handler(Looper.getMainLooper())
+    private var lastInteractionTime = System.currentTimeMillis()
+    private val AUTO_LOCK_MS = 120_000L
+
+    private lateinit var rootLayout: LinearLayout
+    private lateinit var scrollView: ScrollView
+    private lateinit var balanceText: TextView
+    private lateinit var priceText: TextView
+    private lateinit var addressText: TextView
+    private lateinit var syncText: TextView
+    private lateinit var syncProgressBar: ProgressBar
+    private lateinit var txListView: ListView
+    private lateinit var walletNameText: TextView
+    private var isSyncing = false
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
+        walletManager = WalletManager(this)
+        setupRootLayout()
+        setContentView(scrollView)
+        startAutoLockChecker()
+        if (walletManager.hasWallets()) showUnlockDialog() else showWelcome()
+    }
+
+    override fun onUserInteraction() {
+        super.onUserInteraction()
+        lastInteractionTime = System.currentTimeMillis()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        lastInteractionTime = System.currentTimeMillis()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        lastInteractionTime = System.currentTimeMillis()
+        if (walletManager.getActive()!= null) refreshWallet()
+    }
+
+    override fun onDestroy() {
+        handler.removeCallbacksAndMessages(null)
+        try {
+            walletManager.lock()
+            walletManager.stop()
+        } catch (_: Exception) {}
+        super.onDestroy()
+    }
+
+    private fun setupRootLayout() {
+        rootLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(24)
+            layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        }
+        scrollView = ScrollView(this).apply {
+            layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            addView(rootLayout)
+        }
+    }
+
+    private fun startAutoLockChecker() {
+        handler.postDelayed(object : Runnable {
+            override fun run() {
+                val active = walletManager.getActive()
+                if (active!= null && System.currentTimeMillis() - lastInteractionTime > AUTO_LOCK_MS) {
+                    walletManager.lock()
+                    runOnUiThread {
+                        Toast.makeText(this@MainActivity, "Tự động khóa sau 2 phút không dùng", Toast.LENGTH_SHORT).show()
+                        showUnlockDialog()
+                    }
+                }
+                handler.postDelayed(this, 10000)
+            }
+        }, 10000)
+    }
+
+    private fun showWelcome() {
+        rootLayout.removeAllViews()
+        val logo = TextView(this).apply {
+            text = "₿"
+            textSize = 72f
+            gravity = Gravity.CENTER
+            setTextColor(Color.parseColor("#F7931A"))
+            setPadding(0, 80, 0, 20)
+        }
+        val title = TextView(this).apply {
+            text = "iBTC Wallet v4.1"
+            textSize = 26f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextColor(Color.BLACK)
+        }
+        val subtitle = TextView(this).apply {
+            text = "Bitcoin wallet an toàn, mã nguồn mở"
+            textSize = 14f
+            gravity = Gravity.CENTER
+            setTextColor(Color.GRAY)
+            setPadding(0, 8, 0, 60)
+        }
+        val createBtn = Button(this).apply {
+            text = "Tạo ví mới"
+            textSize = 16f
+            setPadding(0, 30, 0, 30)
+        }
+        val importBtn = Button(this).apply {
+            text = "Import ví có sẵn"
+            textSize = 16f
+        }
+        val space = Space(this).apply {
+            layoutParams = LinearLayout.LayoutParams(1, 40)
+        }
+        createBtn.setOnClickListener { showCreateDialog() }
+        importBtn.setOnClickListener { showImportDialog() }
+        rootLayout.addView(logo)
+        rootLayout.addView(title)
+        rootLayout.addView(subtitle)
+        rootLayout.addView(createBtn)
+        rootLayout.addView(space)
+        rootLayout.addView(importBtn)
+    }
+
+    private fun showCreateDialog() {
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(30)
+        }
+        val nameInput = EditText(this).apply {
+            hint = "Tên ví (tùy chọn)"
+            inputType = InputType.TYPE_CLASS_TEXT
+        }
+        val passInput = EditText(this).apply {
+            hint = "Mật khẩu (tối thiểu 8 ký tự)"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            transformationMethod = PasswordTransformationMethod.getInstance()
+        }
+        val pass2Input = EditText(this).apply {
+            hint = "Nhập lại mật khẩu"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            transformationMethod = PasswordTransformationMethod.getInstance()
+        }
+        val warning = TextView(this).apply {
+            text = "⚠️ Lưu mật khẩu cẩn thận. Mất = mất ví."
+            textSize = 12f
+            setTextColor(Color.RED)
+            setPadding(0, 20, 0, 0)
+        }
+        layout.addView(nameInput)
+        layout.addView(passInput)
+        layout.addView(pass2Input)
+        layout.addView(warning)
+        AlertDialog.Builder(this)
+           .setTitle("Tạo ví Bitcoin mới")
+           .setView(layout)
+           .setPositiveButton("Tạo") { _, _ ->
+                val name = nameInput.text.toString().trim()
+                val p1 = passInput.text.toString()
+                val p2 = pass2Input.text.toString()
+                if (p1.length < 8) {
+                    toast("Mật khẩu phải ≥8 ký tự")
+                    return@setPositiveButton
+                }
+                if (p1!= p2) {
+                    toast("Mật khẩu không khớp")
+                    return@setPositiveButton
+                }
+                try {
+                    walletManager.create(name, p1)
+                    Thread { walletManager.init() }.start()
+                    toast("Tạo ví thành công")
+                    showMainWallet()
+                } catch (e: Exception) {
+                    toast("Lỗi: ${e.message}")
+                }
+            }
+           .setNegativeButton("Hủy", null)
+           .show()
+    }
+
+    private fun showImportDialog() {
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(30)
+        }
+        val nameInput = EditText(this).apply { hint = "Tên ví" }
+        val seedInput = EditText(this).apply {
+            hint = "12 hoặc 24 từ seed, cách nhau bằng space"
+            minLines = 3
+            gravity = Gravity.TOP
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE
+        }
+        val passInput = EditText(this).apply {
+            hint = "Đặt mật khẩu mới ≥8 ký tự"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            transformationMethod = PasswordTransformationMethod.getInstance()
+        }
+        layout.addView(nameInput)
+        layout.addView(seedInput)
+        layout.addView(passInput)
+        AlertDialog.Builder(this)
+           .setTitle("Import ví")
+           .setView(layout)
+           .setPositiveButton("Import") { _, _ ->
+                val name = nameInput.text.toString().trim()
+                val seed = seedInput.text.toString().trim()
+                val pass = passInput.text.toString()
+                if (pass.length < 8) {
+                    toast("Mật khẩu quá ngắn")
+                    return@setPositiveButton
+                }
+                val info = walletManager.import(name, seed, pass)
+                if (info == null) {
+                    toast("Seed không hợp lệ (cần 12-24 từ)")
+                } else {
+                    Thread { walletManager.init() }.start()
+                    toast("Import thành công")
+                    showMainWallet()
+                }
+            }
+           .setNegativeButton("Hủy", null)
+           .show()
+    }
+
+    private fun showUnlockDialog() {
+        val id = walletManager.getActiveId()
+        if (id == null) {
+            showWelcome()
+            return
+        }
+        rootLayout.removeAllViews()
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(40)
+        }
+        val title = TextView(this).apply {
+            text = "🔒 Ví đã khóa"
+            textSize = 24f
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, 40)
+        }
+        val passInput = EditText(this).apply {
+            hint = "Nhập mật khẩu"
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            transformationMethod = PasswordTransformationMethod.getInstance()
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        }
+        val unlockBtn = Button(this).apply {
+            text = "Mở khóa"
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = 20 }
+        }
+        unlockBtn.setOnClickListener {
+            val pass = passInput.text.toString()
+            if (walletManager.unlock(id, pass)) {
+                Thread { walletManager.init() }.start()
+                showMainWallet()
+            } else {
+                toast("Sai mật khẩu (khóa sau 5 lần)")
+                passInput.text.clear()
+            }
+        }
+        layout.addView(title)
+        layout.addView(passInput)
+        layout.addView(unlockBtn)
+        rootLayout.addView(layout)
+    }
+
+    private fun showMainWallet() {
+        rootLayout.removeAllViews()
+        walletNameText = TextView(this).apply {
+            text = walletManager.getActive()?.name?: "Ví"
+            textSize = 18f
+            typeface = Typeface.DEFAULT_BOLD
+        }
+        balanceText = TextView(this).apply {
+            text = "0.00000000 BTC"
+            textSize = 32f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.BLACK)
+            setPadding(0, 10, 0, 0)
+        }
+        priceText = TextView(this).apply {
+            text = "≈ $0.00"
+            textSize = 16f
+            setTextColor(Color.GRAY)
+        }
+        syncText = TextView(this).apply {
+            text = "Đang kết nối..."
+            textSize = 13f
+        }
+        syncProgressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 100
+            progress = 0
+        }
+        addressText = TextView(this).apply {
+            textSize = 12f
+            isSingleLine = true
+            ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
+            setTextColor(Color.DKGRAY)
+            setPadding(0, 10, 0, 10)
+        }
+        val btnRow1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; weightSum = 2f }
+        val btnReceive = Button(this).apply {
+            text = "⬇ Nhận"
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = 8 }
+        }
+        val btnSend = Button(this).apply {
+            text = "⬆ Gửi"
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = 8 }
+        }
+        val btnRow2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; weightSum = 2f }
+        val btnRefresh = Button(this).apply {
+            text = "⟳ Làm mới"
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = 8 }
+        }
+        val btnSettings = Button(this).apply {
+            text = "⚙ Cài đặt"
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = 8 }
+        }
+        btnRow1.addView(btnReceive)
+        btnRow1.addView(btnSend)
+        btnRow2.addView(btnRefresh)
+        btnRow2.addView(btnSettings)
+        val txTitle = TextView(this).apply {
+            text = "Lịch sử giao dịch"
+            textSize = 16f
+            typeface = Typeface.DEFAULT_BOLD
+            setPadding(0, 30, 0, 10)
+        }
+        txListView = ListView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 600)
+        }
+        rootLayout.addView(walletNameText)
+        rootLayout.addView(balanceText)
+        rootLayout.addView(priceText)
+        rootLayout.addView(syncText)
+        rootLayout.addView(syncProgressBar)
+        rootLayout.addView(addressText)
+        rootLayout.addView(Space(this).apply { layoutParams = LinearLayout.LayoutParams(1, 20) })
+        rootLayout.addView(btnRow1)
+        rootLayout.addView(btnRow2)
+        rootLayout.addView(txTitle)
+        rootLayout.addView(txListView)
+        btnReceive.setOnClickListener { showReceiveDialog() }
+        btnSend.setOnClickListener { showSendDialog() }
+        btnRefresh.setOnClickListener { refreshWallet() }
+        btnSettings.setOnClickListener { showSettings() }
+        walletManager.onProgress { pct, txt ->
+            runOnUiThread {
+                syncText.text = txt
+                syncProgressBar.progress = pct
+                isSyncing = pct < 100
+            }
+        }
+        refreshWallet()
+    }
+
+    private fun refreshWallet() {
+        Thread {
+            try {
+                val bal = walletManager.getBalance()
+                val price = walletManager.price()
+                val addr = walletManager.getAddress()
+                val txs = walletManager.getTransactions()
+                runOnUiThread {
+                    balanceText.text = String.format(Locale.US, "%.8f BTC", bal)
+                    priceText.text = String.format(Locale.US, "≈ $%,.2f (BTC $%,.2f)", bal * price, price)
+                    addressText.text = "Địa chỉ: $addr"
+                    val adapter = object : ArrayAdapter<String>(this, android.R.layout.simple_list_item_2, android.R.id.text1, txs.map { tx -> val type = if (tx.type == "Nhận") "⬇" else "⬆"; "$type ${tx.type} ${String.format("%.8f", tx.amount)} BTC" }) {
+                        override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                            val view = super.getView(position, convertView, parent)
+                            val tx = txs[position]
+                            val text1 = view.findViewById<TextView>(android.R.id.text1)
+                            val text2 = view.findViewById<TextView>(android.R.id.text2)
+                            text1.text = "${if (tx.type == "Nhận") "⬇" else "⬆"} ${tx.type} ${String.format("%.8f", tx.amount)}"
+                            text2.text = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(tx.time) + " • " + tx.txId.take(12) + "..."
+                            text2.setTextColor(Color.GRAY)
+                            text2.textSize = 11f
+                            return view
+                        }
+                    }
+                    txListView.adapter = adapter
+                }
+            } catch (e: Exception) {
+                runOnUiThread { toast("Lỗi refresh: ${e.message}") }
+            }
+        }.start()
+    }
+
+    private fun showReceiveDialog() {
+        val address = walletManager.getAddress()
+        if (address.isEmpty()) {
+            toast("Ví chưa sẵn sàng")
+            return
+        }
+        val layout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(40)
+        }
+        val imageView = ImageView(this).apply {
+            layoutParams = LinearLayout.LayoutParams(512, 512).apply { bottomMargin = 20 }
+        }
+        Thread {
+            try {
+                val writer = QRCodeWriter()
+                val bitMatrix = writer.encode(address, BarcodeFormat.QR_CODE, 512, 512)
+                val bmp = Bitmap.createBitmap(512, 512, Bitmap.Config.RGB_565)
+                for (x in 0 until 512) {
+                    for (y in 0 until 512) {
+                        bmp.setPixel(x, y, if (bitMatrix[x, y]) Color.BLACK else Color.WHITE)
+                    }
+                }
+                runOnUiThread { imageView.setImageBitmap(bmp) }
+            } catch (e: Exception) {
+                runOnUiThread { toast("Lỗi tạo QR: ${e.message}") }
+            }
+        }.start()
+        val addressView = TextView(this).apply {
+            text = address
+            textSize = 13f
+            gravity = Gravity.CENTER
+            setTextIsSelectable(true)
+            setPadding(0, 10, 0, 20)
+        }
+        val copyBtn = Button(this).apply { text = "Copy địa chỉ" }
+        copyBtn.setOnClickListener {
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            cm.setPrimaryClip(ClipData.newPlainText("btc_address", address))
+            toast("Đã copy - sẽ tự xóa sau 30 giây")
+            handler.postDelayed({
+                try { cm.clearPrimaryClip() } catch (_: Exception) {}
+            }, 30000)
+        }
+        layout.addView(imageView)
+        layout.addView(addressView)
+        layout.addView(copyBtn)
+        AlertDialog.Builder(this).setTitle("Nhận Bitcoin").setView(layout).setPositiveButton("Đóng", null).show()
+    }
+
+    private fun showSendDialog() {
+        if (isSyncing) {
+            toast("Đang sync, vui lòng đợi")
+            return
+        }
+        val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(30) }
+        val toInput = EditText(this).apply { hint = "Địa chỉ BTC (bc1... hoặc 1... hoặc 3...)" }
+        val amountInput = EditText(this).apply { hint = "Số lượng BTC"; inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL }
+        val feeRates = try { walletManager.getFeeRates() } catch (_: Exception) { FeeRates(5, 10, 20) }
+        val feeGroup = RadioGroup(this)
+        val rSlow = RadioButton(this).apply { text = "Chậm ~60 phút (${feeRates.slow} sat/vB)"; id = 1 }
+        val rNormal = RadioButton(this).apply { text = "Thường ~30 phút (${feeRates.normal} sat/vB)"; id = 2; isChecked = true }
+        val rFast = RadioButton(this).apply { text = "Nhanh ~10 phút (${feeRates.fast} sat/vB)"; id = 3 }
+        feeGroup.addView(rSlow); feeGroup.addView(rNormal); feeGroup.addView(rFast)
+        layout.addView(toInput); layout.addView(amountInput); layout.addView(TextView(this).apply { text = "Chọn phí mạng:"; setPadding(0,20,0,0) }); layout.addView(feeGroup)
+        AlertDialog.Builder(this).setTitle("Gửi BTC").setView(layout).setPositiveButton("Tiếp tục") { _, _ ->
+            val to = toInput.text.toString().trim()
+            val amt = amountInput.text.toString().toDoubleOrNull()?: 0.0
+            if (to.length < 26 || amt <= 0) { toast("Địa chỉ hoặc số tiền không hợp lệ"); return@setPositiveButton }
+            val fee = when (feeGroup.checkedRadioButtonId) { 1 -> feeRates.slow; 3 -> feeRates.fast; else -> feeRates.normal }
+            val estFee = walletManager.estimateFee(to, amt, fee)
+            confirmSend(to, amt, fee, estFee)
+        }.setNegativeButton("Hủy", null).show()
+    }
+
+    private fun confirmSend(to: String, amt: Double, feeRate: Int, estFee: Double) {
+        val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(30) }
+        val summary = TextView(this).apply { text = "Gửi: $amt BTC\nĐến: $to\nPhí: ~$estFee BTC\nTổng: ${amt + estFee} BTC"; setPadding(0,0,0,20) }
+        val passInput = EditText(this).apply { hint = "Nhập mật khẩu để xác nhận"; inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD; transformationMethod = PasswordTransformationMethod.getInstance() }
+        layout.addView(summary); layout.addView(passInput)
+        AlertDialog.Builder(this).setTitle("Xác nhận").setView(layout).setPositiveButton("Gửi ngay") { _, _ ->
+            val id = walletManager.getActiveId()?: return@setPositiveButton
+            if (!walletManager.unlock(id, passInput.text.toString())) { toast("Sai mật khẩu"); return@setPositiveButton }
+            Thread {
+                val result = walletManager.send(to, amt, feeRate)
+                runOnUiThread { if (result.startsWith("Lỗi")) toast(result) else { toast("Đã gửi! TXID: ${result.take(12)}..."); refreshWallet() } }
+            }.start()
+        }.setNegativeButton("Hủy", null).show()
+    }
+
+    private fun showSettings() {
+        val items = arrayOf("👁 Xem seed phrase", "🔑 Đổi mật khẩu", "✏️ Đổi tên ví", "🗑 Xóa ví vĩnh viễn", "🔒 Khóa ví ngay", "ℹ️ Thông tin")
+        AlertDialog.Builder(this).setTitle("Cài đặt").setItems(items) { _, w -> when(w) { 0 -> showSeedDialog(); 1 -> showChangePassDialog(); 2 -> showRenameDialog(); 3 -> showDeleteDialog(); 4 -> { walletManager.lock(); showUnlockDialog() }; 5 -> showInfo() } }.show()
+    }
+
+    private fun showSeedDialog() {
+        val pass = EditText(this).apply { inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD; transformationMethod = PasswordTransformationMethod.getInstance() }
+        AlertDialog.Builder(this).setTitle("Nhập mật khẩu để xem seed").setView(pass).setPositiveButton("Xem") { _, _ ->
+            val id = walletManager.getActiveId()?: return@setPositiveButton
+            if (walletManager.unlock(id, pass.text.toString())) {
+                val seed = walletManager.getSeed()
+                val tv = TextView(this).apply { text = seed; textSize = 16f; setTextIsSelectable(true); setPadding(40,40,40,40); gravity = Gravity.CENTER }
+                AlertDialog.Builder(this).setTitle("⚠️ KHÔNG CHIA SẺ SEED").setView(tv).setPositiveButton("Copy 30s") { _, _ ->
+                    val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                    cm.setPrimaryClip(ClipData.newPlainText("seed", seed))
+                    handler.postDelayed({ cm.clearPrimaryClip() }, 30000)
+                }.setNegativeButton("Đóng", null).show()
+            } else toast("Sai mật khẩu")
+        }.show()
+    }
+
+    private fun showChangePassDialog() {
+        val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(30) }
+        val oldP = EditText(this).apply { hint = "Mật khẩu cũ"; inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD }
+        val newP = EditText(this).apply { hint = "Mật khẩu mới ≥8"; inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD }
+        layout.addView(oldP); layout.addView(newP)
+        AlertDialog.Builder(this).setTitle("Đổi mật khẩu").setView(layout).setPositiveButton("Đổi") { _, _ ->
+            val id = walletManager.getActiveId()?: return@setPositiveButton
+            if (walletManager.changePassword(id, oldP.text.toString(), newP.text.toString())) toast("Đã đổi thành công") else toast("Sai mật khẩu cũ")
+        }.show()
+    }
+
+    private fun showRenameDialog() {
+        val input = EditText(this).apply { hint = "Tên ví mới"; setText(walletManager.getActive()?.name?: "") }
+        AlertDialog.Builder(this).setTitle("Đổi tên").setView(input).setPositiveButton("Lưu") { _, _ ->
+            val id = walletManager.getActiveId()?: return@setPositiveButton
+            walletManager.rename(id, input.text.toString())
+            walletNameText.text = input.text.toString()
+            toast("Đã đổi tên")
+        }.show()
+    }
+
+    private fun showDeleteDialog() {
+        val pass = EditText(this).apply { inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD }
+        AlertDialog.Builder(this).setTitle("XÓA VĨNH VIỄN").setMessage("Nhập mật khẩu để xóa. Không thể khôi phục nếu không có seed!").setView(pass).setPositiveButton("XÓA") { _, _ ->
+            val id = walletManager.getActiveId()?: return@setPositiveButton
+            if (walletManager.unlock(id, pass.text.toString())) {
+                walletManager.delete(id)
+                showWelcome()
+                toast("Đã xóa")
+            } else toast("Sai pass")
+        }.setNegativeButton("Hủy", null).show()
+    }
+
+    private fun showInfo() {
+        AlertDialog.Builder(this).setTitle("iBTC v4.1").setMessage("Build: 2026-05-25\nBảo mật:\n• PBKDF2 200,000 iterations\n• AES-GCM 256\n• Auto-lock 2 phút\n• FLAG_SECURE chống screenshot\n• Xóa clipboard 30s").setPositiveButton("OK", null).show()
+    }
+
+    private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
 }
