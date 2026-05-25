@@ -686,9 +686,7 @@ Tổng: ${amt + estFee} BTC"; setPadding(0,0,0,20) }
     }
 
     private fun showInfo() {
-        AlertDialog.Builder(this).setTitle("iBTC v4.7").setMessage("Build: 2026-05-25
-• Giảm tần suất API (5s/30s) để hết lag
-• Nút Làm mới xoay").setPositiveButton("OK", null).show()
+        AlertDialog.Builder(this).setTitle("iBTC v4.7").setMessage("Build: 2026-05-25\n• Giảm tần suất API (5s/30s) để hết lag\n• Nút Làm mới xoay").setPositiveButton("OK", null).show()
     }
 
     private fun toast(msg: String) {
