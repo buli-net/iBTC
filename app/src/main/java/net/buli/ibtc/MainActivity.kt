@@ -22,7 +22,6 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.setPadding
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
-import java.net.HttpURLConnection
 import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.*
@@ -86,9 +85,7 @@ class MainActivity : AppCompatActivity() {
         autoSyncStarted = true
         handler.postDelayed(object : Runnable {
             override fun run() {
-                if (walletManager.getActive()!= null &&!isSyncing) {
-                    refreshWallet()
-                }
+                if (walletManager.getActive()!= null &&!isSyncing) { refreshWallet() }
                 handler.postDelayed(this, 45000)
             }
         }, 45000)
@@ -97,21 +94,10 @@ class MainActivity : AppCompatActivity() {
     private fun fetchBlockUpdate() {
         Thread {
             try {
-                val url = URL("https://blockstream.info/api/blocks/tip/height")
-                val conn = url.openConnection() as HttpURLConnection
-                conn.connectTimeout = 5000
-                conn.readTimeout = 5000
-                conn.setRequestProperty("User-Agent", "iBTC-Wallet")
-                val height = conn.inputStream.bufferedReader().readText().trim().toInt()
-
-                val url2 = URL("https://blockstream.info/api/block/$height")
-                val conn2 = url2.openConnection() as HttpURLConnection
-                conn2.connectTimeout = 5000
-                conn2.readTimeout = 5000
-                conn2.setRequestProperty("User-Agent", "iBTC-Wallet")
-                val json = conn2.inputStream.bufferedReader().readText()
-                val lastTime = Regex("\"timestamp\":(\\d+)").find(json)?.groupValues?.get(1)?.toLong()?: 0L
-
+                val json = URL("https://mempool.space/api/v1/blocks").openStream().bufferedReader().readText()
+                val height = Regex("\"height\":(\\d+)").find(json)?.groupValues?.get(1)?.toInt() ?: 0
+                val lastTime = Regex("\"timestamp\":(\\d+)").find(json)?.groupValues?.get(1)?.toLong() ?: 0L
+                
                 val nextHeight = height + 1
                 val elapsed = (System.currentTimeMillis()/1000 - lastTime).coerceAtLeast(0)
                 val percent = ((elapsed * 100) / 600).toInt()
@@ -131,8 +117,8 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             } catch (e: Exception) {
-                runOnUiThread {
-                    blockText.text = "Lỗi pool - sẽ tự thử lại"
+                runOnUiThread { 
+                    blockText.text = "Lỗi pool - tự thử lại sau 5s"
                     blockProgressBar.progress = 0
                 }
             }
@@ -140,11 +126,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startBlockProgress() {
-        blockText.text = "Đang kết nối pool..."
+        blockText.text = "Đang kết nối mempool..."
         handler.post(object : Runnable {
             override fun run() {
                 fetchBlockUpdate()
-                handler.postDelayed(this, 3000) // auto retry 3s
+                handler.postDelayed(this, 5000)
             }
         })
     }
@@ -222,7 +208,7 @@ class MainActivity : AppCompatActivity() {
         priceText = TextView(this).apply { text = "≈ $0.00"; textSize = 16f; setTextColor(subColor) }
         syncText = TextView(this).apply { text = "Chưa đồng bộ"; textSize = 13f; setTextColor(subColor) }
         syncProgressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; progress = 0 }
-        blockText = TextView(this).apply { text = "Đang kết nối pool..."; textSize = 12f; setTextColor(subColor); setPadding(0,8,0,2); typeface = Typeface.DEFAULT_BOLD }
+        blockText = TextView(this).apply { text = "Đang kết nối mempool..."; textSize = 12f; setTextColor(subColor); setPadding(0,8,0,2); typeface = Typeface.DEFAULT_BOLD }
         blockProgressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 100; progress = 0; scaleY = 0.7f }
         addressText = TextView(this).apply { textSize = 12f; isSingleLine = true; ellipsize = android.text.TextUtils.TruncateAt.MIDDLE; setTextColor(subColor); setPadding(0, 10, 0, 10) }
         val btnRow1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; weightSum = 2f }
@@ -237,11 +223,7 @@ class MainActivity : AppCompatActivity() {
         rootLayout.addView(walletNameText); rootLayout.addView(balanceText); rootLayout.addView(priceText); rootLayout.addView(syncText); rootLayout.addView(syncProgressBar); rootLayout.addView(blockText); rootLayout.addView(blockProgressBar); rootLayout.addView(addressText); rootLayout.addView(Space(this).apply { layoutParams = LinearLayout.LayoutParams(1, 20) }); rootLayout.addView(btnRow1); rootLayout.addView(btnRow2); rootLayout.addView(txTitle); rootLayout.addView(txListView)
         btnReceive.setOnClickListener { showReceiveDialog() }
         btnSend.setOnClickListener { showSendDialog() }
-        btnRefresh.setOnClickListener {
-            refreshWallet()
-            blockText.text = "Đang làm mới block..."
-            fetchBlockUpdate() // làm mới cả 2 cùng lúc
-        }
+        btnRefresh.setOnClickListener { refreshWallet(); fetchBlockUpdate() }
         btnSettings.setOnClickListener { showSettings() }
         walletManager.onProgress { pct, txt -> runOnUiThread { syncText.text = txt; syncProgressBar.progress = pct } }
         refreshWallet()
@@ -334,6 +316,6 @@ class MainActivity : AppCompatActivity() {
     private fun showChangePassDialog() { val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(30) }; val oldP = EditText(this).apply { hint = "Mật khẩu cũ"; inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD }; val newP = EditText(this).apply { hint = "Mật khẩu mới ≥8"; inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD }; layout.addView(oldP); layout.addView(newP); AlertDialog.Builder(this).setTitle("Đổi mật khẩu").setView(layout).setPositiveButton("Đổi") { _, _ -> val id = walletManager.getActiveId()?: return@setPositiveButton; if (walletManager.changePassword(id, oldP.text.toString(), newP.text.toString())) toast("Đã đổi thành công") else toast("Sai mật khẩu cũ") }.show() }
     private fun showRenameDialog() { val input = EditText(this).apply { hint = "Tên ví mới"; setText(walletManager.getActive()?.name?: "") }; AlertDialog.Builder(this).setTitle("Đổi tên").setView(input).setPositiveButton("Lưu") { _, _ -> val id = walletManager.getActiveId()?: return@setPositiveButton; walletManager.rename(id, input.text.toString()); walletNameText.text = input.text.toString(); toast("Đã đổi tên") }.show() }
     private fun showDeleteDialog() { val pass = EditText(this).apply { inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD }; AlertDialog.Builder(this).setTitle("XÓA VĨNH VIỄN").setMessage("Nhập mật khẩu để xóa. Không thể khôi phục nếu không có seed!").setView(pass).setPositiveButton("XÓA") { _, _ -> val id = walletManager.getActiveId()?: return@setPositiveButton; if (walletManager.unlock(id, pass.text.toString())) { walletManager.delete(id); showWelcome(); toast("Đã xóa") } else toast("Sai pass") }.setNegativeButton("Hủy", null).show() }
-    private fun showInfo() { AlertDialog.Builder(this).setTitle("iBTC v4.1-fix6").setMessage("Build: 2026-05-25\n• Nút Làm mới = refresh ví + block\n• Auto retry pool 3s\n• Dùng blockstream.info").setPositiveButton("OK", null).show() }
+    private fun showInfo() { AlertDialog.Builder(this).setTitle("iBTC v4.1-final").setMessage("Build: 2026-05-25\n• Auto retry pool 5s\n• Nút Làm mới = ví + block").setPositiveButton("OK", null).show() }
     private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
 }
