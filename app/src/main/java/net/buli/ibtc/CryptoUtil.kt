@@ -21,7 +21,8 @@ object CryptoUtil {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(128, iv))
         val ct = cipher.doFinal(plain.toByteArray(Charsets.UTF_8))
-        return Base64.encodeToString(salt + iv + ct, Base64.NO_WRAP)
+        val combined = salt + iv + ct
+        return Base64.encodeToString(combined, Base64.NO_WRAP)
     }
 
     fun decrypt(enc: String, password: String): String {
@@ -32,12 +33,14 @@ object CryptoUtil {
         val key = deriveKey(password, salt)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, iv))
-        return String(cipher.doFinal(ct), Charsets.UTF_8)
+        val pt = cipher.doFinal(ct)
+        return String(pt, Charsets.UTF_8)
     }
 
     private fun deriveKey(password: String, salt: ByteArray): SecretKeySpec {
         val spec = PBEKeySpec(password.toCharArray(), salt, ITERATIONS, KEY_LENGTH)
-        val key = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).encoded
-        return SecretKeySpec(key, "AES")
+        val factory = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
+        val keyBytes = factory.generateSecret(spec).encoded
+        return SecretKeySpec(keyBytes, "AES")
     }
 }
