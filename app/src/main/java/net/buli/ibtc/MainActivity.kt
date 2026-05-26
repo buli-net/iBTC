@@ -657,7 +657,17 @@ private fun fetchBtcStats() {
                     syncProgressBar.progress = 85
                 }
                 val addr = walletManager.getAddress()
-                val txs = walletManager.getTransactions()
+                var txs = walletManager.getTransactions()
+                if (txs.isEmpty()) {
+                    try {
+                        val addr = walletManager.getAddress()
+                        val json = java.net.URL("https://mempool.space/api/address/$addr/txs").readText()
+                        if (json.contains(""txid"")) {
+                            walletManager.sync()
+                            txs = walletManager.getTransactions()
+                        }
+                    } catch (_: Exception) {}
+                }
                 runOnUiThread {
                     balanceText.text = String.format(Locale.US, "%.8f BTC", bal)
                     val balanceUsd = bal * price
@@ -711,8 +721,20 @@ private fun fetchBtcStats() {
                         }
                     }
                     if (txs.isEmpty()) {
-                        txListView.adapter = null
-                        syncText.text = syncText.text.toString() + " • chưa có giao dịch"
+                        val emptyAdapter = object : BaseAdapter() {
+                            override fun getCount() = 1
+                            override fun getItem(p: Int) = null
+                            override fun getItemId(p: Int) = 0L
+                            override fun getView(p: Int, v: View?, parent: ViewGroup): View {
+                                return TextView(this@MainActivity).apply {
+                                    text = "— chưa có giao dịch —"
+                                    gravity = Gravity.CENTER
+                                    setPadding(0,40,0,40)
+                                    setTextColor(Color.GRAY)
+                                }
+                            }
+                        }
+                        txListView.adapter = emptyAdapter
                     } else {
                         txListView.adapter = adapter
                     }
@@ -897,6 +919,9 @@ private fun fetchBtcStats() {
                         val currentBal = walletManager.getBalance()
                         btn.isEnabled = total <= currentBal && currentBal > 0
                         btn.alpha = if (btn.isEnabled) 1f else 0.5f
+                        if (!btn.isEnabled && amt > 0) {
+                            feeEstimateTv.text = "Không đủ số dư (cần ${"%.8f".format(total)} BTC, có ${"%.8f".format(currentBal)})"
+                        }
                     } catch (_: Exception) { }
                 } else {
                     btn.isEnabled = false
