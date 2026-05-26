@@ -117,6 +117,11 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun secureDialog(dialog: AlertDialog): AlertDialog {
+        dialog.window?.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
+        return dialog
+    }
+
     private fun startAutoLockChecker() {
         handler.postDelayed(object : Runnable {
             override fun run() {
@@ -354,7 +359,7 @@ private fun fetchBtcStats() {
         layout.addView(passInput)
         layout.addView(pass2Input)
         layout.addView(warning)
-        AlertDialog.Builder(this)
+        secureDialog(AlertDialog.Builder(this)
             .setTitle("Tạo ví Bitcoin mới")
             .setView(layout)
             .setPositiveButton("Tạo") { _, _ ->
@@ -379,7 +384,7 @@ private fun fetchBtcStats() {
                 }
             }
             .setNegativeButton("Hủy", null)
-            .show()
+            .create()).show()
     }
 
     private fun showImportDialog() {
@@ -402,7 +407,7 @@ private fun fetchBtcStats() {
         layout.addView(nameInput)
         layout.addView(seedInput)
         layout.addView(passInput)
-        AlertDialog.Builder(this)
+        secureDialog(AlertDialog.Builder(this)
             .setTitle("Import ví")
             .setView(layout)
             .setPositiveButton("Import") { _, _ ->
@@ -423,7 +428,7 @@ private fun fetchBtcStats() {
                 }
             }
             .setNegativeButton("Hủy", null)
-            .show()
+            .create()).show()
     }
 
     private fun showUnlockDialog() {
@@ -727,11 +732,11 @@ private fun fetchBtcStats() {
         layout.addView(imageView)
         layout.addView(addressView)
         layout.addView(copyBtn)
-        AlertDialog.Builder(this)
+        secureDialog(AlertDialog.Builder(this)
             .setTitle("Nhận Bitcoin")
             .setView(layout)
             .setPositiveButton("Đóng", null)
-            .show()
+            .create()).show()
     }
 
 
@@ -828,7 +833,6 @@ private fun fetchBtcStats() {
                         val totalUsd = total * priceUsd
                         feeEstimateTv.text = "Ước tính phí: ${"%.8f".format(estFee)} BTC (~$${"%.2f".format(feeUsd)})"
                         totalEstimateTv.text = "Tổng: ${"%.8f".format(total)} BTC (~$${"%.2f".format(totalUsd)})"
-                        // update radio texts with $
                         rSlow.text = "Chậm ~60' (${feeRates.slow} sat/vB) ~ $${"%.2f".format(walletManager.estimateFee(to, amt, feeRates.slow)*priceUsd)}"
                         rNormal.text = "Thường ~30' (${feeRates.normal} sat/vB) ~ $${"%.2f".format(walletManager.estimateFee(to, amt, feeRates.normal)*priceUsd)}"
                         rFast.text = "Nhanh ~10' (${feeRates.fast} sat/vB) ~ $${"%.2f".format(walletManager.estimateFee(to, amt, feeRates.fast)*priceUsd)}"
@@ -869,7 +873,7 @@ private fun fetchBtcStats() {
             }
             updateEstimates()
         }
-        dialog.show()
+        secureDialog(dialog).show()
     }
 
 
@@ -880,7 +884,10 @@ private fun fetchBtcStats() {
             setPadding(30)
         }
         val summary = TextView(this).apply {
-            text = "Gửi: $amt BTC\nĐến: $to\nPhí: ~$estFee BTC\nTổng: ${amt + estFee} BTC"
+            text = "Gửi: $amt BTC
+Đến: $to
+Phí: ~$estFee BTC
+Tổng: ${amt + estFee} BTC"
             setPadding(0,0,0,20)
         }
         val passInput = EditText(this).apply {
@@ -889,7 +896,7 @@ private fun fetchBtcStats() {
         }
         layout.addView(summary)
         layout.addView(passInput)
-        AlertDialog.Builder(this)
+        secureDialog(AlertDialog.Builder(this)
             .setTitle("Xác nhận gửi")
             .setView(layout)
             .setPositiveButton("Xác nhận") { _, _ ->
@@ -899,7 +906,6 @@ private fun fetchBtcStats() {
                     toast("Sai mật khẩu")
                     return@setPositiveButton
                 }
-                // Delay 60s with progress
                 val delayLayout = LinearLayout(this).apply {
                     orientation = LinearLayout.VERTICAL
                     setPadding(40,30,40,30)
@@ -912,7 +918,7 @@ private fun fetchBtcStats() {
                 val countdown = TextView(this).apply { text = "60s"; gravity = android.view.Gravity.CENTER; textSize = 18f }
                 delayLayout.addView(tv); delayLayout.addView(progress); delayLayout.addView(countdown)
                 val delayDialog = AlertDialog.Builder(this).setTitle("Delay bảo mật").setView(delayLayout).setCancelable(false).create()
-                delayDialog.show()
+                secureDialog(delayDialog).show()
                 var sec = 60
                 val handler = android.os.Handler(mainLooper)
                 val runnable = object : Runnable {
@@ -941,13 +947,13 @@ private fun fetchBtcStats() {
                 handler.postDelayed(runnable, 1000)
             }
             .setNegativeButton("Hủy", null)
-            .show()
+            .create()).show()
     }
 
 
     private fun showSettings() {
         val items = arrayOf("👁 Xem seed phrase", "🔑 Đổi mật khẩu", "✏️ Đổi tên ví", "🗑 Xóa ví vĩnh viễn", "🔒 Khóa ví ngay", "⏱ Cài đặt tự khóa", "ℹ️ Thông tin")
-        AlertDialog.Builder(this)
+        secureDialog(AlertDialog.Builder(this)
             .setTitle("Cài đặt")
             .setItems(items) { _, w ->
                 when(w) {
@@ -960,7 +966,7 @@ private fun fetchBtcStats() {
                     6 -> showInfo()
                 }
             }
-            .show()
+            .create()).show()
     }
 
     
@@ -977,7 +983,7 @@ private fun fetchBtcStats() {
             current == 15 -> 4
             else -> 2
         }
-        AlertDialog.Builder(this)
+        secureDialog(AlertDialog.Builder(this)
             .setTitle("Cài đặt tự khóa")
             .setSingleChoiceItems(items, checked) { dialog, which ->
                 val edit = prefs.edit()
@@ -996,7 +1002,7 @@ private fun fetchBtcStats() {
                 dialog.dismiss()
             }
             .setNegativeButton("Đóng", null)
-            .show()
+            .create()).show()
     }
 
     private fun showSeedDialog() {
@@ -1004,7 +1010,7 @@ private fun fetchBtcStats() {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
             transformationMethod = PasswordTransformationMethod.getInstance()
         }
-        AlertDialog.Builder(this)
+        secureDialog(AlertDialog.Builder(this)
             .setTitle("Nhập mật khẩu để xem seed")
             .setView(pass)
             .setPositiveButton("Xem") { _, _ ->
@@ -1018,7 +1024,7 @@ private fun fetchBtcStats() {
                         setPadding(40,40,40,40)
                         gravity = Gravity.CENTER
                     }
-                    AlertDialog.Builder(this)
+                    secureDialog(AlertDialog.Builder(this)
                         .setTitle("⚠️ KHÔNG CHIA SẺ SEED")
                         .setView(tv)
                         .setPositiveButton("Copy 30s") { _, _ ->
@@ -1027,10 +1033,10 @@ private fun fetchBtcStats() {
                             handler.postDelayed({ cm.clearPrimaryClip() }, 30000)
                         }
                         .setNegativeButton("Đóng", null)
-                        .show()
+                        .create()).show()
                 } else toast("Sai mật khẩu")
             }
-            .show()
+            .create()).show()
     }
 
     private fun showChangePassDialog() {
@@ -1048,7 +1054,7 @@ private fun fetchBtcStats() {
         }
         layout.addView(oldP)
         layout.addView(newP)
-        AlertDialog.Builder(this)
+        secureDialog(AlertDialog.Builder(this)
             .setTitle("Đổi mật khẩu")
             .setView(layout)
             .setPositiveButton("Đổi") { _, _ ->
@@ -1057,7 +1063,7 @@ private fun fetchBtcStats() {
                     toast("Đã đổi thành công")
                 else toast("Sai mật khẩu cũ")
             }
-            .show()
+            .create()).show()
     }
 
     private fun showRenameDialog() {
@@ -1065,7 +1071,7 @@ private fun fetchBtcStats() {
             hint = "Tên ví mới"
             setText(walletManager.getActive()?.name?: "")
         }
-        AlertDialog.Builder(this)
+        secureDialog(AlertDialog.Builder(this)
             .setTitle("Đổi tên")
             .setView(input)
             .setPositiveButton("Lưu") { _, _ ->
@@ -1074,14 +1080,14 @@ private fun fetchBtcStats() {
                 walletNameText.text = input.text.toString()
                 toast("Đã đổi tên")
             }
-            .show()
+            .create()).show()
     }
 
     private fun showDeleteDialog() {
         val pass = EditText(this).apply {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
         }
-        AlertDialog.Builder(this)
+        secureDialog(AlertDialog.Builder(this)
             .setTitle("XÓA VĨNH VIỄN")
             .setMessage("Nhập mật khẩu để xóa. Không thể khôi phục nếu không có seed!")
             .setView(pass)
@@ -1094,17 +1100,17 @@ private fun fetchBtcStats() {
                 } else toast("Sai pass")
             }
             .setNegativeButton("Hủy", null)
-            .show()
+            .create()).show()
     }
 
     private fun showInfo() {
-        AlertDialog.Builder(this)
+        secureDialog(AlertDialog.Builder(this)
             .setTitle("iBTC v4.7")
             .setMessage("Build: 2026-05-25
 • Block update 2s
-• Nút Làm mới đứng im")
+• Nut Lam moi dung im")
             .setPositiveButton("OK", null)
-            .show()
+            .create()).show()
     }
 
     private fun toast(msg: String) {
