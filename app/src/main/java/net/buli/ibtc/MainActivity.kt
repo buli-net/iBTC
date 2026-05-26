@@ -944,19 +944,13 @@ private fun fetchBtcStats() {
                 }
                 val countdown = TextView(this).apply { text = "60s"; gravity = android.view.Gravity.CENTER; textSize = 18f }
                 delayLayout.addView(tv); delayLayout.addView(progress); delayLayout.addView(countdown)
-                val delayDialog = AlertDialog.Builder(this)
-                    .setTitle("Delay bảo mật")
-                    .setView(delayLayout)
-                    .setCancelable(false)
-                    .setNegativeButton("Hủy giao dịch") { _, _ ->
-                        handler.removeCallbacks(runnable)
-                        toast("Đã hủy gửi")
-                    }
-                    .create()
-                delayDialog.show()
+                
                 var sec = 60
                 val handler = android.os.Handler(mainLooper)
-                val runnable = object : Runnable {
+                lateinit var runnable: Runnable
+                lateinit var delayDialog: AlertDialog
+                
+                runnable = object : Runnable {
                     override fun run() {
                         sec--
                         progress.progress = sec
@@ -979,6 +973,18 @@ private fun fetchBtcStats() {
                         }
                     }
                 }
+                                delayDialog = AlertDialog.Builder(this)
+                    .setTitle("Delay bảo mật")
+                    .setView(delayLayout)
+                    .setCancelable(false)
+                    .setNegativeButton("Hủy giao dịch") { _, _ ->
+                        handler.removeCallbacks(runnable)
+                        delayDialog.dismiss()
+                        toast("Đã hủy gửi")
+                    }
+                    .create()
+                delayDialog.show()
+                
                 handler.postDelayed(runnable, 1000)
             }
             .setNegativeButton("Hủy", null)
