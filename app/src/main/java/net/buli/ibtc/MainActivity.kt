@@ -31,6 +31,8 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var walletManager: WalletManager
     private val handler = Handler(Looper.getMainLooper())
+    private var lastInteractionTime = System.currentTimeMillis()
+    private val AUTO_LOCK_MS = 120_000L
     private val POOL_FONT = 13f
 
     private lateinit var rootLayout: LinearLayout
@@ -61,18 +63,25 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         window.setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE)
         walletManager = WalletManager(this)
-        getSharedPreferences("wallet_prefs", MODE_PRIVATE).edit().remove("never_lock").apply()
         setupRootLayout()
         setContentView(scrollView)
+        startAutoLockChecker()
         if (walletManager.hasWallets()) showUnlockDialog() else showWelcome()
+    }
+
+    override fun onUserInteraction() {
+        super.onUserInteraction()
+        lastInteractionTime = System.currentTimeMillis()
     }
 
     override fun onPause() {
         super.onPause()
+        lastInteractionTime = System.currentTimeMillis()
     }
 
     override fun onResume() {
         super.onResume()
+        lastInteractionTime = System.currentTimeMillis()
         if (walletManager.getActive()!= null) refreshWallet()
     }
 
@@ -95,6 +104,22 @@ class MainActivity : AppCompatActivity() {
             layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
             addView(rootLayout)
         }
+    }
+
+    private fun startAutoLockChecker() {
+        handler.postDelayed(object : Runnable {
+            override fun run() {
+                val active = walletManager.getActive()
+                if (active!= null && System.currentTimeMillis() - lastInteractionTime > AUTO_LOCK_MS) {
+                    walletManager.lock()
+                    runOnUiThread {
+                        Toast.makeText(this@MainActivity, "Tự động khóa sau 2 phút không dùng", Toast.LENGTH_SHORT).show()
+                        showUnlockDialog()
+                    }
+                }
+                handler.postDelayed(this, 10000)
+            }
+        }, 10000)
     }
 
     private fun startAutoPriceSync() {
@@ -790,6 +815,7 @@ private fun fetchBtcStats() {
                         val totalUsd = total * priceUsd
                         feeEstimateTv.text = "Ước tính phí: ${"%.8f".format(estFee)} BTC (~$${"%.2f".format(feeUsd)})"
                         totalEstimateTv.text = "Tổng: ${"%.8f".format(total)} BTC (~$${"%.2f".format(totalUsd)})"
+                        // update radio texts with $
                         rSlow.text = "Chậm ~60' (${feeRates.slow} sat/vB) ~ $${"%.2f".format(walletManager.estimateFee(to, amt, feeRates.slow)*priceUsd)}"
                         rNormal.text = "Thường ~30' (${feeRates.normal} sat/vB) ~ $${"%.2f".format(walletManager.estimateFee(to, amt, feeRates.normal)*priceUsd)}"
                         rFast.text = "Nhanh ~10' (${feeRates.fast} sat/vB) ~ $${"%.2f".format(walletManager.estimateFee(to, amt, feeRates.fast)*priceUsd)}"
@@ -841,10 +867,7 @@ private fun fetchBtcStats() {
             setPadding(30)
         }
         val summary = TextView(this).apply {
-            text = "Gửi: $amt BTC
-Đến: $to
-Phí: ~$estFee BTC
-Tổng: ${amt + estFee} BTC"
+            text = "Gửi: $amt BTC\nĐến: $to\nPhí: ~$estFee BTC\nTổng: ${amt + estFee} BTC"
             setPadding(0,0,0,20)
         }
         val passInput = EditText(this).apply {
@@ -863,6 +886,7 @@ Tổng: ${amt + estFee} BTC"
                     toast("Sai mật khẩu")
                     return@setPositiveButton
                 }
+                // Delay 60s with progress
                 val delayLayout = LinearLayout(this).apply {
                     orientation = LinearLayout.VERTICAL
                     setPadding(40,30,40,30)
@@ -909,7 +933,7 @@ Tổng: ${amt + estFee} BTC"
 
 
     private fun showSettings() {
-        val items = arrayOf("👁 Xem seed phrase", "🔑 Đổi mật khẩu", "✏️ Đổi tên ví", "🗑 Xóa ví vĩnh viễn", "🔒 Khóa ví ngay", "⏱ Cài đặt tự khóa", "ℹ️ Thông tin")
+        val items = arrayOf("👁 Xem seed phrase", "🔑 Đổi mật khẩu", "✏️ Đổi tên ví", "🗑 Xóa ví vĩnh viễn", "🔒 Khóa ví ngay", "ℹ️ Thông tin")
         AlertDialog.Builder(this)
             .setTitle("Cài đặt")
             .setItems(items) { _, w ->
@@ -919,45 +943,9 @@ Tổng: ${amt + estFee} BTC"
                     2 -> showRenameDialog()
                     3 -> showDeleteDialog()
                     4 -> { walletManager.lock(); showUnlockDialog() }
-                    5 -> showLockSettings()
-                    6 -> showInfo()
+                    5 -> showInfo()
                 }
             }
-            .show()
-    }
-
-    
-    private fun showLockSettings() {
-        val prefs = getSharedPreferences("wallet_prefs", MODE_PRIVATE)
-        val current = prefs.getInt("auto_lock_minutes", 2)
-        val items = arrayOf("Khóa ngay khi thoát", "1 phút", "2 phút", "5 phút", "15 phút")
-        val onPause = prefs.getBoolean("lock_on_pause", false)
-        val checked = when {
-            onPause -> 0
-            current == 1 -> 1
-            current == 2 -> 2
-            current == 5 -> 3
-            current == 15 -> 4
-            else -> 2
-        }
-        AlertDialog.Builder(this)
-            .setTitle("Cài đặt tự khóa")
-            .setSingleChoiceItems(items, checked) { dialog, which ->
-                val edit = prefs.edit()
-                if (which == 0) {
-                    edit.putBoolean("lock_on_pause", true)
-                    edit.putInt("auto_lock_minutes", 2)
-                    toast("Sẽ khóa ngay khi thoát app (trong app không khóa)")
-                } else {
-                    val mins = arrayOf(0,1,2,5,15)[which]
-                    edit.putBoolean("lock_on_pause", false)
-                    edit.putInt("auto_lock_minutes", mins)
-                    toast("Đã lưu: ${items[which]}")
-                }
-                edit.apply()
-                dialog.dismiss()
-            }
-            .setNegativeButton("Đóng", null)
             .show()
     }
 
@@ -1062,9 +1050,7 @@ Tổng: ${amt + estFee} BTC"
     private fun showInfo() {
         AlertDialog.Builder(this)
             .setTitle("iBTC v4.7")
-            .setMessage("Build: 2026-05-25
-• Block update 2s
-• Nút Làm mới đứng im")
+            .setMessage("Build: 2026-05-25\n• Block update 2s\n• Nút Làm mới đứng im")
             .setPositiveButton("OK", null)
             .show()
     }
