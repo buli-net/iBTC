@@ -659,7 +659,7 @@ private fun fetchBtcStats() {
                     val balColor = when {
                         balChange > 0.01 -> Color.parseColor("#00C853")
                         balChange < -0.01 -> Color.parseColor("#D50000")
-                        else -> subColor
+                        else -> Color.GRAY
                     }
                     balanceUsdText.setTextColor(balColor)
                     balanceUsdText.text = String.format(Locale.US, "≈ $%,.2f %s %+.2f%% (%+.2f$)", balanceUsd, balArrow, balPct, balChange)
