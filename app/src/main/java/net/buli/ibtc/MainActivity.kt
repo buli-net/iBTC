@@ -1,4 +1,4 @@
-// BUILD 2026-05-27 00:31 GMT+7 - FIXED UNRESOLVED REFERENCES - VERSION 17
+// BUILD 2026-05-27 MAINNET ONLY - NO FAKE 00:31 GMT+7 - FIXED UNRESOLVED REFERENCES - VERSION 17
 // FINAL FIX 1779806026
 package net.buli.ibtc
 
@@ -691,13 +691,13 @@ private fun fetchBtcStats() {
             val realBal = getRealBalance(addr)
             val realTxs = getRealTxs(addr)
             runOnUiThread {
-                val bal = if (realBal > 0) realBal else walletManager.getBalance()
+                val bal = realBal
                 balanceText.text = "${"%.8f".format(bal)} BTC"
                 btcAmountText.text = "${"%.8f".format(bal)} BTC"
                 val usdRate = 65000.0
                 usdAmountText.text = "\$${"%.2f".format(bal * usdRate)}"
                 
-                val txs = walletManager.getTransactions()
+                val txs = realTxs
                 // using class property txListView
                 // using class property syncText
                 syncText.text = "Đã đồng bộ • $addr"
