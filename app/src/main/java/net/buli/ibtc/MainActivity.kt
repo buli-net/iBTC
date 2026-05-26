@@ -705,7 +705,12 @@ private fun fetchBtcStats() {
                             return view
                         }
                     }
-                    txListView.adapter = adapter
+                    if (txs.isEmpty()) {
+                        txListView.adapter = null
+                        syncText.text = syncText.text.toString() + " • chưa có giao dịch"
+                    } else {
+                        txListView.adapter = adapter
+                    }
                     isSyncing = false
                 }
             } catch (e: Exception) {
@@ -826,8 +831,16 @@ private fun fetchBtcStats() {
         
         val feeEstimateTv = TextView(this).apply { text = "Ước tính phí: -"; setPadding(0,20,0,0) }
         val totalEstimateTv = TextView(this).apply { text = "Tổng (gửi + phí): -" }
-        val balance = walletManager.getBalance()
-        val balanceTv = TextView(this).apply { text = "Số dư: ${"%.8f".format(balance)} BTC"; setTextColor(0xFF888888.toInt()) }
+        val balanceTv = TextView(this).apply { 
+            text = "Số dư: đang tải..."
+            setTextColor(0xFF888888.toInt()) 
+        }
+        Thread {
+            val realBal = walletManager.getBalance()
+            runOnUiThread {
+                balanceTv.text = "Số dư: ${String.format(Locale.US, "%.8f", realBal)} BTC"
+            }
+        }.start()
         
         layout.addView(toInput)
         layout.addView(scanBtn)
@@ -875,7 +888,8 @@ private fun fetchBtcStats() {
                         rNormal.text = "Thường ~30' (${feeRates.normal} sat/vB) ~ $${"%.2f".format(walletManager.estimateFee(to, amt, feeRates.normal)*priceUsd)}"
                         rFast.text = "Nhanh ~10' (${feeRates.fast} sat/vB) ~ $${"%.2f".format(walletManager.estimateFee(to, amt, feeRates.fast)*priceUsd)}"
                         rCustom.text = "Tùy chỉnh (${feeRate} sat/vB) ~ $${"%.2f".format(estFee*priceUsd)}"
-                        btn.isEnabled = total <= balance
+                        val currentBal = walletManager.getBalance()
+                        btn.isEnabled = total <= currentBal && currentBal > 0
                         btn.alpha = if (btn.isEnabled) 1f else 0.5f
                     } catch (_: Exception) { }
                 } else {
