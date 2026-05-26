@@ -1,4 +1,3 @@
-MainActivity.kt - FINAL FIX 1779806026
 // FINAL FIX 1779806026
 package net.buli.ibtc
 
