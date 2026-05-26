@@ -4,6 +4,9 @@ import android.app.AlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.content.BroadcastReceiver
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Color
@@ -32,6 +35,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var walletManager: WalletManager
     private val handler = Handler(Looper.getMainLooper())
     private val POOL_FONT = 13f
+    private var screenReceiver: BroadcastReceiver? = null
 
     private lateinit var rootLayout: LinearLayout
     private lateinit var scrollView: ScrollView
@@ -63,6 +67,17 @@ class MainActivity : AppCompatActivity() {
         walletManager = WalletManager(this)
         setupRootLayout()
         setContentView(scrollView)
+        
+        // Đăng ký nghe khóa màn hình điện thoại
+        screenReceiver = object : BroadcastReceiver() {
+            override fun onReceive(c: Context?, intent: Intent?) {
+                if (intent?.action == Intent.ACTION_SCREEN_OFF) {
+                    try { walletManager.lock() } catch (_:Exception) {}
+                }
+            }
+        }
+        registerReceiver(screenReceiver, IntentFilter(Intent.ACTION_SCREEN_OFF))
+        
         if (walletManager.hasWallets()) showUnlockDialog() else showWelcome()
     }
 
@@ -72,11 +87,24 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (walletManager.getActive()!= null) refreshWallet()
+        if (walletManager.hasWallets()) {
+            if (walletManager.getActive() == null) {
+                showUnlockDialog()
+            } else {
+                refreshWallet()
+            }
+        }
+    }
+
+    override fun onStop() {
+        super.onStop()
+        // Thoát app (vào background) -> khóa ví
+        try { walletManager.lock() } catch (_:Exception) {}
     }
 
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
+        try { screenReceiver?.let { unregisterReceiver(it) } } catch (_:Exception) {}
         try {
             walletManager.lock()
             walletManager.stop()
