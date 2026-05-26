@@ -31,8 +31,6 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var walletManager: WalletManager
     private val handler = Handler(Looper.getMainLooper())
-    private var lastInteractionTime = System.currentTimeMillis()
-    private val AUTO_LOCK_MS = 120_000L
     private val POOL_FONT = 13f
 
     private lateinit var rootLayout: LinearLayout
@@ -65,23 +63,15 @@ class MainActivity : AppCompatActivity() {
         walletManager = WalletManager(this)
         setupRootLayout()
         setContentView(scrollView)
-        startAutoLockChecker()
         if (walletManager.hasWallets()) showUnlockDialog() else showWelcome()
-    }
-
-    override fun onUserInteraction() {
-        super.onUserInteraction()
-        lastInteractionTime = System.currentTimeMillis()
     }
 
     override fun onPause() {
         super.onPause()
-        lastInteractionTime = System.currentTimeMillis()
     }
 
     override fun onResume() {
         super.onResume()
-        lastInteractionTime = System.currentTimeMillis()
         if (walletManager.getActive()!= null) refreshWallet()
     }
 
@@ -104,22 +94,6 @@ class MainActivity : AppCompatActivity() {
             layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
             addView(rootLayout)
         }
-    }
-
-    private fun startAutoLockChecker() {
-        handler.postDelayed(object : Runnable {
-            override fun run() {
-                val active = walletManager.getActive()
-                if (active!= null && System.currentTimeMillis() - lastInteractionTime > AUTO_LOCK_MS) {
-                    walletManager.lock()
-                    runOnUiThread {
-                        Toast.makeText(this@MainActivity, "Tự động khóa sau 2 phút không dùng", Toast.LENGTH_SHORT).show()
-                        showUnlockDialog()
-                    }
-                }
-                handler.postDelayed(this, 10000)
-            }
-        }, 10000)
     }
 
     private fun startAutoPriceSync() {
