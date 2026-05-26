@@ -44,26 +44,7 @@ class MainActivity : AppCompatActivity() {
             val spent = Regex("spent_txo_sum\":(\\d+)").find(json)?.groupValues?.get(1)?.toLong() ?: 0L
             (funded - spent) / 100000000.0
         } catch (e: Exception) { 0.0 }
-    
-    private fun getTxHistory(address: String): List<String> {
-        return try {
-            val json = java.net.URL("https://mempool.space/api/address/" + address + "/txs").readText()
-            val list = mutableListOf<String>()
-            var idx = 0
-            while (true) {
-                val p = json.indexOf("\"txid\":\"", idx)
-                if (p < 0) break
-                val start = p + 9
-                val end = json.indexOf("\"", start)
-                if (end < 0) break
-                list.add(json.substring(start, end))
-                idx = end
-                if (list.size >= 20) break
-            }
-            list
-        } catch (e: Exception) { emptyList() }
     }
-}
 
 
     private lateinit var walletManager: WalletManager
@@ -687,7 +668,22 @@ private fun fetchBtcStats() {
                 }
                 val addr = walletManager.getAddress()
                 var txs = walletManager.getTransactions()
-                val mempoolTxs = getTxHistory(addr)
+                val mempoolTxs = try {
+                    val json = java.net.URL("https://mempool.space/api/address/" + addr + "/txs").readText()
+                    val list = mutableListOf<String>()
+                    var idx = 0
+                    while (true) {
+                        val p = json.indexOf("\"txid\":\"", idx)
+                        if (p < 0) break
+                        val start = p + 9
+                        val end = json.indexOf("\"", start)
+                        if (end < 0) break
+                        list.add(json.substring(start, end))
+                        idx = end
+                        if (list.size >= 20) break
+                    }
+                    list
+                } catch (e: Exception) { emptyList<String>() }
                 runOnUiThread {
                     balanceText.text = String.format(Locale.US, "%.8f BTC", bal)
                     val balanceUsd = bal * price
@@ -764,7 +760,7 @@ private fun fetchBtcStats() {
                                 val view = v ?: layoutInflater.inflate(android.R.layout.simple_list_item_2, parent, false)
                                 val txid = mempoolTxs[p]
                                 view.findViewById<TextView>(android.R.id.text1).text = txid.take(12) + "..."
-                                view.findViewById<TextView>(android.R.id.text2).text = "Giao dịch mempool"
+                                view.findViewById<TextView>(android.R.id.text2).text = "Xem trên mempool.space"
                                 return view
                             }
                         }
