@@ -29,6 +29,8 @@ import com.journeyapps.barcodescanner.ScanContract
 import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.*
+import android.webkit.WebView
+import android.webkit.WebSettings
 
 class MainActivity : AppCompatActivity() {
 
