@@ -944,7 +944,15 @@ private fun fetchBtcStats() {
                 }
                 val countdown = TextView(this).apply { text = "60s"; gravity = android.view.Gravity.CENTER; textSize = 18f }
                 delayLayout.addView(tv); delayLayout.addView(progress); delayLayout.addView(countdown)
-                val delayDialog = AlertDialog.Builder(this).setTitle("Delay bảo mật").setView(delayLayout).setCancelable(false).create()
+                val delayDialog = AlertDialog.Builder(this)
+                    .setTitle("Delay bảo mật")
+                    .setView(delayLayout)
+                    .setCancelable(false)
+                    .setNegativeButton("Hủy giao dịch") { _, _ ->
+                        handler.removeCallbacks(runnable)
+                        toast("Đã hủy gửi")
+                    }
+                    .create()
                 delayDialog.show()
                 var sec = 60
                 val handler = android.os.Handler(mainLooper)
