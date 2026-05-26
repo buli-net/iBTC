@@ -1103,15 +1103,17 @@ Tổng: ${amt + estFee} BTC"
             .create()).show()
     }
 
-    private fun showInfo() {
-        secureDialog(AlertDialog.Builder(this)
-            .setTitle("iBTC v4.7")
-            .setMessage("Build: 2026-05-25
-• Block update 2s
-• Nut Lam moi dung im")
-            .setPositiveButton("OK", null)
-            .create()).show()
-    }
+   
+
+
+private fun showInfo() {
+    AlertDialog.Builder(this)
+        .setTitle("iBTC v4.7")
+        .setMessage("Build: 2026-05-25\nBlock update 2s\nNut Lam moi dung im")
+        .setPositiveButton("OK", null)
+        .create()
+        .show()
+}
 
     private fun toast(msg: String) {
         Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
