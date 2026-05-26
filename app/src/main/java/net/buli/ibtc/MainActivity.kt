@@ -420,7 +420,7 @@ private fun fetchBtcStats() {
                 if (p1.length < 8) { toast("Mật khẩu phải ≥8 ký tự"); return@setPositiveButton }
                 if (p1 != p2) { toast("Mật khẩu nhập lại không khớp"); return@setPositiveButton }
                 try {
-                    walletManager.importWallet(name, seed, p1)
+                    walletManager.import(name, seed, p1)
                     toast("Import thành công")
                     showUnlockDialog()
                 } catch (e: Exception) {
