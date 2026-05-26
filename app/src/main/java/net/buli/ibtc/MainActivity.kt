@@ -684,10 +684,10 @@ private fun fetchBtcStats() {
             val realTxs = getRealTxs(addr)
             runOnUiThread {
                 val bal = if (realBal > 0) realBal else walletManager.getBalance()
-                balanceText.text = "${"%.8f".format(bal)} BTC"
-                btcAmountText.text = "${"%.8f".format(bal)} BTC"
+                findViewById<TextView>(R.id.balanceText).text = "${"%.8f".format(bal)} BTC"
+                findViewById<TextView>(R.id.btcAmountText).text = "${"%.8f".format(bal)} BTC"
                 val usdRate = 65000.0
-                usdAmountText.text = "$${"%.2f".format(bal * usdRate)}"
+                findViewById<TextView>(R.id.usdAmountText).text = "\$${"%.2f".format(bal * usdRate)}"
                 
                 val txs = walletManager.getTransactions()
                 val txListView = findViewById<ListView>(R.id.txListView)
