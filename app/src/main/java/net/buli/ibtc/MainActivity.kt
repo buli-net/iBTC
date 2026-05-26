@@ -1,5 +1,3 @@
-// BUILD 2026-05-27 MAINNET ONLY - NO FAKE 00:31 GMT+7 - FIXED UNRESOLVED REFERENCES - VERSION 17
-// FINAL FIX 1779806026
 package net.buli.ibtc
 
 import android.app.AlertDialog
@@ -17,9 +15,6 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.text.InputType
-import android.text.Spannable
-import android.text.SpannableString
-import android.text.style.ForegroundColorSpan
 import android.text.method.PasswordTransformationMethod
 import android.view.Gravity
 import android.view.View
@@ -38,66 +33,23 @@ import android.webkit.WebView
 import android.webkit.WebSettings
 
 class MainActivity : AppCompatActivity() {
-    private fun getRealBalance(address: String): Double {
-        return try {
-            val conn = java.net.URL("https://blockstream.info/api/address/" + address).openConnection() as java.net.HttpURLConnection
-            conn.connectTimeout = 8000
-            conn.readTimeout = 8000
-            val text = conn.inputStream.bufferedReader().use { it.readText() }
-            val json = org.json.JSONObject(text)
-            val chain = json.getJSONObject("chain_stats")
-            val funded = chain.getLong("funded_txo_sum")
-            val spent = chain.getLong("spent_txo_sum")
-            (funded - spent) / 100000000.0
-        } catch (e: Exception) {
-            0.0
-        }
-    }
-
-    private fun getRealTxs(address: String): List<Pair<String, Double>> {
-        return try {
-            val conn = java.net.URL("https://blockstream.info/api/address/" + address + "/txs").openConnection() as java.net.HttpURLConnection
-            conn.connectTimeout = 8000
-            conn.readTimeout = 8000
-            val text = conn.inputStream.bufferedReader().use { it.readText() }
-            val arr = org.json.JSONArray(text)
-            val list = mutableListOf<Pair<String, Double>>()
-            for (i in 0 until minOf(arr.length(), 20)) {
-                val tx = arr.getJSONObject(i)
-                val txid = tx.getString("txid")
-                var amount = 0.0
-                val vout = tx.getJSONArray("vout")
-                for (j in 0 until vout.length()) {
-                    val out = vout.getJSONObject(j)
-                    if (out.optString("scriptpubkey_address") == address) {
-                        amount += out.getLong("value") / 100000000.0
-                    }
-                }
-                list.add(Pair(txid, amount))
-            }
-            list
-        } catch (e: Exception) { emptyList() }
-    }
-
 
     private lateinit var walletManager: WalletManager
-    private lateinit var balanceText: TextView
-    private lateinit var btcAmountText: TextView
-    private lateinit var usdAmountText: TextView
-    private lateinit var txListView: ListView
-    private lateinit var syncText: TextView
     private val handler = Handler(Looper.getMainLooper())
     private val POOL_FONT = 13f
     private var screenReceiver: BroadcastReceiver? = null
 
     private lateinit var rootLayout: LinearLayout
     private lateinit var scrollView: ScrollView
+    private lateinit var balanceText: TextView
     private lateinit var balanceUsdText: TextView
     private lateinit var rateText: TextView
     private lateinit var addressText: TextView
+    private lateinit var syncText: TextView
     private lateinit var syncProgressBar: ProgressBar
     private lateinit var blockText: TextView
     private lateinit var blockProgressBar: ProgressBar
+    private lateinit var txListView: ListView
     private lateinit var walletNameText: TextView
     private lateinit var statsContainer: LinearLayout
     private val statBars = mutableMapOf<String, ProgressBar>()
@@ -230,7 +182,7 @@ class MainActivity : AppCompatActivity() {
                 val price = Regex(""""usd":([\d.]+)""").find(json)?.groupValues?.get(1)?.toDoubleOrNull() ?: 60000.0
                 runOnUiThread { callback(price) }
             } catch (_: Exception) {
-                runOnUiThread { callback(0.0) }
+                runOnUiThread { callback(60000.0) }
             }
         }.start()
     }
@@ -345,29 +297,26 @@ private fun fetchBtcStats() {
             setTextColor(Color.GRAY)
             setPadding(0, 8, 0, 60)
         }
-        val btnContainer = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            weightSum = 2f
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
-        }
         val createBtn = Button(this).apply {
             text = "Tạo ví mới"
             textSize = 16f
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = 8 }
+            setPadding(0, 30, 0, 30)
         }
         val importBtn = Button(this).apply {
             text = "Import ví có sẵn"
             textSize = 16f
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = 8 }
         }
-        btnContainer.addView(createBtn)
-        btnContainer.addView(importBtn)
+        val space = Space(this).apply {
+            layoutParams = LinearLayout.LayoutParams(1, 40)
+        }
         createBtn.setOnClickListener { showCreateDialog() }
         importBtn.setOnClickListener { showImportDialog() }
         rootLayout.addView(logo)
         rootLayout.addView(title)
         rootLayout.addView(subtitle)
-        rootLayout.addView(btnContainer)
+        rootLayout.addView(createBtn)
+        rootLayout.addView(space)
+        rootLayout.addView(importBtn)
     }
 
     private fun showCreateDialog() {
@@ -444,31 +393,27 @@ private fun fetchBtcStats() {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
             transformationMethod = PasswordTransformationMethod.getInstance()
         }
-        val pass2Input = EditText(this).apply {
-            hint = "Nhập lại mật khẩu"
-            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
-            transformationMethod = PasswordTransformationMethod.getInstance()
-        }
         layout.addView(nameInput)
         layout.addView(seedInput)
         layout.addView(passInput)
-        layout.addView(pass2Input)
         AlertDialog.Builder(this)
             .setTitle("Import ví")
             .setView(layout)
             .setPositiveButton("Import") { _, _ ->
-                val name = nameInput.text.toString().ifBlank { "Ví Import" }
+                val name = nameInput.text.toString().trim()
                 val seed = seedInput.text.toString().trim()
-                val p1 = passInput.text.toString()
-                val p2 = pass2Input.text.toString()
-                if (p1.length < 8) { toast("Mật khẩu phải ≥8 ký tự"); return@setPositiveButton }
-                if (p1 != p2) { toast("Mật khẩu nhập lại không khớp"); return@setPositiveButton }
-                try {
-                    walletManager.import(name, seed, p1)
+                val pass = passInput.text.toString()
+                if (pass.length < 8) {
+                    toast("Mật khẩu quá ngắn")
+                    return@setPositiveButton
+                }
+                val info = walletManager.import(name, seed, pass)
+                if (info == null) {
+                    toast("Seed không hợp lệ (cần 12-24 từ)")
+                } else {
+                    Thread { walletManager.init() }.start()
                     toast("Import thành công")
-                    showUnlockDialog()
-                } catch (e: Exception) {
-                    toast("Lỗi: ${e.message}")
+                    showMainWallet()
                 }
             }
             .setNegativeButton("Hủy", null)
@@ -540,11 +485,6 @@ private fun fetchBtcStats() {
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(mainColor)
             setPadding(0, 10, 0, 0)
-        }
-        btcAmountText = balanceText
-        usdAmountText = TextView(this).apply {
-            textSize = 14f
-            setTextColor(Color.GRAY)
         }
         balanceUsdText = TextView(this).apply {
             text = "≈ $0.00"
@@ -646,12 +586,12 @@ private fun fetchBtcStats() {
         rootLayout.addView(Space(this).apply { layoutParams = LinearLayout.LayoutParams(1, 20) })
         rootLayout.addView(btnRow1)
         rootLayout.addView(btnRow2)
-        rootLayout.addView(txTitle)
-        rootLayout.addView(txListView)
         rootLayout.addView(statsTitle)
         rootLayout.addView(blockText)
         rootLayout.addView(blockProgressBar)
         rootLayout.addView(statsContainer)
+        rootLayout.addView(txTitle)
+        rootLayout.addView(txListView)
 
         addStat("mined", "Đã khai thác")
         addStat("halving", "Halving")
@@ -674,7 +614,7 @@ private fun fetchBtcStats() {
         }
         btnSettings.setOnClickListener { showSettings() }
 
-        walletManager.onProgress { pct: Int, txt: String ->
+        walletManager.onProgress { pct, txt ->
             runOnUiThread {
                 syncText.text = txt
                 syncProgressBar.progress = pct
@@ -686,54 +626,96 @@ private fun fetchBtcStats() {
     }
 
     private fun refreshWallet() {
+        if (isSyncing) return
+        isSyncing = true
+        runOnUiThread {
+            syncText.text = "Đang kết nối API..."
+            syncProgressBar.progress = 10
+        }
         Thread {
-            val addr = walletManager.getAddress()
-            val realBal = getRealBalance(addr)
-            val realTxs = getRealTxs(addr)
-            runOnUiThread {
-                val bal = realBal
-                balanceText.text = "${"%.8f".format(bal)} BTC"
-                btcAmountText.text = "${"%.8f".format(bal)} BTC"
-                val usdRate = 65000.0
-                usdAmountText.text = "\$${"%.2f".format(bal * usdRate)}"
-                
-                val txs = realTxs
-                // using class property txListView
-                // using class property syncText
-                syncText.text = "Đã đồng bộ • $addr"
-                
-                if (realTxs.isEmpty() && txs.isEmpty()) {
-                    val emptyAdapter = object : BaseAdapter() {
-                        override fun getCount() = 1
-                        override fun getItem(p: Int) = null
-                        override fun getItemId(p: Int) = 0L
-                        override fun getView(p: Int, v: View?, parent: ViewGroup): View {
-                            return TextView(this@MainActivity).apply {
-                                text = "— chưa có giao dịch —"
-                                gravity = android.view.Gravity.CENTER
-                                setPadding(0,40,0,40)
-                                setTextColor(android.graphics.Color.GRAY)
-                            }
-                        }
+            try {
+                runOnUiThread { syncProgressBar.progress = 30 }
+                val bal = walletManager.getBalance()
+                runOnUiThread {
+                    syncText.text = "Đang tải giá BTC..."
+                    syncProgressBar.progress = 60
+                }
+                val price = walletManager.price()
+                runOnUiThread {
+                    syncText.text = "Đang cập nhật địa chỉ..."
+                    syncProgressBar.progress = 85
+                }
+                val addr = walletManager.getAddress()
+                val txs = walletManager.getTransactions()
+                runOnUiThread {
+                    balanceText.text = String.format(Locale.US, "%.8f BTC", bal)
+                    val balanceUsd = bal * price
+                    // Tính biến động số dư
+                    val balChange = balanceUsd - lastBalanceUsd
+                    val balPct = if (lastBalanceUsd > 0) balChange / lastBalanceUsd * 100 else 0.0
+                    val balArrow = when {
+                        balChange > 0.01 -> "▲"
+                        balChange < -0.01 -> "▼"
+                        else -> "●"
                     }
-                    txListView.adapter = emptyAdapter
-                } else {
-                    txListView.adapter = object : BaseAdapter() {
-                        override fun getCount() = realTxs.size
-                        override fun getItem(p: Int) = realTxs[p]
-                        override fun getItemId(p: Int) = p.toLong()
-                        override fun getView(p: Int, v: View?, parent: ViewGroup): View {
-                            val view = v ?: layoutInflater.inflate(android.R.layout.simple_list_item_2, parent, false)
-                            val (txid, amt) = realTxs[p]
-                            view.findViewById<TextView>(android.R.id.text1).text = if (amt > 0) "+${"%.8f".format(amt)} BTC" else "Giao dịch"
-                            view.findViewById<TextView>(android.R.id.text2).text = txid.take(16) + "..."
+                    val balColor = when {
+                        balChange > 0.01 -> Color.parseColor("#00C853")
+                        balChange < -0.01 -> Color.parseColor("#D50000")
+                        else -> Color.GRAY
+                    }
+                    balanceUsdText.setTextColor(balColor)
+                    balanceUsdText.text = String.format(Locale.US, "≈ $%,.2f %s %+.2f%% (%+.2f$)", balanceUsd, balArrow, balPct, balChange)
+                    
+                    // Tính biến động tỷ giá
+                    val priceChange = price - lastPrice
+                    val pricePct = if (lastPrice > 0) priceChange / lastPrice * 100 else 0.0
+                    val priceArrow = when {
+                        priceChange > 0.01 -> "▲"
+                        priceChange < -0.01 -> "▼"
+                        else -> "●"
+                    }
+                    val priceColor = when {
+                        priceChange > 0.01 -> Color.parseColor("#00C853")
+                        priceChange < -0.01 -> Color.parseColor("#D50000")
+                        else -> Color.GRAY
+                    }
+                    rateText.setTextColor(priceColor)
+                    rateText.text = String.format(Locale.US, "BTC $%,.2f %s %+.2f%% (%+.2f$)", price, priceArrow, pricePct, priceChange)
+                    
+                    lastBalanceUsd = balanceUsd
+                    lastPrice = price
+                    
+                    addressText.text = "Địa chỉ: $addr"
+                    syncText.text = "Đã đồng bộ • " + SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+                    syncProgressBar.progress = 100
+                    val adapter = object : ArrayAdapter<String>(this, android.R.layout.simple_list_item_2, android.R.id.text1, txs.map { "" }) {
+                        override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                            val view = super.getView(position, convertView, parent)
+                            val tx = txs[position]
+                            val text1 = view.findViewById<TextView>(android.R.id.text1)
+                            val text2 = view.findViewById<TextView>(android.R.id.text2)
+                            val isDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+                            text1.setTextColor(if (isDark) Color.WHITE else Color.BLACK)
+                            text1.text = "${if (tx.type == "Nhận") "⬇" else "⬆"} ${tx.type} ${String.format(Locale.US, "%.8f", tx.amount)}"
+                            text2.text = SimpleDateFormat("dd/MM HH:mm", Locale.getDefault()).format(tx.time) + " • " + tx.txId.take(12)
+                            text2.setTextColor(Color.GRAY)
+                            text2.textSize = 11f
                             return view
                         }
                     }
+                    txListView.adapter = adapter
+                    isSyncing = false
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    syncText.text = "Lỗi đồng bộ"
+                    syncProgressBar.progress = 0
+                    isSyncing = false
                 }
             }
         }.start()
     }
+
     private fun showReceiveDialog() {
         val address = walletManager.getAddress()
         if (address.isEmpty()) {
@@ -837,16 +819,8 @@ private fun fetchBtcStats() {
         
         val feeEstimateTv = TextView(this).apply { text = "Ước tính phí: -"; setPadding(0,20,0,0) }
         val totalEstimateTv = TextView(this).apply { text = "Tổng (gửi + phí): -" }
-        val balanceTv = TextView(this).apply { 
-            text = "Số dư: đang tải..."
-            setTextColor(0xFF888888.toInt()) 
-        }
-        Thread {
-            val realBal = getRealBalance(walletManager.getAddress()).let { if (it>0) it else walletManager.getBalance() }
-            runOnUiThread {
-                balanceTv.text = "Số dư: ${String.format(Locale.US, "%.8f", realBal)} BTC"
-            }
-        }.start()
+        val balance = walletManager.getBalance()
+        val balanceTv = TextView(this).apply { text = "Số dư: ${"%.8f".format(balance)} BTC"; setTextColor(0xFF888888.toInt()) }
         
         layout.addView(toInput)
         layout.addView(scanBtn)
@@ -883,9 +857,8 @@ private fun fetchBtcStats() {
                 }
                 if (to.length >= 26 && amt > 0) {
                     try {
-                        val estFee = walletManager.estimateFee(to, amt, feeRate).toDouble()
-                        val amtD = amt.toDouble()
-                        val total = amtD + estFee
+                        val estFee = walletManager.estimateFee(to, amt, feeRate)
+                        val total = amt + estFee
                         val feeUsd = estFee * priceUsd
                         val totalUsd = total * priceUsd
                         feeEstimateTv.text = "Ước tính phí: ${"%.8f".format(estFee)} BTC (~$${"%.2f".format(feeUsd)})"
@@ -895,8 +868,7 @@ private fun fetchBtcStats() {
                         rNormal.text = "Thường ~30' (${feeRates.normal} sat/vB) ~ $${"%.2f".format(walletManager.estimateFee(to, amt, feeRates.normal)*priceUsd)}"
                         rFast.text = "Nhanh ~10' (${feeRates.fast} sat/vB) ~ $${"%.2f".format(walletManager.estimateFee(to, amt, feeRates.fast)*priceUsd)}"
                         rCustom.text = "Tùy chỉnh (${feeRate} sat/vB) ~ $${"%.2f".format(estFee*priceUsd)}"
-                        val currentBal = getRealBalance(walletManager.getAddress()).let { if (it>0) it else walletManager.getBalance() }
-                        btn.isEnabled = total <= currentBal && currentBal > 0
+                        btn.isEnabled = total <= balance
                         btn.alpha = if (btn.isEnabled) 1f else 0.5f
                     } catch (_: Exception) { }
                 } else {
