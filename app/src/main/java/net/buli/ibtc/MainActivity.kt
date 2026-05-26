@@ -1120,3 +1120,4 @@ private fun fetchBtcStats() {
         Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
     }
 }
+
