@@ -1,3 +1,4 @@
+// BUILD 2026-05-27 00:31 GMT+7 - FIXED UNRESOLVED REFERENCES - VERSION 17
 // FINAL FIX 1779806026
 package net.buli.ibtc
 
@@ -80,6 +81,11 @@ class MainActivity : AppCompatActivity() {
 
 
     private lateinit var walletManager: WalletManager
+    private lateinit var balanceText: TextView
+    private lateinit var btcAmountText: TextView
+    private lateinit var usdAmountText: TextView
+    private lateinit var txListView: ListView
+    private lateinit var syncText: TextView
     private val handler = Handler(Looper.getMainLooper())
     private val POOL_FONT = 13f
     private var screenReceiver: BroadcastReceiver? = null
@@ -535,6 +541,11 @@ private fun fetchBtcStats() {
             setTextColor(mainColor)
             setPadding(0, 10, 0, 0)
         }
+        btcAmountText = balanceText
+        usdAmountText = TextView(this).apply {
+            textSize = 14f
+            setTextColor(Color.GRAY)
+        }
         balanceUsdText = TextView(this).apply {
             text = "≈ $0.00"
             textSize = 16f
@@ -681,14 +692,14 @@ private fun fetchBtcStats() {
             val realTxs = getRealTxs(addr)
             runOnUiThread {
                 val bal = if (realBal > 0) realBal else walletManager.getBalance()
-                findViewById<TextView>(R.id.balanceText).text = "${"%.8f".format(bal)} BTC"
-                findViewById<TextView>(R.id.btcAmountText).text = "${"%.8f".format(bal)} BTC"
+                balanceText.text = "${"%.8f".format(bal)} BTC"
+                btcAmountText.text = "${"%.8f".format(bal)} BTC"
                 val usdRate = 65000.0
-                findViewById<TextView>(R.id.usdAmountText).text = "\$${"%.2f".format(bal * usdRate)}"
+                usdAmountText.text = "\$${"%.2f".format(bal * usdRate)}"
                 
                 val txs = walletManager.getTransactions()
-                val txListView = findViewById<ListView>(R.id.txListView)
-                val syncText = findViewById<TextView>(R.id.syncText)
+                // using class property txListView
+                // using class property syncText
                 syncText.text = "Đã đồng bộ • $addr"
                 
                 if (realTxs.isEmpty() && txs.isEmpty()) {
