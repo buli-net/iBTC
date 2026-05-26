@@ -37,19 +37,6 @@ import android.webkit.WebView
 import android.webkit.WebSettings
 
 class MainActivity : AppCompatActivity() {
-    
-    private fun getTxHistory(address: String): List<Triple<String, Double, Boolean>> {
-        return try {
-            val json = java.net.URL("https://mempool.space/api/address/" + address + "/txs").readText()
-            val txids = Regex(""txid":"([a-f0-9]+)"").findAll(json).map { it.groupValues[1] }.take(20).toList()
-            txids.map { txid ->
-                // đơn giản: lấy value, chưa tính chính xác, chỉ để hiển thị
-                val vout = Regex(""txid":"$txid".*?"value":(\d+)").find(json)?.groupValues?.get(1)?.toLong() ?: 0L
-                Triple(txid, vout / 100000000.0, true)
-            }
-        } catch (e: Exception) { emptyList() }
-    }
-
     private fun getRealBalance(address: String): Double {
         return try {
             val json = java.net.URL("https://mempool.space/api/address/" + address).readText()
@@ -57,7 +44,26 @@ class MainActivity : AppCompatActivity() {
             val spent = Regex("spent_txo_sum\":(\\d+)").find(json)?.groupValues?.get(1)?.toLong() ?: 0L
             (funded - spent) / 100000000.0
         } catch (e: Exception) { 0.0 }
+    
+    private fun getTxHistory(address: String): List<String> {
+        return try {
+            val json = java.net.URL("https://mempool.space/api/address/" + address + "/txs").readText()
+            val list = mutableListOf<String>()
+            var idx = 0
+            while (true) {
+                val p = json.indexOf("\"txid\":\"", idx)
+                if (p < 0) break
+                val start = p + 9
+                val end = json.indexOf("\"", start)
+                if (end < 0) break
+                list.add(json.substring(start, end))
+                idx = end
+                if (list.size >= 20) break
+            }
+            list
+        } catch (e: Exception) { emptyList() }
     }
+}
 
 
     private lateinit var walletManager: WalletManager
@@ -756,9 +762,9 @@ private fun fetchBtcStats() {
                             override fun getItemId(p: Int) = p.toLong()
                             override fun getView(p: Int, v: View?, parent: ViewGroup): View {
                                 val view = v ?: layoutInflater.inflate(android.R.layout.simple_list_item_2, parent, false)
-                                val (txid, amt, _) = mempoolTxs[p]
-                                view.findViewById<TextView>(android.R.id.text1).text = "${if(amt>0) "+" else ""}${"%.8f".format(amt)} BTC"
-                                view.findViewById<TextView>(android.R.id.text2).text = txid.take(12) + "..."
+                                val txid = mempoolTxs[p]
+                                view.findViewById<TextView>(android.R.id.text1).text = txid.take(12) + "..."
+                                view.findViewById<TextView>(android.R.id.text2).text = "Giao dịch mempool"
                                 return view
                             }
                         }
