@@ -39,19 +39,43 @@ import android.webkit.WebSettings
 class MainActivity : AppCompatActivity() {
     private fun getRealBalance(address: String): Double {
         return try {
-            val json = java.net.URL("https://mempool.space/api/address/" + address).readText()
-            fun extract(key: String): Long {
-                val p = json.indexOf(""" + key + "":")
-                if (p < 0) return 0L
-                val start = p + key.length + 3
-                var end = start
-                while (end < json.length && json[end].isDigit()) end++
-                return json.substring(start, end).toLongOrNull() ?: 0L
-            }
-            val funded = extract("funded_txo_sum")
-            val spent = extract("spent_txo_sum")
+            val conn = java.net.URL("https://blockstream.info/api/address/" + address).openConnection() as java.net.HttpURLConnection
+            conn.connectTimeout = 8000
+            conn.readTimeout = 8000
+            val text = conn.inputStream.bufferedReader().use { it.readText() }
+            val json = org.json.JSONObject(text)
+            val chain = json.getJSONObject("chain_stats")
+            val funded = chain.getLong("funded_txo_sum")
+            val spent = chain.getLong("spent_txo_sum")
             (funded - spent) / 100000000.0
-        } catch (e: Exception) { 0.0 }
+        } catch (e: Exception) {
+            0.0
+        }
+    }
+
+    private fun getRealTxs(address: String): List<Pair<String, Double>> {
+        return try {
+            val conn = java.net.URL("https://blockstream.info/api/address/" + address + "/txs").openConnection() as java.net.HttpURLConnection
+            conn.connectTimeout = 8000
+            conn.readTimeout = 8000
+            val text = conn.inputStream.bufferedReader().use { it.readText() }
+            val arr = org.json.JSONArray(text)
+            val list = mutableListOf<Pair<String, Double>>()
+            for (i in 0 until minOf(arr.length(), 20)) {
+                val tx = arr.getJSONObject(i)
+                val txid = tx.getString("txid")
+                var amount = 0.0
+                val vout = tx.getJSONArray("vout")
+                for (j in 0 until vout.length()) {
+                    val out = vout.getJSONObject(j)
+                    if (out.optString("scriptpubkey_address") == address) {
+                        amount += out.getLong("value") / 100000000.0
+                    }
+                }
+                list.add(Pair(txid, amount))
+            }
+            list
+        } catch (e: Exception) { emptyList() }
     }
 
 
@@ -654,155 +678,54 @@ private fun fetchBtcStats() {
     }
 
     private fun refreshWallet() {
-        if (isSyncing) return
-        isSyncing = true
-        runOnUiThread {
-            syncText.text = "Đang kết nối API..."
-            syncProgressBar.progress = 10
-        }
         Thread {
-            try {
-                runOnUiThread { syncProgressBar.progress = 30 }
-                var bal = walletManager.getBalance()
-                if (bal < 0.00000001) { bal = getRealBalance(walletManager.getAddress()) }
-                runOnUiThread {
-                    syncText.text = "Đang tải giá BTC..."
-                    syncProgressBar.progress = 60
-                }
-                val price = walletManager.price()
-                runOnUiThread {
-                    syncText.text = "Đang cập nhật địa chỉ..."
-                    syncProgressBar.progress = 85
-                }
-                val addr = walletManager.getAddress()
-                var txs = walletManager.getTransactions()
-                val mempoolTxs = try {
-                    val json = java.net.URL("https://mempool.space/api/address/" + addr + "/txs").readText()
-                    val list = mutableListOf<Pair<String, Long>>()
-                    var idx = 0
-                    while (true) {
-                        val p = json.indexOf(""txid":"", idx)
-                        if (p < 0) break
-                        val start = p + 8
-                        val end = json.indexOf(""", start)
-                        if (end < 0) break
-                        val txid = json.substring(start, end)
-                        // tìm value đầu tiên sau txid
-                        val vpos = json.indexOf(""value":", end)
-                        var value = 0L
-                        if (vpos > 0 && vpos < end + 500) {
-                            val vs = vpos + 8
-                            var ve = vs
-                            while (ve < json.length && json[ve].isDigit()) ve++
-                            value = json.substring(vs, ve).toLongOrNull() ?: 0L
+            val addr = walletManager.getAddress()
+            val realBal = getRealBalance(addr)
+            val realTxs = getRealTxs(addr)
+            runOnUiThread {
+                val bal = if (realBal > 0) realBal else walletManager.getBalance()
+                balanceText.text = "${"%.8f".format(bal)} BTC"
+                btcAmountText.text = "${"%.8f".format(bal)} BTC"
+                val usdRate = 65000.0
+                usdAmountText.text = "$${"%.2f".format(bal * usdRate)}"
+                
+                val txs = walletManager.getTransactions()
+                val txListView = findViewById<ListView>(R.id.txListView)
+                val syncText = findViewById<TextView>(R.id.syncText)
+                syncText.text = "Đã đồng bộ • $addr"
+                
+                if (realTxs.isEmpty() && txs.isEmpty()) {
+                    val emptyAdapter = object : BaseAdapter() {
+                        override fun getCount() = 1
+                        override fun getItem(p: Int) = null
+                        override fun getItemId(p: Int) = 0L
+                        override fun getView(p: Int, v: View?, parent: ViewGroup): View {
+                            return TextView(this@MainActivity).apply {
+                                text = "— chưa có giao dịch —"
+                                gravity = android.view.Gravity.CENTER
+                                setPadding(0,40,0,40)
+                                setTextColor(android.graphics.Color.GRAY)
+                            }
                         }
-                        list.add(Pair(txid, value))
-                        idx = end
-                        if (list.size >= 20) break
                     }
-                    list
-                } catch (e: Exception) { emptyList<Pair<String, Long>>() }
-                runOnUiThread {
-                    balanceText.text = String.format(Locale.US, "%.8f BTC", bal)
-                    val balanceUsd = bal * price
-                    // FIX: format USD with Locale.US, 1 line, colored delta
-                    val balChange = balanceUsd - lastBalanceUsd
-                    val balPct = if (lastBalanceUsd > 0.00000001) balChange / lastBalanceUsd * 100 else 0.0
-                    val balColor = when {
-                        balChange > 0.01 -> Color.parseColor("#00C853")
-                        balChange < -0.01 -> Color.parseColor("#D50000")
-                        else -> Color.GRAY
-                    }
-                    val usdBase = String.format(Locale.US, "≈ $%,.2f  ", balanceUsd)
-                    val usdDelta = String.format(Locale.US, "%+,.2f$ (%+.2f%%)", balChange, balPct)
-                    val usdSpan = SpannableString(usdBase + usdDelta)
-                    usdSpan.setSpan(ForegroundColorSpan(balColor), usdBase.length, usdSpan.length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-                    balanceUsdText.text = usdSpan
-                    
-                    // FIX: rate text same format
-                    val priceChange = price - lastPrice
-                    val pricePct = if (lastPrice > 0.0001) priceChange / lastPrice * 100 else 0.0
-                    val priceColor = when {
-                        priceChange > 0.01 -> Color.parseColor("#00C853")
-                        priceChange < -0.01 -> Color.parseColor("#D50000")
-                        else -> Color.GRAY
-                    }
-                    val rateBase = String.format(Locale.US, "BTC $%,.2f  ", price)
-                    val rateDelta = String.format(Locale.US, "%+,.2f$ (%+.2f%%)", priceChange, pricePct)
-                    val rateSpan = SpannableString(rateBase + rateDelta)
-                    rateSpan.setSpan(ForegroundColorSpan(priceColor), rateBase.length, rateSpan.length, Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-                    rateText.text = rateSpan
-                    
-                    lastBalanceUsd = balanceUsd
-                    lastPrice = price
-                    
-                    addressText.text = "Địa chỉ: $addr"
-                    syncText.text = "Đã đồng bộ • " + SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
-                    syncProgressBar.progress = 100
-                    val adapter = object : ArrayAdapter<String>(this, android.R.layout.simple_list_item_2, android.R.id.text1, txs.map { "" }) {
-                        override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-                            val view = super.getView(position, convertView, parent)
-                            val tx = txs[position]
-                            val text1 = view.findViewById<TextView>(android.R.id.text1)
-                            val text2 = view.findViewById<TextView>(android.R.id.text2)
-                            val isDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
-                            text1.setTextColor(if (isDark) Color.WHITE else Color.BLACK)
-                            text1.text = "${if (tx.type == "Nhận") "⬇" else "⬆"} ${tx.type} ${String.format(Locale.US, "%.8f", tx.amount)}"
-                            text2.text = SimpleDateFormat("dd/MM HH:mm", Locale.getDefault()).format(tx.time) + " • " + tx.txId.take(12)
-                            text2.setTextColor(Color.GRAY)
-                            text2.textSize = 11f
+                    txListView.adapter = emptyAdapter
+                } else {
+                    txListView.adapter = object : BaseAdapter() {
+                        override fun getCount() = realTxs.size
+                        override fun getItem(p: Int) = realTxs[p]
+                        override fun getItemId(p: Int) = p.toLong()
+                        override fun getView(p: Int, v: View?, parent: ViewGroup): View {
+                            val view = v ?: layoutInflater.inflate(android.R.layout.simple_list_item_2, parent, false)
+                            val (txid, amt) = realTxs[p]
+                            view.findViewById<TextView>(android.R.id.text1).text = if (amt > 0) "+${"%.8f".format(amt)} BTC" else "Giao dịch"
+                            view.findViewById<TextView>(android.R.id.text2).text = txid.take(16) + "..."
                             return view
                         }
                     }
-                    if (txs.isEmpty() && mempoolTxs.isEmpty()) {
-                        val emptyAdapter = object : BaseAdapter() {
-                            override fun getCount() = 1
-                            override fun getItem(p: Int) = null
-                            override fun getItemId(p: Int) = 0L
-                            override fun getView(p: Int, v: View?, parent: ViewGroup): View {
-                                return TextView(this@MainActivity).apply {
-                                    text = "— chưa có giao dịch —"
-                                    gravity = Gravity.CENTER
-                                    setPadding(0,40,0,40)
-                                    setTextColor(Color.GRAY)
-                                }
-                            }
-                        }
-                        txListView.adapter = emptyAdapter
-                    } else if (mempoolTxs.isNotEmpty()) {
-                        val adapter = object : BaseAdapter() {
-                            override fun getCount() = mempoolTxs.size
-                            override fun getItem(p: Int) = mempoolTxs[p].first
-                            override fun getItemId(p: Int) = p.toLong()
-                            override fun getView(p: Int, v: View?, parent: ViewGroup): View {
-                                val view = v ?: layoutInflater.inflate(android.R.layout.simple_list_item_2, parent, false)
-                                val (txid, value) = mempoolTxs[p]
-                                view.findViewById<TextView>(android.R.id.text1).text = "${"%.8f".format(value/100000000.0)} BTC"
-                                view.findViewById<TextView>(android.R.id.text2).text = txid.take(14) + "..."
-                                return view
-                            }
-                        }
-                        txListView.adapter = adapter
-                    } else {
-                        txListView.adapter = adapter
-                    }
-                    isSyncing = false
-                }
-            } catch (e: Exception) {
-                runOnUiThread {
-                    balanceText.text = "0.00000000 BTC"
-                    balanceUsdText.text = "≈ $0.00  +$0.00 (0.00%)"
-                    rateText.text = "BTC $0.00  +$0.00 (0.00%)"
-                    syncText.text = "Mất mạng • " + SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
-                    syncProgressBar.progress = 0
-                    lastBalanceUsd = 0.0
-                    lastPrice = 0.0
-                    isSyncing = false
                 }
             }
         }.start()
     }
-
     private fun showReceiveDialog() {
         val address = walletManager.getAddress()
         if (address.isEmpty()) {
@@ -911,8 +834,7 @@ private fun fetchBtcStats() {
             setTextColor(0xFF888888.toInt()) 
         }
         Thread {
-            var realBal = walletManager.getBalance()
-            if (realBal < 0.00000001) { realBal = getRealBalance(walletManager.getAddress()) }
+            val realBal = getRealBalance(walletManager.getAddress()).let { if (it>0) it else walletManager.getBalance() }
             runOnUiThread {
                 balanceTv.text = "Số dư: ${String.format(Locale.US, "%.8f", realBal)} BTC"
             }
@@ -965,13 +887,9 @@ private fun fetchBtcStats() {
                         rNormal.text = "Thường ~30' (${feeRates.normal} sat/vB) ~ $${"%.2f".format(walletManager.estimateFee(to, amt, feeRates.normal)*priceUsd)}"
                         rFast.text = "Nhanh ~10' (${feeRates.fast} sat/vB) ~ $${"%.2f".format(walletManager.estimateFee(to, amt, feeRates.fast)*priceUsd)}"
                         rCustom.text = "Tùy chỉnh (${feeRate} sat/vB) ~ $${"%.2f".format(estFee*priceUsd)}"
-                        var currentBal = walletManager.getBalance()
-                        if (currentBal < 0.00000001) { currentBal = getRealBalance(walletManager.getAddress()) }
+                        val currentBal = getRealBalance(walletManager.getAddress()).let { if (it>0) it else walletManager.getBalance() }
                         btn.isEnabled = total <= currentBal && currentBal > 0
                         btn.alpha = if (btn.isEnabled) 1f else 0.5f
-                        if (!btn.isEnabled && amt > 0) {
-                            feeEstimateTv.text = "Không đủ số dư (cần ${"%.8f".format(total)} BTC, có ${"%.8f".format(currentBal)})"
-                        }
                     } catch (_: Exception) { }
                 } else {
                     btn.isEnabled = false
