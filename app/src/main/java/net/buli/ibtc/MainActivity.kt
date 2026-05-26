@@ -40,8 +40,16 @@ class MainActivity : AppCompatActivity() {
     private fun getRealBalance(address: String): Double {
         return try {
             val json = java.net.URL("https://mempool.space/api/address/" + address).readText()
-            val funded = Regex("funded_txo_sum\":(\\d+)").find(json)?.groupValues?.get(1)?.toLong() ?: 0L
-            val spent = Regex("spent_txo_sum\":(\\d+)").find(json)?.groupValues?.get(1)?.toLong() ?: 0L
+            fun extract(key: String): Long {
+                val p = json.indexOf(""" + key + "":")
+                if (p < 0) return 0L
+                val start = p + key.length + 3
+                var end = start
+                while (end < json.length && json[end].isDigit()) end++
+                return json.substring(start, end).toLongOrNull() ?: 0L
+            }
+            val funded = extract("funded_txo_sum")
+            val spent = extract("spent_txo_sum")
             (funded - spent) / 100000000.0
         } catch (e: Exception) { 0.0 }
     }
@@ -670,20 +678,30 @@ private fun fetchBtcStats() {
                 var txs = walletManager.getTransactions()
                 val mempoolTxs = try {
                     val json = java.net.URL("https://mempool.space/api/address/" + addr + "/txs").readText()
-                    val list = mutableListOf<String>()
+                    val list = mutableListOf<Pair<String, Long>>()
                     var idx = 0
                     while (true) {
-                        val p = json.indexOf("\"txid\":\"", idx)
+                        val p = json.indexOf(""txid":"", idx)
                         if (p < 0) break
-                        val start = p + 9
-                        val end = json.indexOf("\"", start)
+                        val start = p + 8
+                        val end = json.indexOf(""", start)
                         if (end < 0) break
-                        list.add(json.substring(start, end))
+                        val txid = json.substring(start, end)
+                        // tìm value đầu tiên sau txid
+                        val vpos = json.indexOf(""value":", end)
+                        var value = 0L
+                        if (vpos > 0 && vpos < end + 500) {
+                            val vs = vpos + 8
+                            var ve = vs
+                            while (ve < json.length && json[ve].isDigit()) ve++
+                            value = json.substring(vs, ve).toLongOrNull() ?: 0L
+                        }
+                        list.add(Pair(txid, value))
                         idx = end
                         if (list.size >= 20) break
                     }
                     list
-                } catch (e: Exception) { emptyList<String>() }
+                } catch (e: Exception) { emptyList<Pair<String, Long>>() }
                 runOnUiThread {
                     balanceText.text = String.format(Locale.US, "%.8f BTC", bal)
                     val balanceUsd = bal * price
@@ -754,13 +772,13 @@ private fun fetchBtcStats() {
                     } else if (mempoolTxs.isNotEmpty()) {
                         val adapter = object : BaseAdapter() {
                             override fun getCount() = mempoolTxs.size
-                            override fun getItem(p: Int) = mempoolTxs[p]
+                            override fun getItem(p: Int) = mempoolTxs[p].first
                             override fun getItemId(p: Int) = p.toLong()
                             override fun getView(p: Int, v: View?, parent: ViewGroup): View {
                                 val view = v ?: layoutInflater.inflate(android.R.layout.simple_list_item_2, parent, false)
-                                val txid = mempoolTxs[p]
-                                view.findViewById<TextView>(android.R.id.text1).text = txid.take(12) + "..."
-                                view.findViewById<TextView>(android.R.id.text2).text = "Xem trên mempool.space"
+                                val (txid, value) = mempoolTxs[p]
+                                view.findViewById<TextView>(android.R.id.text1).text = "${"%.8f".format(value/100000000.0)} BTC"
+                                view.findViewById<TextView>(android.R.id.text2).text = txid.take(14) + "..."
                                 return view
                             }
                         }
