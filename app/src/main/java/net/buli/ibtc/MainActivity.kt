@@ -662,8 +662,8 @@ private fun fetchBtcStats() {
                     try {
                         val addr = walletManager.getAddress()
                         val json = java.net.URL("https://mempool.space/api/address/$addr/txs").readText()
-                        if (json.contains(""txid"")) {
-                            walletManager.sync()
+                        if (json.contains("txid")) {
+                            // sync skipped
                             txs = walletManager.getTransactions()
                         }
                     } catch (_: Exception) {}
