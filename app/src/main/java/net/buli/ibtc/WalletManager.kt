@@ -397,4 +397,16 @@ fun onProgress(
     cb(100, "Ví sẵn sàng")
 }
 
+fun changePassword(oldPassword: String, newPassword: String): Boolean {
+    return try {
+        prefs.edit().putString("wallet_password", newPassword).apply()
+        true
+    } catch (e: Exception) {
+        false
+    }
+}
+
+fun rename(newName: String) {
+    prefs.edit().putString("wallet_name", newName).apply()
+}
 }
