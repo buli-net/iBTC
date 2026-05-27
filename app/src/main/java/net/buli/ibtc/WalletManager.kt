@@ -291,111 +291,40 @@ class WalletManager(private val ctx: Context) {
     }
 
     fun getAddress(): String {
-
         return try {
-
-            val seedPhrase =
-                cachedSeed ?: return ""
-
-            val seed =
-                DeterministicSeed(
-                    seedPhrase.split(" "),
-                    null,
-                    "",
-                    0L
-                )
-
-            val chain =
-                org.bitcoinj.wallet.DeterministicKeyChain.builder()
-                    .seed(seed)
-                    .build()
-
-            val key: DeterministicKey =
-                chain.getKeyByPath(
-                    HDUtils.parsePath("M/44H/0H/0H/0/0"),
-                    true
-                )
-
-            LegacyAddress.fromKey(params, key).toString()
-
-        } catch (e: Exception) {
+            val wallet = WalletKitService.wallet()
+            wallet?.currentReceiveAddress()?.toString() ?: ""
+        } catch (_: Exception) {
             ""
         }
     }
 
     fun getBalance(): Double {
-
-        val address = getAddress()
-
-        if (address.isEmpty()) {
-            return 0.0
-        }
-
         return try {
-
-            val text =
-                httpGet(
-                    "https://blockstream.info/api/address/$address"
-                )
-
-            val json = JSONObject(text)
-
-            val funded =
-                json.getJSONObject("chain_stats")
-                    .getLong("funded_txo_sum")
-
-            val spent =
-                json.getJSONObject("chain_stats")
-                    .getLong("spent_txo_sum")
-
-            (funded - spent) / 100000000.0
-
-        } catch (e: Exception) {
+            val wallet = WalletKitService.wallet()
+            val sat = wallet?.balance?.value ?: 0L
+            sat / 1e8
+        } catch (_: Exception) {
             0.0
         }
     }
 
     fun getTransactions(): List<TransactionInfo> {
-
-        val list =
-            mutableListOf<TransactionInfo>()
-
-        val address = getAddress()
-
-        if (address.isEmpty()) {
-            return list
-        }
-
         return try {
+            val wallet = WalletKitService.wallet() ?: return emptyList()
 
-            val text =
-                httpGet(
-                    "https://blockstream.info/api/address/$address/txs"
-                )
+            wallet.transactionsByTime.map {
+                val value = it.getValue(wallet).value / 1e8
 
-            val arr = JSONArray(text)
-
-            for (i in 0 until arr.length()) {
-
-                val tx = arr.getJSONObject(i)
-
-                val txid =
-                    tx.getString("txid")
-
-                list.add(
-                    TransactionInfo(
-                        txId = txid,
-                        amount = 0.0,
-                        type = "BTC",
-                        time = Date()
-                    )
+                TransactionInfo(
+                    txId = it.txId.toString(),
+                    amount = kotlin.math.abs(value),
+                    type = if (value >= 0) "Nhận" else "Gửi",
+                    time = it.updateTime ?: java.util.Date()
                 )
             }
-
-            list
-
-        } catch (e: Exception) {
-            list
+        } catch (_: Exception) {
+            emptyList()
         }
     }
 

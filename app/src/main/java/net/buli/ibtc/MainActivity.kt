@@ -468,6 +468,12 @@ private fun fetchBtcStats() {
     }
 
     private fun showMainWallet() {
+
+        val id = walletManager.getActiveId()
+
+        if (id != null) {
+            WalletKitService.start(this, id)
+        }
         rootLayout.removeAllViews()
         val isDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
         val mainColor = if (isDark) Color.WHITE else Color.BLACK

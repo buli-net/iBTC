@@ -11,6 +11,7 @@ object WalletKitService {
     private var kit: WalletAppKit? = null
 
     fun start(context: Context, walletId: String) {
+
         if (kit != null) return
 
         val params = MainNetParams.get()
@@ -20,6 +21,7 @@ object WalletKitService {
             File(context.filesDir, "spv_wallets"),
             walletId
         ) {
+
             override fun onSetupCompleted() {
                 println("WalletAppKit ready")
             }
@@ -27,15 +29,22 @@ object WalletKitService {
 
         kit?.setBlockingStartup(false)
 
-        kit?.setDownloadListener(object : DownloadProgressTracker() {
-            override fun progress(pct: Double, blocksSoFar: Int, date: java.util.Date?) {
-                println("Sync: $pct%")
-            }
+        kit?.setDownloadListener(
+            object : DownloadProgressTracker() {
 
-            override fun doneDownload() {
-                println("Blockchain synced")
+                override fun progress(
+                    pct: Double,
+                    blocksSoFar: Int,
+                    date: java.util.Date?
+                ) {
+                    println("Sync: $pct%")
+                }
+
+                override fun doneDownload() {
+                    println("Blockchain synced")
+                }
             }
-        })
+        )
 
         kit?.startAsync()
     }
@@ -45,10 +54,12 @@ object WalletKitService {
     fun peerGroup() = kit?.peerGroup()
 
     fun stop() {
+
         try {
             kit?.stopAsync()
         } catch (_: Exception) {
         }
+
         kit = null
     }
 }
