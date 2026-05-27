@@ -1,3 +1,50 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    namespace 'net.buli.ibtc'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId "net.buli.ibtc"
+        minSdk 24
+        targetSdk 34
+        versionCode 49
+        versionName "4.9"
+
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile(
+                    'proguard-android-optimize.txt'
+            ), 'proguard-rules.pro'
+        }
+
+        debug {
+            applicationIdSuffix ".debug"
+            debuggable true
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    kotlinOptions {
+        jvmTarget = '1.8'
+    }
+
+    buildFeatures {
+        viewBinding true
+    }
+}
+
 dependencies {
 
     // AndroidX
@@ -9,19 +56,17 @@ dependencies {
     // Kotlin
     implementation 'org.jetbrains.kotlin:kotlin-stdlib:1.9.22'
 
-    // BitcoinJ MAINNET
+    // BitcoinJ
     implementation 'org.bitcoinj:bitcoinj-core:0.16.2'
 
-    // QR generate
+    // QR
     implementation 'com.google.zxing:core:3.5.2'
-
-    // QR scan camera
     implementation 'com.journeyapps:zxing-android-embedded:4.3.0'
 
-    // HTTP
+    // Network
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
 
-    // Retrofit API
+    // Retrofit
     implementation 'com.squareup.retrofit2:retrofit:2.9.0'
     implementation 'com.squareup.retrofit2:converter-gson:2.9.0'
 
