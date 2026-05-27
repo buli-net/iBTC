@@ -7,7 +7,6 @@ import org.bitcoinj.crypto.ChildNumber
 import org.bitcoinj.crypto.DeterministicKey
 import org.bitcoinj.crypto.HDKeyDerivation
 import org.bitcoinj.params.MainNetParams
-import org.bitcoinj.script.ScriptBuilder
 import org.bitcoinj.wallet.DeterministicSeed
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -172,12 +171,7 @@ class WalletManager(private val ctx: Context) {
                 deriveKey(seedPhrase,49)
 
             LegacyAddress
-                .fromScriptHash(
-                    params,
-                    ScriptBuilder
-                        .createP2WPKHOutputScript(key)
-                        .scriptHash
-                )
+                .fromKey(params,key)
                 .toString()
 
         } catch (_: Exception) {
@@ -378,6 +372,7 @@ class WalletManager(private val ctx: Context) {
     }
 
     fun changePassword(
+        walletId: String,
         oldPassword: String,
         newPassword: String,
         cb: ((Boolean) -> Unit)? = null
@@ -385,8 +380,7 @@ class WalletManager(private val ctx: Context) {
 
         return try {
 
-            val id =
-                active?.id ?: return false
+            val id = walletId
 
             val seed =
                 cachedSeed ?: return false
@@ -414,12 +408,12 @@ class WalletManager(private val ctx: Context) {
     }
 
     fun rename(
+        walletId: String,
         newName: String,
         cb: (() -> Unit)? = null
     ) {
 
-        val id =
-            active?.id ?: return
+        val id = walletId
 
         prefs.edit()
             .putString("${id}_name",newName)
