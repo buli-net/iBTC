@@ -1012,7 +1012,7 @@ private fun fetchBtcStats() {
                     3 -> showDeleteDialog()
                     4 -> {
                         walletManager.lock()
-                        startActivity(Intent(this, WelcomeActivity::class.java))
+                   showWelcome()
                         finish()
                     }
                     5 -> showInfo()
