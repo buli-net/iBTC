@@ -1,6 +1,7 @@
 package net.buli.ibtc
 
 import android.content.Context
+import org.bitcoinj.core.listeners.DownloadProgressTracker
 import org.bitcoinj.kits.WalletAppKit
 import org.bitcoinj.params.MainNetParams
 import java.io.File
@@ -20,13 +21,28 @@ object WalletKitService {
             walletId
         ) {
             override fun onSetupCompleted() {
-
+                println("WalletAppKit ready")
             }
         }
 
         kit?.setBlockingStartup(false)
+
+        kit?.setDownloadListener(object : DownloadProgressTracker() {
+            override fun progress(pct: Double, blocksSoFar: Int, date: java.util.Date?) {
+                println("Sync: $pct%")
+            }
+
+            override fun doneDownload() {
+                println("Blockchain synced")
+            }
+        })
+
         kit?.startAsync()
     }
+
+    fun wallet() = kit?.wallet()
+
+    fun peerGroup() = kit?.peerGroup()
 
     fun stop() {
         try {
@@ -34,9 +50,5 @@ object WalletKitService {
         } catch (_: Exception) {
         }
         kit = null
-    }
-
-    fun isRunning(): Boolean {
-        return kit != null
     }
 }
