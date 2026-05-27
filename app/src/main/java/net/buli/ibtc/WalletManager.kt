@@ -400,22 +400,19 @@ fun onProgress(
 fun changePassword(
     oldPassword: String,
     newPassword: String,
-    callback: ((Boolean) -> Unit)? = null
+    hint: String = ""
 ): Boolean {
 
     return try {
 
         prefs.edit()
             .putString("wallet_password", newPassword)
+            .putString("wallet_hint", hint)
             .apply()
-
-        callback?.invoke(true)
 
         true
 
     } catch (e: Exception) {
-
-        callback?.invoke(false)
 
         false
     }
@@ -423,13 +420,10 @@ fun changePassword(
 
 fun rename(
     newName: String,
-    callback: (() -> Unit)? = null
+    extra: String = ""
 ) {
 
     prefs.edit()
         .putString("wallet_name", newName)
         .apply()
-
-    callback?.invoke()
-}
 }
