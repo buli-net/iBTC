@@ -482,73 +482,80 @@ class WalletManager(private val ctx: Context) {
             ""
         }
     }
+fun init() {}
 
-    fun init() {}
+fun stop() {}
 
-    fun stop() {}
+fun onProgress(
+    cb: (Int, String) -> Unit
+) {
+    cb(100, "Ví sẵn sàng")
+}
 
-    fun onProgress(
-        cb: (Int, String) -> Unit
-    ) {
+fun changePassword(
+    oldPassword: String,
+    newPassword: String,
+    cb: ((Boolean) -> Unit)? = null
+): Boolean {
 
-        cb(100, "Ví sẵn sàng")
-    }
-
-    fun changePassword(
-        oldPassword: String,
-        newPassword: String
-    ): Boolean {
-
-        return try {
-
-            val id =
-                active?.id ?: return false
-
-            val seed =
-                cachedSeed ?: return false
-
-            val enc =
-                CryptoUtil.encrypt(
-                    seed,
-                    newPassword
-                )
-
-            prefs.edit()
-                .putString(
-                    "${id}_seed",
-                    enc
-                )
-                .apply()
-
-            cachedPassword =
-                newPassword.toCharArray()
-
-            true
-
-        } catch (e: Exception) {
-
-            false
-        }
-    }
-
-    fun rename(
-        newName: String
-    ) {
+    return try {
 
         val id =
-            active?.id ?: return
+            active?.id ?: return false
+
+        val seed =
+            cachedSeed ?: return false
+
+        val enc =
+            CryptoUtil.encrypt(
+                seed,
+                newPassword
+            )
 
         prefs.edit()
             .putString(
-                "${id}_name",
-                newName
+                "${id}_seed",
+                enc
             )
             .apply()
 
-        active =
-            WalletInfo(
-                id,
-                newName
-            )
+        cachedPassword =
+            newPassword.toCharArray()
+
+        cb?.invoke(true)
+
+        true
+
+    } catch (e: Exception) {
+
+        cb?.invoke(false)
+
+        false
     }
+}
+
+fun rename(
+    newName: String,
+    cb: (() -> Unit)? = null
+) {
+
+    val id =
+        active?.id ?: return
+
+    prefs.edit()
+        .putString(
+            "${id}_name",
+            newName
+        )
+        .apply()
+
+    active =
+        WalletInfo(
+            id,
+            newName
+        )
+
+    cb?.invoke()
+}
+   
 }
