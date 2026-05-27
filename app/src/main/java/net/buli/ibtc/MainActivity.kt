@@ -1012,8 +1012,7 @@ private fun fetchBtcStats() {
                     3 -> showDeleteDialog()
                     4 -> {
                         walletManager.lock()
-                   showWelcome()
-                        finish()
+                        showUnlockDialog()
                     }
                     5 -> showInfo()
                 }
