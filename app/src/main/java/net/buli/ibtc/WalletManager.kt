@@ -73,7 +73,6 @@ class WalletManager(private val ctx: Context) {
 
         cachedPassword = null
         cachedSeed = null
-        active = null
     }
 
     fun create(name: String,password: String): WalletInfo {
