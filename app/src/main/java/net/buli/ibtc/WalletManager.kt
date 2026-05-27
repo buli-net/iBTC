@@ -31,6 +31,8 @@ class WalletManager(private val ctx: Context) {
     private val prefs =
         ctx.getSharedPreferences("wallets", Context.MODE_PRIVATE)
 
+    private var lastActiveId: String? = prefs.getString("last_active_id", null)
+
     private var lastPrice =
         prefs.getFloat("last_price",65000f).toDouble()
 
@@ -40,7 +42,7 @@ class WalletManager(private val ctx: Context) {
 
     fun getActive(): WalletInfo? = active
 
-    fun getActiveId(): String? = active?.id
+    fun getActiveId(): String? = active?.id ?: lastActiveId
 
     fun unlock(id: String,password: String): Boolean {
 
@@ -59,6 +61,8 @@ class WalletManager(private val ctx: Context) {
             cachedPassword = password.toCharArray()
 
             active = WalletInfo(id,name)
+            lastActiveId = id
+            prefs.edit().putString("last_active_id", id).apply()
 
             true
 
