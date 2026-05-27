@@ -493,69 +493,50 @@ fun onProgress(
 }
 
 fun changePassword(
+    id: String,
     oldPassword: String,
-    newPassword: String,
-    cb: ((Boolean) -> Unit)? = null
+    newPassword: String
 ): Boolean {
 
     return try {
 
-        val id =
-            active?.id ?: return false
+        val enc =
+            prefs.getString("${id}_seed", "") ?: return false
 
         val seed =
-            cachedSeed ?: return false
+            CryptoUtil.decrypt(enc, oldPassword)
 
-        val enc =
-            CryptoUtil.encrypt(
-                seed,
-                newPassword
-            )
+        val newEnc =
+            CryptoUtil.encrypt(seed, newPassword)
 
         prefs.edit()
-            .putString(
-                "${id}_seed",
-                enc
-            )
+            .putString("${id}_seed", newEnc)
             .apply()
 
-        cachedPassword =
-            newPassword.toCharArray()
-
-        cb?.invoke(true)
+        cachedSeed = seed
+        cachedPassword = newPassword.toCharArray()
 
         true
 
     } catch (e: Exception) {
-
-        cb?.invoke(false)
 
         false
     }
 }
 
 fun rename(
-    newName: String,
-    cb: (() -> Unit)? = null
+    id: String,
+    newName: String
 ) {
 
-    val id =
-        active?.id ?: return
-
     prefs.edit()
-        .putString(
-            "${id}_name",
-            newName
-        )
+        .putString("${id}_name", newName)
         .apply()
 
-    active =
-        WalletInfo(
-            id,
-            newName
-        )
-
-    cb?.invoke()
+    if (active?.id == id) {
+        active = WalletInfo(id, newName)
+    }
+}
 }
    
 }
