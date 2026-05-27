@@ -25,6 +25,7 @@ class WalletManager(private val ctx: Context) {
     private val params = MainNetParams.get()
 
     private var active: WalletInfo? = null
+    private var locked = false
     private var cachedSeed: String? = null
     private var cachedPassword: CharArray? = null
 
@@ -59,6 +60,7 @@ class WalletManager(private val ctx: Context) {
             cachedPassword = password.toCharArray()
 
             active = WalletInfo(id,name)
+            locked = false
 
             true
 
@@ -73,6 +75,8 @@ class WalletManager(private val ctx: Context) {
 
         cachedPassword = null
         cachedSeed = null
+
+        locked = true
     }
 
     fun create(name: String,password: String): WalletInfo {
@@ -406,6 +410,10 @@ class WalletManager(private val ctx: Context) {
     fun init() {}
 
     fun stop() {}
+
+    fun isLocked(): Boolean {
+        return locked
+    }
 
     fun onProgress(
         cb: (Int,String) -> Unit

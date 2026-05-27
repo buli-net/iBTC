@@ -91,6 +91,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onResume() {
+        if(walletManager.isLocked()) {
+            showUnlockDialog()
+        }
         super.onResume()
         if (walletManager.hasWallets()) {
             if (walletManager.getActive() == null) {
