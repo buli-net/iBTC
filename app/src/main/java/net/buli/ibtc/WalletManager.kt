@@ -180,7 +180,6 @@ class WalletManager(private val ctx: Context) {
         }
     }
 
-    }
 
     private fun getNativeSegwitAddress(seedPhrase: String): String {
 
@@ -407,7 +406,6 @@ class WalletManager(private val ctx: Context) {
 
             false
         }
-    }
     }
 
     fun rename(
