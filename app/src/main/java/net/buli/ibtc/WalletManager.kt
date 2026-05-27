@@ -397,16 +397,39 @@ fun onProgress(
     cb(100, "Ví sẵn sàng")
 }
 
-fun changePassword(oldPassword: String, newPassword: String): Boolean {
+fun changePassword(
+    oldPassword: String,
+    newPassword: String,
+    callback: ((Boolean) -> Unit)? = null
+): Boolean {
+
     return try {
-        prefs.edit().putString("wallet_password", newPassword).apply()
+
+        prefs.edit()
+            .putString("wallet_password", newPassword)
+            .apply()
+
+        callback?.invoke(true)
+
         true
+
     } catch (e: Exception) {
+
+        callback?.invoke(false)
+
         false
     }
 }
 
-fun rename(newName: String) {
-    prefs.edit().putString("wallet_name", newName).apply()
+fun rename(
+    newName: String,
+    callback: (() -> Unit)? = null
+) {
+
+    prefs.edit()
+        .putString("wallet_name", newName)
+        .apply()
+
+    callback?.invoke()
 }
 }
