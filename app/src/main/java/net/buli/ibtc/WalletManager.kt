@@ -3,9 +3,11 @@ package net.buli.ibtc
 import android.content.Context
 import org.bitcoinj.core.LegacyAddress
 import org.bitcoinj.crypto.ChildNumber
+import org.bitcoinj.crypto.DeterministicHierarchy
 import org.bitcoinj.crypto.HDKeyDerivation
 import org.bitcoinj.params.MainNetParams
 import org.bitcoinj.wallet.DeterministicSeed
+import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.SecureRandom
@@ -70,7 +72,6 @@ class WalletManager(private val ctx: Context) {
             } else {
                 null
             }
-
         }.firstOrNull()
     }
 
@@ -94,7 +95,10 @@ class WalletManager(private val ctx: Context) {
                 ) ?: return false
 
             val seed =
-                CryptoUtil.decrypt(enc, password)
+                CryptoUtil.decrypt(
+                    enc,
+                    password
+                )
 
             val name =
                 prefs.getString(
@@ -103,7 +107,8 @@ class WalletManager(private val ctx: Context) {
                 ) ?: "Wallet"
 
             cachedSeed = seed
-            cachedPassword = password.toCharArray()
+            cachedPassword =
+                password.toCharArray()
 
             active =
                 WalletInfo(id, name)
@@ -169,7 +174,7 @@ class WalletManager(private val ctx: Context) {
             }
 
         val address =
-            getBitcoinAddress(mnemonic)
+            deriveTrustAddress(mnemonic)
 
         val info =
             WalletInfo(id, walletName)
@@ -204,7 +209,7 @@ class WalletManager(private val ctx: Context) {
         return info
     }
 
-    private fun getBitcoinAddress(
+    private fun deriveTrustAddress(
         seedPhrase: String
     ): String {
 
@@ -227,46 +232,32 @@ class WalletManager(private val ctx: Context) {
                         seedBytes
                     )
 
-            val purposeKey =
-                HDKeyDerivation
-                    .deriveChildKey(
-                        masterKey,
-                        ChildNumber(44, true)
-                    )
+            val hierarchy =
+                DeterministicHierarchy(
+                    masterKey
+                )
 
-            val coinKey =
-                HDKeyDerivation
-                    .deriveChildKey(
-                        purposeKey,
-                        ChildNumber(0, true)
-                    )
+            val path = listOf(
+                ChildNumber(44, true),
+                ChildNumber(0, true),
+                ChildNumber(0, true),
+                ChildNumber.ZERO,
+                ChildNumber.ZERO
+            )
 
-            val accountKey =
-                HDKeyDerivation
-                    .deriveChildKey(
-                        coinKey,
-                        ChildNumber(0, true)
-                    )
-
-            val changeKey =
-                HDKeyDerivation
-                    .deriveChildKey(
-                        accountKey,
-                        ChildNumber.ZERO
-                    )
-
-            val addressKey =
-                HDKeyDerivation
-                    .deriveChildKey(
-                        changeKey,
-                        ChildNumber.ZERO
-                    )
+            val key =
+                hierarchy.get(
+                    path,
+                    true,
+                    true
+                )
 
             LegacyAddress
-                .fromKey(params, addressKey)
+                .fromKey(params, key)
                 .toString()
 
         } catch (e: Exception) {
+
             ""
         }
     }
@@ -298,7 +289,7 @@ class WalletManager(private val ctx: Context) {
                 words,
                 null,
                 "",
-                System.currentTimeMillis() / 1000
+                0L
             )
 
             val id =
@@ -312,10 +303,7 @@ class WalletManager(private val ctx: Context) {
                 }
 
             val address =
-                getBitcoinAddress(clean)
-
-            val info =
-                WalletInfo(id, walletName)
+                deriveTrustAddress(clean)
 
             val enc =
                 CryptoUtil.encrypt(
@@ -338,6 +326,12 @@ class WalletManager(private val ctx: Context) {
                 )
                 .apply()
 
+            val info =
+                WalletInfo(
+                    id,
+                    walletName
+                )
+
             cachedSeed = clean
             cachedPassword =
                 password.toCharArray()
@@ -347,6 +341,7 @@ class WalletManager(private val ctx: Context) {
             info
 
         } catch (e: Exception) {
+
             null
         }
     }
@@ -364,6 +359,7 @@ class WalletManager(private val ctx: Context) {
     }
 
     fun getSeed(): String {
+
         return cachedSeed ?: ""
     }
 
@@ -383,7 +379,7 @@ class WalletManager(private val ctx: Context) {
     }
 
     fun getTransactions():
-        List<TransactionInfo> {
+            List<TransactionInfo> {
 
         return emptyList()
     }
@@ -409,7 +405,40 @@ class WalletManager(private val ctx: Context) {
     }
 
     fun price(): Double {
-        return lastPrice
+
+        return try {
+
+            val json =
+                httpGet(
+                    "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT"
+                )
+
+            if (json.isBlank()) {
+                return lastPrice
+            }
+
+            val obj =
+                JSONObject(json)
+
+            val rate =
+                obj.getString("price")
+                    .toDouble()
+
+            lastPrice = rate
+
+            prefs.edit()
+                .putFloat(
+                    "last_price",
+                    rate.toFloat()
+                )
+                .apply()
+
+            rate
+
+        } catch (e: Exception) {
+
+            lastPrice
+        }
     }
 
     fun getFeeRates(): FeeRates {
@@ -434,13 +463,22 @@ class WalletManager(private val ctx: Context) {
 
             conn.requestMethod = "GET"
 
+            conn.connectTimeout = 10000
+            conn.readTimeout = 10000
+
+            conn.setRequestProperty(
+                "User-Agent",
+                "Mozilla/5.0"
+            )
+
             conn.inputStream
                 .bufferedReader()
                 .use {
                     it.readText()
                 }
 
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+
             ""
         }
     }
@@ -453,30 +491,37 @@ class WalletManager(private val ctx: Context) {
         cb: (Int, String) -> Unit
     ) {
 
-        cb(
-            100,
-            "Ví sẵn sàng"
-        )
+        cb(100, "Ví sẵn sàng")
     }
 
     fun changePassword(
         oldPassword: String,
-        newPassword: String,
-        hint: String = ""
+        newPassword: String
     ): Boolean {
 
         return try {
 
-            prefs.edit()
-                .putString(
-                    "wallet_password",
+            val id =
+                active?.id ?: return false
+
+            val seed =
+                cachedSeed ?: return false
+
+            val enc =
+                CryptoUtil.encrypt(
+                    seed,
                     newPassword
                 )
+
+            prefs.edit()
                 .putString(
-                    "wallet_hint",
-                    hint
+                    "${id}_seed",
+                    enc
                 )
                 .apply()
+
+            cachedPassword =
+                newPassword.toCharArray()
 
             true
 
@@ -487,15 +532,23 @@ class WalletManager(private val ctx: Context) {
     }
 
     fun rename(
-        newName: String,
-        extra: String = ""
+        newName: String
     ) {
+
+        val id =
+            active?.id ?: return
 
         prefs.edit()
             .putString(
-                "wallet_name",
+                "${id}_name",
                 newName
             )
             .apply()
+
+        active =
+            WalletInfo(
+                id,
+                newName
+            )
     }
 }
