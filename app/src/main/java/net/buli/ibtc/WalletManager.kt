@@ -427,3 +427,4 @@ fun rename(
         .putString("wallet_name", newName)
         .apply()
 }
+}
