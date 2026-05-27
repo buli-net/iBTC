@@ -1010,7 +1010,11 @@ private fun fetchBtcStats() {
                     1 -> showChangePassDialog()
                     2 -> showRenameDialog()
                     3 -> showDeleteDialog()
-                    4 -> { walletManager.lock(); showUnlockDialog() }
+                    4 -> {
+                        walletManager.lock()
+                        startActivity(Intent(this, WelcomeActivity::class.java))
+                        finish()
+                    }
                     5 -> showInfo()
                 }
             }
@@ -1071,7 +1075,7 @@ private fun fetchBtcStats() {
             .setView(layout)
             .setPositiveButton("Đổi") { _, _ ->
                 val id = walletManager.getActiveId()?: return@setPositiveButton
-                if (walletManager.changePassword(id, oldP.text.toString(), newP.text.toString()))
+                if (walletManager.changePassword(oldP.text.toString(), newP.text.toString()))
                     toast("Đã đổi thành công")
                 else toast("Sai mật khẩu cũ")
             }
@@ -1088,7 +1092,7 @@ private fun fetchBtcStats() {
             .setView(input)
             .setPositiveButton("Lưu") { _, _ ->
                 val id = walletManager.getActiveId()?: return@setPositiveButton
-                walletManager.rename(id, input.text.toString())
+                walletManager.rename(input.text.toString())
                 walletNameText.text = input.text.toString()
                 toast("Đã đổi tên")
             }
