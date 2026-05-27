@@ -20,19 +20,19 @@ object WalletKitService {
             walletId
         ) {
             override fun onSetupCompleted() {
-                wallet().allowSpendingUnconfirmedTransactions()
+
             }
         }
 
         kit?.setBlockingStartup(false)
         kit?.startAsync()
-        kit?.awaitRunning()
     }
 
     fun stop() {
         try {
             kit?.stopAsync()
-        } catch (_: Exception) {}
+        } catch (_: Exception) {
+        }
         kit = null
     }
 
