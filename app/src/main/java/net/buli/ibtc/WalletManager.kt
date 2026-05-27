@@ -3,11 +3,11 @@ package net.buli.ibtc
 import android.content.Context
 import org.bitcoinj.core.LegacyAddress
 import org.bitcoinj.crypto.ChildNumber
-import org.bitcoinj.crypto.DeterministicKey
 import org.bitcoinj.crypto.HDKeyDerivation
-import org.bitcoinj.crypto.MnemonicCode
 import org.bitcoinj.params.MainNetParams
 import org.bitcoinj.wallet.DeterministicSeed
+import java.net.HttpURLConnection
+import java.net.URL
 import java.security.SecureRandom
 import java.util.Date
 import java.util.UUID
@@ -39,12 +39,19 @@ class WalletManager(private val ctx: Context) {
     private var cachedPassword: CharArray? = null
 
     private val prefs =
-        ctx.getSharedPreferences("wallets", Context.MODE_PRIVATE)
+        ctx.getSharedPreferences(
+            "wallets",
+            Context.MODE_PRIVATE
+        )
 
     private var lastPrice =
-        prefs.getFloat("last_price", 65000f).toDouble()
+        prefs.getFloat(
+            "last_price",
+            65000f
+        ).toDouble()
 
     fun hasWallets(): Boolean {
+
         return prefs.all.keys.any {
             it.endsWith("_seed")
         }
@@ -55,30 +62,72 @@ class WalletManager(private val ctx: Context) {
     }
 
     fun getActiveId(): String? {
-        return active?.id
+
+        return prefs.all.keys.mapNotNull { key ->
+
+            if (key.endsWith("_seed")) {
+                key.removeSuffix("_seed")
+            } else {
+                null
+            }
+
+        }.firstOrNull()
     }
 
-    fun unlock(id: String, password: String): Boolean {
+    fun unlock(
+        id: String,
+        password: String
+    ): Boolean {
+
+        if (
+            prefs.getInt("${id}_attempts", 0) >= 5
+        ) {
+            return false
+        }
 
         return try {
 
             val enc =
-                prefs.getString("${id}_seed", "") ?: return false
+                prefs.getString(
+                    "${id}_seed",
+                    ""
+                ) ?: return false
 
             val seed =
                 CryptoUtil.decrypt(enc, password)
 
             val name =
-                prefs.getString("${id}_name", "Wallet") ?: "Wallet"
+                prefs.getString(
+                    "${id}_name",
+                    "Wallet"
+                ) ?: "Wallet"
 
             cachedSeed = seed
             cachedPassword = password.toCharArray()
 
-            active = WalletInfo(id, name)
+            active =
+                WalletInfo(id, name)
+
+            prefs.edit()
+                .putInt("${id}_attempts", 0)
+                .apply()
 
             true
 
         } catch (e: Exception) {
+
+            val attempts =
+                prefs.getInt(
+                    "${id}_attempts",
+                    0
+                ) + 1
+
+            prefs.edit()
+                .putInt(
+                    "${id}_attempts",
+                    attempts
+                )
+                .apply()
 
             false
         }
@@ -98,7 +147,8 @@ class WalletManager(private val ctx: Context) {
         password: String
     ): WalletInfo {
 
-        val id = UUID.randomUUID().toString()
+        val id =
+            UUID.randomUUID().toString()
 
         val seed =
             DeterministicSeed(
@@ -108,7 +158,8 @@ class WalletManager(private val ctx: Context) {
             )
 
         val mnemonic =
-            seed.mnemonicCode!!.joinToString(" ")
+            seed.mnemonicCode!!
+                .joinToString(" ")
 
         val walletName =
             if (name.isBlank()) {
@@ -118,34 +169,50 @@ class WalletManager(private val ctx: Context) {
             }
 
         val address =
-            getTrustWalletAddress(mnemonic)
+            getBitcoinAddress(mnemonic)
 
         val info =
             WalletInfo(id, walletName)
 
         val enc =
-            CryptoUtil.encrypt(mnemonic, password)
+            CryptoUtil.encrypt(
+                mnemonic,
+                password
+            )
 
         prefs.edit()
-            .putString("${id}_name", walletName)
-            .putString("${id}_seed", enc)
-            .putString("${id}_address", address)
+            .putString(
+                "${id}_name",
+                walletName
+            )
+            .putString(
+                "${id}_seed",
+                enc
+            )
+            .putString(
+                "${id}_address",
+                address
+            )
             .apply()
 
         cachedSeed = mnemonic
-        cachedPassword = password.toCharArray()
+        cachedPassword =
+            password.toCharArray()
+
         active = info
 
         return info
     }
 
-    private fun getTrustWalletAddress(seedPhrase: String): String {
+    private fun getBitcoinAddress(
+        seedPhrase: String
+    ): String {
 
         return try {
 
             val seed =
                 DeterministicSeed(
-                    seedPhrase,
+                    seedPhrase.split(" "),
                     null,
                     "",
                     0L
@@ -155,37 +222,45 @@ class WalletManager(private val ctx: Context) {
                 seed.seedBytes ?: return ""
 
             val masterKey =
-                HDKeyDerivation.createMasterPrivateKey(seedBytes)
+                HDKeyDerivation
+                    .createMasterPrivateKey(
+                        seedBytes
+                    )
 
             val purposeKey =
-                HDKeyDerivation.deriveChildKey(
-                    masterKey,
-                    ChildNumber(44, true)
-                )
+                HDKeyDerivation
+                    .deriveChildKey(
+                        masterKey,
+                        ChildNumber(44, true)
+                    )
 
             val coinKey =
-                HDKeyDerivation.deriveChildKey(
-                    purposeKey,
-                    ChildNumber(0, true)
-                )
+                HDKeyDerivation
+                    .deriveChildKey(
+                        purposeKey,
+                        ChildNumber(0, true)
+                    )
 
             val accountKey =
-                HDKeyDerivation.deriveChildKey(
-                    coinKey,
-                    ChildNumber(0, true)
-                )
+                HDKeyDerivation
+                    .deriveChildKey(
+                        coinKey,
+                        ChildNumber(0, true)
+                    )
 
             val changeKey =
-                HDKeyDerivation.deriveChildKey(
-                    accountKey,
-                    ChildNumber.ZERO
-                )
+                HDKeyDerivation
+                    .deriveChildKey(
+                        accountKey,
+                        ChildNumber.ZERO
+                    )
 
-            val addressKey: DeterministicKey =
-                HDKeyDerivation.deriveChildKey(
-                    changeKey,
-                    ChildNumber.ZERO
-                )
+            val addressKey =
+                HDKeyDerivation
+                    .deriveChildKey(
+                        changeKey,
+                        ChildNumber.ZERO
+                    )
 
             LegacyAddress
                 .fromKey(params, addressKey)
@@ -207,17 +282,24 @@ class WalletManager(private val ctx: Context) {
             val clean =
                 phrase.trim()
                     .lowercase()
-                    .replace(Regex("\\s+"), " ")
+                    .replace(
+                        Regex("\\s+"),
+                        " "
+                    )
 
-            val words = clean.split(" ")
+            val words =
+                clean.split(" ")
 
-            if (words.size != 12 &&
-                words.size != 24
-            ) {
+            if (words.size < 12) {
                 return null
             }
 
-            MnemonicCode.INSTANCE.check(words)
+            DeterministicSeed(
+                words,
+                null,
+                "",
+                System.currentTimeMillis() / 1000
+            )
 
             val id =
                 UUID.randomUUID().toString()
@@ -230,22 +312,36 @@ class WalletManager(private val ctx: Context) {
                 }
 
             val address =
-                getTrustWalletAddress(clean)
+                getBitcoinAddress(clean)
 
             val info =
                 WalletInfo(id, walletName)
 
             val enc =
-                CryptoUtil.encrypt(clean, password)
+                CryptoUtil.encrypt(
+                    clean,
+                    password
+                )
 
             prefs.edit()
-                .putString("${id}_name", walletName)
-                .putString("${id}_seed", enc)
-                .putString("${id}_address", address)
+                .putString(
+                    "${id}_name",
+                    walletName
+                )
+                .putString(
+                    "${id}_seed",
+                    enc
+                )
+                .putString(
+                    "${id}_address",
+                    address
+                )
                 .apply()
 
             cachedSeed = clean
-            cachedPassword = password.toCharArray()
+            cachedPassword =
+                password.toCharArray()
+
             active = info
 
             info
@@ -262,8 +358,9 @@ class WalletManager(private val ctx: Context) {
         prefs.edit()
             .remove("${id}_name")
             .remove("${id}_seed")
+            .remove("${id}_attempts")
             .remove("${id}_address")
-            .apply()
+            .commit()
     }
 
     fun getSeed(): String {
@@ -272,7 +369,8 @@ class WalletManager(private val ctx: Context) {
 
     fun getAddress(): String {
 
-        val id = active?.id ?: return ""
+        val id =
+            active?.id ?: return ""
 
         return prefs.getString(
             "${id}_address",
@@ -284,7 +382,9 @@ class WalletManager(private val ctx: Context) {
         return 0.0
     }
 
-    fun getTransactions(): List<TransactionInfo> {
+    fun getTransactions():
+        List<TransactionInfo> {
+
         return emptyList()
     }
 
@@ -294,7 +394,9 @@ class WalletManager(private val ctx: Context) {
         feeRateSatVb: Int
     ): Double {
 
-        return (feeRateSatVb * 250.0) / 100000000.0
+        return (
+            feeRateSatVb * 250.0
+        ) / 100000000.0
     }
 
     fun send(
@@ -319,6 +421,30 @@ class WalletManager(private val ctx: Context) {
         )
     }
 
+    private fun httpGet(
+        url: String
+    ): String {
+
+        return try {
+
+            val conn =
+                URL(url)
+                    .openConnection()
+                        as HttpURLConnection
+
+            conn.requestMethod = "GET"
+
+            conn.inputStream
+                .bufferedReader()
+                .use {
+                    it.readText()
+                }
+
+        } catch (_: Exception) {
+            ""
+        }
+    }
+
     fun init() {}
 
     fun stop() {}
@@ -326,15 +452,31 @@ class WalletManager(private val ctx: Context) {
     fun onProgress(
         cb: (Int, String) -> Unit
     ) {
-        cb(100, "Ví sẵn sàng")
+
+        cb(
+            100,
+            "Ví sẵn sàng"
+        )
     }
 
     fun changePassword(
         oldPassword: String,
-        newPassword: String
+        newPassword: String,
+        hint: String = ""
     ): Boolean {
 
         return try {
+
+            prefs.edit()
+                .putString(
+                    "wallet_password",
+                    newPassword
+                )
+                .putString(
+                    "wallet_hint",
+                    hint
+                )
+                .apply()
 
             true
 
@@ -345,16 +487,15 @@ class WalletManager(private val ctx: Context) {
     }
 
     fun rename(
-        newName: String
+        newName: String,
+        extra: String = ""
     ) {
 
-        val id = active?.id ?: return
-
         prefs.edit()
-            .putString("${id}_name", newName)
+            .putString(
+                "wallet_name",
+                newName
+            )
             .apply()
-
-        active =
-            WalletInfo(id, newName)
     }
 }
