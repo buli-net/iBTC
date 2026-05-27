@@ -274,7 +274,48 @@ class WalletManager(private val ctx: Context) {
         ) ?: ""
     }
 
-    fun getBalance(): Double = 0.0
+
+  fun getBalance(): Double {
+
+    return try {
+
+        val address = getAddress()
+
+        if (address.isBlank()) {
+            return 0.0
+        }
+
+        val json =
+            httpGet(
+                "https://blockstream.info/api/address/$address"
+            )
+
+        if (json.isBlank()) {
+            return 0.0
+        }
+
+        val obj = JSONObject(json)
+
+        val chainStats =
+            obj.getJSONObject("chain_stats")
+
+        val funded =
+            chainStats.getLong("funded_txo_sum")
+
+        val spent =
+            chainStats.getLong("spent_txo_sum")
+
+        val sats =
+            funded - spent
+
+        sats / 100000000.0
+
+    } catch (e: Exception) {
+
+        0.0
+    }
+}
+
 
     fun getTransactions(): List<TransactionInfo> = emptyList()
 
