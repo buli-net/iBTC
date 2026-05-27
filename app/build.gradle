@@ -4,10 +4,13 @@ plugins {
 }
 
 android {
+
     namespace 'net.buli.ibtc'
+
     compileSdk 34
 
     defaultConfig {
+
         applicationId "net.buli.ibtc"
 
         minSdk 26
@@ -24,6 +27,7 @@ android {
     buildTypes {
 
         release {
+
             minifyEnabled false
 
             proguardFiles(
@@ -33,27 +37,34 @@ android {
         }
 
         debug {
+
             applicationIdSuffix ".debug"
             debuggable true
         }
     }
 
     compileOptions {
+
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
 
     kotlinOptions {
+
         jvmTarget = '17'
     }
 
     buildFeatures {
+
         viewBinding true
     }
 
     packagingOptions {
+
         resources {
+
             excludes += [
+
                     'META-INF/DEPENDENCIES',
                     'META-INF/LICENSE',
                     'META-INF/LICENSE.txt',
@@ -81,17 +92,14 @@ dependencies {
     // MultiDex
     implementation 'androidx.multidex:multidex:2.0.1'
 
-    // BitcoinJ MAINNET
-    implementation 'org.bitcoinj:bitcoinj-core:0.16.3'
-
-    // BDK Android
-    implementation 'org.bitcoindevkit:bdk-android:1.0.0-alpha.12'
+    // BitcoinJ
+    implementation 'org.bitcoinj:bitcoinj-core:0.15.10'
 
     // QR
     implementation 'com.google.zxing:core:3.5.2'
     implementation 'com.journeyapps:zxing-android-embedded:4.3.0'
 
-    // Network
+    // HTTP
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
 
     // JSON
@@ -106,10 +114,7 @@ dependencies {
     // Lifecycle
     implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.7.0'
 
-    // Tests
+    // Test
     testImplementation 'junit:junit:4.13.2'
 
-    androidTestImplementation 'androidx.test.ext:junit:1.1.5'
-
-    androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.1'
-}
+    androidTestImplementation
