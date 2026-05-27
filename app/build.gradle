@@ -57,7 +57,8 @@ dependencies {
     implementation 'org.jetbrains.kotlin:kotlin-stdlib:1.9.22'
 
     // BitcoinJ
-    implementation 'org.bitcoinj:bitcoinj-core:0.16.2'
+    implementation 'org.bitcoinj:bitcoinj-core:0.16.3'
+    implementation 'org.slf4j:slf4j-simple:2.0.9'
 
     // QR
     implementation 'com.google.zxing:core:3.5.2'
