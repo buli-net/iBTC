@@ -1,3 +1,4 @@
+// WalletAppKit migration build
 package net.buli.ibtc
 
 import android.content.Context
