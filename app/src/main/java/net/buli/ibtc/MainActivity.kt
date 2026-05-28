@@ -710,7 +710,7 @@ private fun fetchBtcStats() {
                             val text2 = view.findViewById<TextView>(android.R.id.text2)
                             val isDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
                             text1.setTextColor(if (isDark) Color.WHITE else Color.BLACK)
-                            text1.text = "${if (tx.type == "Nhận") "⬇" else "⬆"} ${tx.type} ${String.format(Locale.US, "%.8f", tx.amount)}"
+                            text1.text = "${if (tx.type == "RECEIVE") "⬇" else "⬆"} ${tx.type} ${String.format(Locale.US, "%.8f", tx.amount)} BTC"
                             text2.text = SimpleDateFormat("dd/MM HH:mm", Locale.getDefault()).format(tx.time) + " • " + tx.txId.take(12)
                             text2.setTextColor(Color.GRAY)
                             text2.textSize = 11f

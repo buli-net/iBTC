@@ -331,97 +331,20 @@ class WalletManager(private val ctx: Context) {
 
     fun getTransactions(): List<TransactionInfo> {
         return try {
-
             val address = getAddress()
-
-            if (address.isBlank()) {
-                return emptyList()
-            }
-
-            val json = httpGet(
-                "https://blockstream.info/api/address/$address/txs"
-            )
-
-            if (json.isBlank()) {
-                return emptyList()
-            }
-
+            if (address.isBlank()) return emptyList()
+            val json = httpGet("https://blockstream.info/api/address/$address/txs")
+            if (json.isBlank()) return emptyList()
             val arr = org.json.JSONArray(json)
-
             val list = mutableListOf<TransactionInfo>()
-
             for (i in 0 until minOf(arr.length(), 20)) {
-
                 val tx = arr.getJSONObject(i)
-
                 val txid = tx.optString("txid", "")
-
                 val status = tx.optJSONObject("status")
-
-                val blockTime =
-                    status?.optLong(
-                        "block_time",
-                        System.currentTimeMillis() / 1000
-                    ) ?: System.currentTimeMillis() / 1000
-
-                var received = 0L
-                var sent = 0L
-
-                val vout = tx.optJSONArray("vout")
-                val vin = tx.optJSONArray("vin")
-
-                if (vout != null) {
-                    for (j in 0 until vout.length()) {
-                        val out = vout.getJSONObject(j)
-
-                        val script =
-                            out.optString("scriptpubkey_address", "")
-
-                        if (script == address) {
-                            received += out.optLong("value", 0L)
-                        }
-                    }
-                }
-
-                if (vin != null) {
-                    for (j in 0 until vin.length()) {
-                        val input = vin.getJSONObject(j)
-                        val prev = input.optJSONObject("prevout")
-
-                        if (prev != null) {
-                            val script =
-                                prev.optString(
-                                    "scriptpubkey_address",
-                                    ""
-                                )
-
-                            if (script == address) {
-                                sent += prev.optLong("value", 0L)
-                            }
-                        }
-                    }
-                }
-
-                val net = received - sent
-
-                val btcAmount =
-                    kotlin.math.abs(net.toDouble()) / 100000000.0
-
-                val type =
-                    if (net >= 0) "RECEIVE" else "SEND"
-
-                list.add(
-                    TransactionInfo(
-                        txId = txid,
-                        amount = btcAmount,
-                        type = type,
-                        time = java.util.Date(blockTime * 1000)
-                    )
-                )
+                val blockTime = status?.optLong("block_time", System.currentTimeMillis()/1000) ?: System.currentTimeMillis()/1000
+                list.add(TransactionInfo(txid,0.0,"BTC", java.util.Date(blockTime*1000)))
             }
-
             list
-
         } catch (e: Exception) {
             emptyList()
         }
