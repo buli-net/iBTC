@@ -73,7 +73,6 @@ class MainActivity : AppCompatActivity() {
         setupRootLayout()
         setContentView(scrollView)
         
-        // Đăng ký nghe khóa màn hình điện thoại
         screenReceiver = object : BroadcastReceiver() {
             override fun onReceive(c: Context?, intent: Intent?) {
                 if (intent?.action == Intent.ACTION_SCREEN_OFF) {
@@ -100,7 +99,6 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-
         try {
             if (walletManager.getActiveId() != null || walletManager.hasWallets()) {
                 showUnlockDialog()
@@ -664,7 +662,6 @@ private fun fetchBtcStats() {
                 runOnUiThread {
                     balanceText.text = String.format(Locale.US, "%.8f BTC", bal)
                     val balanceUsd = bal * price
-                    // Tính biến động số dư
                     val balChange = balanceUsd - lastBalanceUsd
                     val balPct = if (lastBalanceUsd > 0) balChange / lastBalanceUsd * 100 else 0.0
                     val balArrow = when {
@@ -680,7 +677,6 @@ private fun fetchBtcStats() {
                     balanceUsdText.setTextColor(balColor)
                     balanceUsdText.text = String.format(Locale.US, "≈ $%,.2f %s %+.2f%% (%+.2f$)", balanceUsd, balArrow, balPct, balChange)
                     
-                    // Tính biến động tỷ giá
                     val priceChange = price - lastPrice
                     val pricePct = if (lastPrice > 0) priceChange / lastPrice * 100 else 0.0
                     val priceArrow = when {
@@ -783,7 +779,7 @@ private fun fetchBtcStats() {
             .show()
     }
 
-    // ================== HÀM GỬI BTC (ĐÃ CẬP NHẬT LẤY PHÍ TỰ ĐỘNG) ==================
+    // ================== HÀM GỬI BTC ĐÃ SỬA LỖI HIỂN THỊ SỐ DƯ ==================
     private fun showSendDialog() {
         if (isSyncing) {
             toast("Đang sync, vui lòng đợi")
@@ -836,8 +832,12 @@ private fun fetchBtcStats() {
         
         val feeEstimateTv = TextView(this).apply { text = "Ước tính phí: -"; setPadding(0,20,0,0) }
         val totalEstimateTv = TextView(this).apply { text = "Tổng (gửi + phí): -" }
-        val balance = walletManager.getBalance()
-        val balanceTv = TextView(this).apply { text = "Số dư: ${"%.8f".format(balance)} BTC"; setTextColor(0xFF888888.toInt()) }
+        
+        val balanceTv = TextView(this).apply {
+            text = "Đang tải số dư..."
+            setTextColor(0xFF888888.toInt())
+            setPadding(0,10,0,10)
+        }
         
         layout.addView(toInput)
         layout.addView(scanBtn)
@@ -865,6 +865,11 @@ private fun fetchBtcStats() {
             btn.isEnabled = false
             
             Thread {
+                val balance = walletManager.getBalance()
+                runOnUiThread {
+                    balanceTv.text = "Số dư: ${"%.8f".format(balance)} BTC"
+                }
+                
                 val feeRates = try { walletManager.getFeeRates() } catch (e: Exception) { FeeRates(5, 10, 20) }
                 runOnUiThread {
                     feeProgress.visibility = View.GONE
@@ -960,7 +965,7 @@ private fun fetchBtcStats() {
                     toast("Sai mật khẩu")
                     return@setPositiveButton
                 }
-                // Delay 60s with progress
+                // Delay 60s
                 val delayLayout = LinearLayout(this).apply {
                     orientation = LinearLayout.VERTICAL
                     setPadding(40,30,40,30)
@@ -1001,7 +1006,7 @@ private fun fetchBtcStats() {
                         }
                     }
                 }
-                                delayDialog = AlertDialog.Builder(this)
+                delayDialog = AlertDialog.Builder(this)
                     .setTitle("Delay bảo mật")
                     .setView(delayLayout)
                     .setCancelable(false)
