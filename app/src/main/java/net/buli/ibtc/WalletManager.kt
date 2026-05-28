@@ -340,7 +340,30 @@ class WalletManager(private val ctx: Context) {
                 val txid = tx.optString("txid", "")
                 val status = tx.optJSONObject("status")
                 val blockTime = status?.optLong("block_time", System.currentTimeMillis()/1000) ?: System.currentTimeMillis()/1000
-                list.add(TransactionInfo(txid,0.0,"BTC", java.util.Date(blockTime*1000)))
+                val vin = tx.optJSONArray("vin")
+                val vout = tx.optJSONArray("vout")
+                var received = 0L
+                var sent = 0L
+                if (vout != null) {
+                    for (j in 0 until vout.length()) {
+                        val out = vout.getJSONObject(j)
+                        if (out.optString("scriptpubkey_address") == address) {
+                            received += out.optLong("value",0)
+                        }
+                    }
+                }
+                if (vin != null) {
+                    for (j in 0 until vin.length()) {
+                        val inn = vin.getJSONObject(j)
+                        val prev = inn.optJSONObject("prevout")
+                        if (prev != null && prev.optString("scriptpubkey_address") == address) {
+                            sent += prev.optLong("value",0)
+                        }
+                    }
+                }
+                val amount = (received - sent) / 100000000.0
+                val type = if (amount >= 0) "Nhận" else "Gửi"
+                list.add(TransactionInfo(txid,kotlin.math.abs(amount),type, java.util.Date(blockTime*1000)))
             }
             list
         } catch (e: Exception) {
