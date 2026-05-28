@@ -83,7 +83,7 @@ class MainActivity : AppCompatActivity() {
         }
         registerReceiver(screenReceiver, IntentFilter(Intent.ACTION_SCREEN_OFF))
         
-        if (walletManager.hasWallets()) showUnlockDialog() else showWelcome()
+        if (walletManager.hasWallets() && walletManager.getActive() != null) showMainWallet() else showWelcome()
     }
 
     override fun onPause() {
@@ -111,7 +111,6 @@ class MainActivity : AppCompatActivity() {
         handler.removeCallbacksAndMessages(null)
         try { screenReceiver?.let { unregisterReceiver(it) } } catch (_:Exception) {}
         try {
-            walletManager.lock()
             walletManager.stop()
         } catch (_: Exception) {}
         super.onDestroy()
@@ -709,7 +708,11 @@ private fun fetchBtcStats() {
                             return view
                         }
                     }
-                    txListView.adapter = adapter
+                    if (txs.isEmpty()) {
+                        txListView.adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, listOf("Chưa có giao dịch hoặc API chưa đồng bộ"))
+                    } else {
+                        txListView.adapter = adapter
+                    }
                     isSyncing = false
                 }
             } catch (e: Exception) {
