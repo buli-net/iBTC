@@ -278,6 +278,7 @@ class WalletManager(private val ctx: Context) {
         }
     }
 
+    // ================== GỬI BTC - BẢN FIX LỖI BROADCAST ==================
     fun send(to: String, amountBTC: Double, feeRateSatVb: Int): String {
         val seedPhrase = cachedSeed ?: throw Exception("Ví chưa được mở khóa")
         val myAddressStr = getAddress()
@@ -285,41 +286,46 @@ class WalletManager(private val ctx: Context) {
         val needSat = (amountBTC * 1e8).toLong()
         if (needSat <= 0) throw Exception("Số tiền không hợp lệ")
 
+        // Lấy UTXO của ví (địa chỉ của chính mình)
         val utxos = getUtxos(myAddressStr)
+        if (utxos.isEmpty()) throw Exception("Không có UTXO nào (ví trống hoặc chưa sync)")
         val (selectedUtxos, totalInputSat) = selectUtxos(utxos, needSat, feeRateSatVb)
-        if (selectedUtxos.isEmpty()) throw Exception("Không đủ số dư")
+        if (selectedUtxos.isEmpty()) throw Exception("Không đủ số dư hoặc UTXO không đủ để cover fee")
 
+        // Tạo transaction
         val tx = Transaction(params)
         val destAddress = Address.fromString(params, to)
         tx.addOutput(Coin.valueOf(needSat), destAddress)
 
+        // Tính fee và change
         var txSize = tx.bitcoinSerialize().size
         var feeSat = txSize * feeRateSatVb
         var changeSat = totalInputSat - needSat - feeSat
         if (changeSat < 0) {
-            txSize += 50
+            txSize += selectedUtxos.size * 68
             feeSat = txSize * feeRateSatVb
             changeSat = totalInputSat - needSat - feeSat
-            if (changeSat < 0) throw Exception("Không đủ trả phí")
+            if (changeSat < 0) throw Exception("Không đủ trả phí, thiếu ${-changeSat} sat")
         }
         if (changeSat > 546) {
             val changeAddress = Address.fromString(params, myAddressStr)
             tx.addOutput(Coin.valueOf(changeSat), changeAddress)
         }
 
+        // Lấy private key
         val key = getPrivateKeyForAddress(seedPhrase, myAddressStr)
-        val scripts = mutableListOf<Script>()
+
+        // Thêm inputs với scriptPubKey đúng (script của UTXO, tức là script của chính địa chỉ ví)
+        val myScript = ScriptBuilder.createOutputScript(Address.fromString(params, myAddressStr))
         for (utxo in selectedUtxos) {
             val outPoint = Sha256Hash.wrap(utxo.txid)
-            val scriptPubKey = ScriptBuilder.createOutputScript(destAddress)
-            tx.addInput(outPoint, utxo.vout.toLong(), scriptPubKey)
-            scripts.add(scriptPubKey)
+            tx.addInput(outPoint, utxo.vout.toLong(), myScript)
         }
 
+        // Ký các input
         for (i in 0 until tx.inputs.size) {
             val input = tx.inputs[i]
-            val scriptPubKey = scripts[i]
-            val sighash = tx.hashForSignature(i, scriptPubKey.program, Transaction.SigHash.ALL, false)
+            val sighash = tx.hashForSignature(i, myScript.program, Transaction.SigHash.ALL, false)
             val sig = key.sign(sighash)
             val txSig = TransactionSignature(sig, Transaction.SigHash.ALL, false)
             val witness = TransactionWitness(2)
@@ -328,10 +334,13 @@ class WalletManager(private val ctx: Context) {
             input.setWitness(witness)
         }
 
+        // Xác thực transaction trước khi broadcast
+        tx.verify()
         val txHex = Utils.HEX.encode(tx.bitcoinSerialize())
         return broadcastTx(txHex)
     }
 
+    // ------------------ Private helpers ------------------
     private data class Utxo(val txid: String, val vout: Int, val valueSat: Long, val scriptPubKey: String)
 
     private fun getUtxos(address: String): List<Utxo> {
@@ -368,6 +377,7 @@ class WalletManager(private val ctx: Context) {
         val seed = DeterministicSeed(seedPhrase.split(" "), null, "", 0L)
         val seedBytes = seed.seedBytes ?: throw Exception("Invalid seed")
         var key = HDKeyDerivation.createMasterPrivateKey(seedBytes)
+        // BIP84 path: m/84'/0'/0'/0/0
         val path = listOf(
             ChildNumber(84, true),
             ChildNumber(0, true),
@@ -389,8 +399,9 @@ class WalletManager(private val ctx: Context) {
             os.writeBytes("tx=$txHex")
         }
         val responseCode = conn.responseCode
+        val response = conn.inputStream.bufferedReader().readText()
         if (responseCode == 200) {
-            return conn.inputStream.bufferedReader().readText().trim()
+            return response.trim()
         } else {
             val error = conn.errorStream?.bufferedReader()?.readText() ?: "Unknown error"
             throw Exception("Broadcast failed: $error")
