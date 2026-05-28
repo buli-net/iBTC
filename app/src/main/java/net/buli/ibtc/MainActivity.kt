@@ -767,7 +767,6 @@ class MainActivity : AppCompatActivity() {
 
             fetchBtcPriceUsd { p -> priceUsd = p }
 
-            // Hàm cập nhật ước tính
             fun updateEstimates() {
                 val to = toInput.text.toString().trim()
                 val amt = amountInput.text.toString().toDoubleOrNull() ?: 0.0
