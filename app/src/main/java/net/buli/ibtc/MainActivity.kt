@@ -83,7 +83,15 @@ class MainActivity : AppCompatActivity() {
         }
         registerReceiver(screenReceiver, IntentFilter(Intent.ACTION_SCREEN_OFF))
         
-        if (walletManager.hasWallets()) showUnlockDialog() else showWelcome()
+        try {
+            if (walletManager.getActiveId() != null || walletManager.hasWallets()) {
+                showUnlockDialog()
+            } else {
+                showWelcome()
+            }
+        } catch (_: Exception) {
+            showWelcome()
+        }
     }
 
     override fun onPause() {
@@ -92,9 +100,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+
         try {
-            if (walletManager.hasWallets()) {
-                refreshWallet()
+            if (walletManager.getActiveId() != null || walletManager.hasWallets()) {
+                showUnlockDialog()
             } else {
                 showWelcome()
             }

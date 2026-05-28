@@ -40,7 +40,9 @@ class WalletManager(private val ctx: Context) {
     }
 
     fun hasWallets(): Boolean {
-        return prefs.all.keys.any { it.endsWith("_seed") }
+        return prefs.all.keys.any {
+            it.endsWith("_seed") || it.endsWith("_name") || it.endsWith("_address")
+        }
     }
 
     fun getActive(): WalletInfo? {
