@@ -242,7 +242,6 @@ class WalletManager(private val ctx: Context) {
         } catch (_: Exception) { lastPrice }
     }
 
-    // Lấy phí động từ mempool.space (đã fix lỗi)
     fun getFeeRates(): FeeRates {
         return try {
             val json = httpGet("https://mempool.space/api/v1/fees/recommended")
@@ -263,8 +262,6 @@ class WalletManager(private val ctx: Context) {
             FeeRates(5, 10, 20)
         }
     }
-
-    // ================== GỬI BTC ==================
 
     fun estimateFee(to: String, amountBTC: Double, feeRateSatVb: Int): Double {
         return try {
@@ -335,7 +332,6 @@ class WalletManager(private val ctx: Context) {
         return broadcastTx(txHex)
     }
 
-    // ------------------ Private helpers ------------------
     private data class Utxo(val txid: String, val vout: Int, val valueSat: Long, val scriptPubKey: String)
 
     private fun getUtxos(address: String): List<Utxo> {
