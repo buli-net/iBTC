@@ -24,9 +24,9 @@ data class FeeRates(val slow: Int, val normal: Int, val fast: Int)
 
 class WalletManager(private val ctx: Context) {
 
-    private val params = MainNetParams.get()
+    val params = MainNetParams.get()
     private var active: WalletInfo? = null
-    private var locked = false
+    private var locked = true
     private var cachedSeed: String? = null
     private var cachedPassword: CharArray? = null
     private val prefs = ctx.getSharedPreferences("wallets", Context.MODE_PRIVATE)
@@ -66,7 +66,9 @@ class WalletManager(private val ctx: Context) {
     }
 
     fun lock() {
-        locked = false
+        locked = true
+        cachedSeed = null
+        cachedPassword = null
     }
 
     fun create(name: String, password: String): WalletInfo {
@@ -86,6 +88,7 @@ class WalletManager(private val ctx: Context) {
         cachedPassword = password.toCharArray()
         active = info
         prefs.edit().putString("active_wallet_id", id).commit()
+        locked = false
         return info
     }
 
@@ -147,6 +150,7 @@ class WalletManager(private val ctx: Context) {
             cachedPassword = password.toCharArray()
             active = info
             prefs.edit().putString("active_wallet_id", id).commit()
+            locked = false
             info
         } catch (e: Exception) {
             null
@@ -270,14 +274,17 @@ class WalletManager(private val ctx: Context) {
             if (selected.isEmpty()) return 0.0
             val inputSize = selected.size * 68
             val outputSize = 2 * 31
-            val txSize = inputSize + outputSize + 10
+            val txSize = inputSize + outputSize + 11   // +11 thay vì 10
             txSize * feeRateSatVb / 1e8
         } catch (e: Exception) {
-            (68 + 62 + 10) * feeRateSatVb / 1e8
+            (68 + 62 + 11) * feeRateSatVb / 1e8
         }
     }
 
     fun send(to: String, amountBTC: Double, feeRateSatVb: Int): String {
+        if (feeRateSatVb < 1 || feeRateSatVb > 500) {
+            throw Exception("Fee rate không hợp lệ (1-500 sat/vB)")
+        }
         val seedPhrase = cachedSeed ?: throw Exception("Ví chưa được mở khóa")
         val myAddressStr = getAddress()
         if (myAddressStr.isBlank()) throw Exception("Không tìm thấy địa chỉ ví")
@@ -310,9 +317,12 @@ class WalletManager(private val ctx: Context) {
         val key = getPrivateKeyForAddress(seedPhrase, myAddressStr)
         val myAddress = Address.fromString(params, myAddressStr)
         val myScript = ScriptBuilder.createOutputScript(myAddress)
+
         for (utxo in selectedUtxos) {
             val outPoint = Sha256Hash.wrap(utxo.txid)
-            tx.addInput(outPoint, utxo.vout.toLong(), myScript)
+            val outpoint = TransactionOutPoint(params, utxo.vout.toLong(), outPoint)
+            val input = TransactionInput(params, tx, ByteArray(0), outpoint)
+            tx.addInput(input)
         }
 
         for (i in 0 until tx.inputs.size) {
@@ -332,7 +342,7 @@ class WalletManager(private val ctx: Context) {
     }
 
     // ------------------ Private helpers ------------------
-    private data class Utxo(val txid: String, val vout: Int, val valueSat: Long, val scriptPubKey: String)
+    private data class Utxo(val txid: String, val vout: Int, val valueSat: Long, val scriptPubKey: String, val confirmed: Boolean)
 
     private fun getUtxos(address: String): List<Utxo> {
         val json = httpGet("https://blockstream.info/api/address/$address/utxo")
@@ -341,11 +351,15 @@ class WalletManager(private val ctx: Context) {
         val list = mutableListOf<Utxo>()
         for (i in 0 until arr.length()) {
             val obj = arr.getJSONObject(i)
+            val status = obj.optJSONObject("status")
+            val confirmed = status?.optBoolean("confirmed", false) ?: false
+            if (!confirmed) continue   // chỉ lấy UTXO đã confirm
             list.add(Utxo(
                 obj.getString("txid"),
                 obj.getInt("vout"),
                 obj.getLong("value"),
-                obj.optString("scriptpubkey", "")
+                obj.optString("scriptpubkey", ""),
+                confirmed
             ))
         }
         return list
@@ -358,7 +372,7 @@ class WalletManager(private val ctx: Context) {
         for (utxo in sorted) {
             selected.add(utxo)
             total += utxo.valueSat
-            val approxFee = (selected.size * 68 + 2 * 31 + 10) * feeRate
+            val approxFee = (selected.size * 68 + 2 * 31 + 11) * feeRate
             if (total >= needSat + approxFee) return Pair(selected, total)
         }
         return Pair(emptyList(), total)
@@ -381,31 +395,28 @@ class WalletManager(private val ctx: Context) {
 
     private fun broadcastTx(txHex: String): String {
         val url = "https://blockstream.info/api/tx"
-        var lastError = ""
-        for (attempt in 1..3) {
-            try {
-                val conn = URL(url).openConnection() as HttpURLConnection
-                conn.requestMethod = "POST"
-                conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
-                conn.doOutput = true
-                conn.connectTimeout = 15000
-                conn.readTimeout = 15000
-                DataOutputStream(conn.outputStream).use { os ->
-                    os.writeBytes("tx=$txHex")
-                }
-                val responseCode = conn.responseCode
-                val response = conn.inputStream.bufferedReader().readText()
-                if (responseCode == 200) {
-                    return response.trim()
-                } else {
-                    lastError = "HTTP $responseCode: ${conn.responseMessage} - $response"
-                }
-            } catch (e: Exception) {
-                lastError = e.message ?: "Unknown error"
-            }
-            Thread.sleep(1000)
+        val conn = URL(url).openConnection() as HttpURLConnection
+        conn.requestMethod = "POST"
+        conn.doOutput = true
+        conn.setRequestProperty("Content-Type", "text/plain")
+        conn.connectTimeout = 15000
+        conn.readTimeout = 15000
+
+        conn.outputStream.use {
+            it.write(txHex.toByteArray())
         }
-        throw Exception("Broadcast failed after 3 attempts: $lastError")
+
+        val response = try {
+            conn.inputStream.bufferedReader().readText()
+        } catch (e: Exception) {
+            conn.errorStream?.bufferedReader()?.readText() ?: "Broadcast error"
+        }
+
+        if (conn.responseCode !in 200..299) {
+            throw Exception(response)
+        }
+
+        return response.trim()
     }
 
     private fun restoreActiveWallet() {
@@ -421,7 +432,7 @@ class WalletManager(private val ctx: Context) {
             if (id == null) return
             val name = prefs.getString("${id}_name", "Wallet") ?: "Wallet"
             active = WalletInfo(id, name)
-            locked = false
+            locked = true   // chưa unlock, cần nhập mật khẩu
         } catch (_: Exception) {}
     }
 
@@ -457,5 +468,14 @@ class WalletManager(private val ctx: Context) {
         val id = active?.id ?: return
         prefs.edit().putString("${id}_name", newName).commit()
         active = WalletInfo(id, newName)
+    }
+
+    fun isValidAddress(address: String): Boolean {
+        return try {
+            Address.fromString(params, address)
+            true
+        } catch (e: Exception) {
+            false
+        }
     }
 }
