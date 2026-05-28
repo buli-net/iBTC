@@ -16,6 +16,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.security.SecureRandom
 import java.util.*
+import kotlin.math.abs
 
 data class WalletInfo(val id: String, val name: String)
 data class TransactionInfo(val txId: String, val amount: Double, val type: String, val time: Date)
@@ -244,7 +245,7 @@ class WalletManager(private val ctx: Context) {
         return FeeRates(slow = 5, normal = 10, fast = 20)
     }
 
-    // ================== SEND BTC (đã sửa lỗi) ==================
+    // ================== SEND BTC ==================
 
     fun estimateFee(to: String, amountBTC: Double, feeRateSatVb: Int): Double {
         return try {
@@ -276,12 +277,11 @@ class WalletManager(private val ctx: Context) {
         val destAddress = Address.fromString(params, to)
         tx.addOutput(Coin.valueOf(needSat), destAddress)
 
-        // Tính fee và change
         var txSize = tx.bitcoinSerialize().size
         var feeSat = txSize * feeRateSatVb
         var changeSat = totalInputSat - needSat - feeSat
         if (changeSat < 0) {
-            txSize += 50 // dự phòng
+            txSize += 50
             feeSat = txSize * feeRateSatVb
             changeSat = totalInputSat - needSat - feeSat
             if (changeSat < 0) throw Exception("Không đủ trả phí")
@@ -291,22 +291,29 @@ class WalletManager(private val ctx: Context) {
             tx.addOutput(Coin.valueOf(changeSat), changeAddress)
         }
 
-        // Thêm input và ký
         val key = getPrivateKeyForAddress(seedPhrase, myAddressStr)
+
+        // Thêm inputs và lưu scriptPubKey tương ứng
+        val scripts = mutableListOf<Script>()
         for (utxo in selectedUtxos) {
             val outPoint = Sha256Hash.wrap(utxo.txid)
-            tx.addInput(outPoint, utxo.vout.toLong(), ScriptBuilder.createOutputScript(destAddress))
+            val scriptPubKey = ScriptBuilder.createOutputScript(destAddress)
+            tx.addInput(outPoint, utxo.vout.toLong(), scriptPubKey)
+            scripts.add(scriptPubKey)
         }
 
         // Ký từng input
         for (i in 0 until tx.inputs.size) {
             val input = tx.inputs[i]
-            val utxo = selectedUtxos[i]
-            val scriptPubKey = ScriptBuilder.createOutputScript(destAddress)
+            val scriptPubKey = scripts[i]
             val sighash = tx.hashForSignature(i, scriptPubKey, Transaction.SigHash.ALL, false)
             val sig = key.sign(sighash)
             val txSig = TransactionSignature(sig, Transaction.SigHash.ALL, false)
-            input.setWitness(TransactionWitness(listOf(txSig.encodeToBitcoin(), key.pubKey).toTypedArray()))
+            // Tạo witness với 2 phần: signature và public key
+            val witness = TransactionWitness(2)
+            witness.setPush(0, txSig.encodeToBitcoin())
+            witness.setPush(1, key.pubKey)
+            input.setWitness(witness)
         }
 
         val txHex = Utils.HEX.encode(tx.bitcoinSerialize())
