@@ -242,8 +242,22 @@ class WalletManager(private val ctx: Context) {
         } catch (_: Exception) { lastPrice }
     }
 
+    // Lấy phí động từ mempool.space
     fun getFeeRates(): FeeRates {
-        return FeeRates(slow = 5, normal = 10, fast = 20)
+        return try {
+            val json = httpGet("https://mempool.space/api/v1/fees/recommended")
+            if (json.isNotBlank()) {
+                val obj = JSONObject(json)
+                val fastest = obj.optInt("fastestFee", 20)
+                val halfHour = obj.optInt("halfHourFee", 10)
+                val hour = obj.optInt("hourFee", 5)
+                FeeRates(slow = hour, normal = halfHour, fast = fastest)
+            } else {
+                FeeRates(5, 10, 20)
+            }
+        } catch (e: Exception) {
+            FeeRates(5, 10, 20)
+        }
     }
 
     // ================== SEND BTC ==================
@@ -294,7 +308,6 @@ class WalletManager(private val ctx: Context) {
 
         val key = getPrivateKeyForAddress(seedPhrase, myAddressStr)
 
-        // Thêm inputs và lưu scriptPubKey
         val scripts = mutableListOf<Script>()
         for (utxo in selectedUtxos) {
             val outPoint = Sha256Hash.wrap(utxo.txid)
@@ -303,11 +316,9 @@ class WalletManager(private val ctx: Context) {
             scripts.add(scriptPubKey)
         }
 
-        // Ký từng input
         for (i in 0 until tx.inputs.size) {
             val input = tx.inputs[i]
             val scriptPubKey = scripts[i]
-            // Sử dụng program (ByteArray) để tránh overload ambiguity
             val sighash = tx.hashForSignature(i, scriptPubKey.program, Transaction.SigHash.ALL, false)
             val sig = key.sign(sighash)
             val txSig = TransactionSignature(sig, Transaction.SigHash.ALL, false)
