@@ -171,19 +171,33 @@ class WalletManager(private val ctx: Context) {
         return prefs.getString("${id}_address", "") ?: ""
     }
 
+    // SỬA LỖI: getBalance() - thêm fallback và log lỗi
     fun getBalance(): Double {
         return try {
             val address = getAddress()
-            if (address.isBlank()) return 0.0
-            val json = httpGet("https://blockstream.info/api/address/$address")
-            if (json.isBlank()) return 0.0
+            if (address.isBlank()) {
+                println("DEBUG: address is blank")
+                return 0.0
+            }
+            val url = "https://blockstream.info/api/address/$address"
+            println("DEBUG: fetching balance from $url")
+            val json = httpGet(url)
+            if (json.isBlank()) {
+                println("DEBUG: empty json response")
+                return 0.0
+            }
             val obj = JSONObject(json)
             val chainStats = obj.getJSONObject("chain_stats")
             val funded = chainStats.getLong("funded_txo_sum")
             val spent = chainStats.getLong("spent_txo_sum")
             val sats = funded - spent
-            sats / 100000000.0
-        } catch (e: Exception) { 0.0 }
+            val balanceBtc = sats / 100000000.0
+            println("DEBUG: balance = $balanceBtc BTC")
+            balanceBtc
+        } catch (e: Exception) {
+            e.printStackTrace()
+            0.0
+        }
     }
 
     fun getTransactions(): List<TransactionInfo> {
@@ -242,19 +256,27 @@ class WalletManager(private val ctx: Context) {
         } catch (_: Exception) { lastPrice }
     }
 
+    // SỬA LỖI: getFeeRates - đảm bảo lấy đúng từ API, fallback an toàn
     fun getFeeRates(): FeeRates {
         return try {
             val json = httpGet("https://mempool.space/api/v1/fees/recommended")
+            println("DEBUG: fee response = $json")
             if (json.isNotBlank()) {
                 val obj = JSONObject(json)
                 val fastest = obj.optInt("fastestFee", 20)
                 val halfHour = obj.optInt("halfHourFee", 10)
                 val hour = obj.optInt("hourFee", 5)
-                FeeRates(slow = hour, normal = halfHour, fast = fastest)
+                // Đảm bảo không nhỏ hơn 1
+                FeeRates(
+                    slow = maxOf(hour, 1),
+                    normal = maxOf(halfHour, 1),
+                    fast = maxOf(fastest, 1)
+                )
             } else {
                 FeeRates(5, 10, 20)
             }
         } catch (e: Exception) {
+            e.printStackTrace()
             FeeRates(5, 10, 20)
         }
     }
@@ -421,7 +443,10 @@ class WalletManager(private val ctx: Context) {
             conn.readTimeout = 10000
             conn.setRequestProperty("User-Agent", "Mozilla/5.0")
             conn.inputStream.bufferedReader().use { it.readText() }
-        } catch (_: Exception) { "" }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            ""
+        }
     }
 
     fun init() {}
