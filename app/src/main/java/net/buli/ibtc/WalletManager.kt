@@ -1,6 +1,7 @@
 package net.buli.ibtc
 
 import android.content.Context
+import android.util.Log
 import org.bitcoinj.core.*
 import org.bitcoinj.crypto.ChildNumber
 import org.bitcoinj.crypto.DeterministicKey
@@ -338,6 +339,7 @@ class WalletManager(private val ctx: Context) {
 
         tx.verify()
         val txHex = Utils.HEX.encode(tx.bitcoinSerialize())
+        Log.d("WalletManager", "TX hex: $txHex")
         return broadcastTx(txHex)
     }
 
@@ -404,28 +406,37 @@ class WalletManager(private val ctx: Context) {
 
     private fun broadcastTx(txHex: String): String {
         val url = "https://blockstream.info/api/tx"
-        val conn = URL(url).openConnection() as HttpURLConnection
-        conn.requestMethod = "POST"
-        conn.doOutput = true
-        conn.setRequestProperty("Content-Type", "text/plain")
-        conn.connectTimeout = 15000
-        conn.readTimeout = 15000
+        var lastError = ""
+        for (attempt in 1..3) {
+            try {
+                val conn = URL(url).openConnection() as HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.doOutput = true
+                conn.setRequestProperty("Content-Type", "text/plain")
+                conn.connectTimeout = 15000
+                conn.readTimeout = 15000
 
-        conn.outputStream.use {
-            it.write(txHex.toByteArray())
+                conn.outputStream.use {
+                    it.write(txHex.toByteArray())
+                }
+
+                val response = try {
+                    conn.inputStream.bufferedReader().readText()
+                } catch (e: Exception) {
+                    conn.errorStream?.bufferedReader()?.readText() ?: "Broadcast error"
+                }
+
+                if (conn.responseCode in 200..299) {
+                    return response.trim()
+                } else {
+                    lastError = "HTTP ${conn.responseCode}: $response"
+                }
+            } catch (e: Exception) {
+                lastError = e.message ?: "Unknown error"
+            }
+            Thread.sleep(1000)
         }
-
-        val response = try {
-            conn.inputStream.bufferedReader().readText()
-        } catch (e: Exception) {
-            conn.errorStream?.bufferedReader()?.readText() ?: "Broadcast error"
-        }
-
-        if (conn.responseCode !in 200..299) {
-            throw Exception(response)
-        }
-
-        return response.trim()
+        throw Exception("Broadcast failed after 3 attempts: $lastError")
     }
 
     private fun restoreActiveWallet() {
