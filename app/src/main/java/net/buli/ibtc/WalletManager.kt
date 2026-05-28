@@ -339,7 +339,7 @@ class WalletManager(private val ctx: Context) {
             val list = mutableListOf<TransactionInfo>()
             for (i in 0 until minOf(arr.length(), 20)) {
                 val tx = arr.getJSONObject(i)
-                val txid = tx.optString("txid", "")
+                val txId = tx.optString("txid", "")
                 val status = tx.optJSONObject("status")
                 val blockTime = status?.optLong("block_time", System.currentTimeMillis()/1000) ?: System.currentTimeMillis()/1000
                 list.add(TransactionInfo(txid,0.0,"BTC", java.util.Date(blockTime*1000)))
