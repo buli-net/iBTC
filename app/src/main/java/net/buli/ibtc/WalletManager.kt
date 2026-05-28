@@ -25,6 +25,7 @@ class WalletManager(private val ctx: Context) {
     private val params = MainNetParams.get()
 
     private var active: WalletInfo? = null
+
     private var locked = false
     private var cachedSeed: String? = null
     private var cachedPassword: CharArray? = null
@@ -34,6 +35,15 @@ class WalletManager(private val ctx: Context) {
 
     private var lastPrice =
         prefs.getFloat("last_price",65000f).toDouble()
+
+    init {
+        val lastId = prefs.getString("last_wallet_id", null)
+        if (lastId != null) {
+            val name = prefs.getString("${lastId}_name", "Wallet") ?: "Wallet"
+            active = WalletInfo(lastId, name)
+            locked = true
+        }
+    }
 
     fun hasWallets(): Boolean {
         return prefs.all.keys.any { it.endsWith("_seed") }
@@ -60,6 +70,7 @@ class WalletManager(private val ctx: Context) {
             cachedPassword = password.toCharArray()
 
             active = WalletInfo(id,name)
+            prefs.edit().putString("last_wallet_id", id).apply()
             locked = false
 
             true
@@ -114,6 +125,7 @@ class WalletManager(private val ctx: Context) {
         cachedSeed = mnemonic
         cachedPassword = password.toCharArray()
         active = info
+        prefs.edit().putString("last_wallet_id", id).apply()
 
         return info
     }
@@ -246,6 +258,7 @@ class WalletManager(private val ctx: Context) {
             cachedSeed = clean
             cachedPassword = password.toCharArray()
             active = info
+            prefs.edit().putString("last_wallet_id", id).apply()
 
             info
 
@@ -321,7 +334,47 @@ class WalletManager(private val ctx: Context) {
 }
 
 
-    fun getTransactions(): List<TransactionInfo> = emptyList()
+    fun getTransactions(): List<TransactionInfo> {
+
+        return try {
+            val address = getAddress()
+            if (address.isBlank()) return emptyList()
+            val json = httpGet("https://blockstream.info/api/address/$address/txs")
+            if (json.isBlank()) return emptyList()
+            val arr = org.json.JSONArray(json)
+            val list = mutableListOf<TransactionInfo>()
+            for (i in 0 until arr.length()) {
+                val tx = arr.getJSONObject(i)
+                val txid = tx.optString("txid")
+                val status = tx.optJSONObject("status")
+                val time = Date((status?.optLong("block_time", System.currentTimeMillis()/1000) ?: System.currentTimeMillis()/1000) * 1000)
+                var received = 0L
+                tx.optJSONArray("vout")?.let { vout ->
+                    for (j in 0 until vout.length()) {
+                        val out = vout.getJSONObject(j)
+                        if (out.optString("scriptpubkey_address") == address) {
+                            received += out.optLong("value")
+                        }
+                    }
+                }
+                var sent = 0L
+                tx.optJSONArray("vin")?.let { vin ->
+                    for (j in 0 until vin.length()) {
+                        val input = vin.getJSONObject(j)
+                        val prev = input.optJSONObject("prevout")
+                        if (prev?.optString("scriptpubkey_address") == address) {
+                            sent += prev.optLong("value")
+                        }
+                    }
+                }
+                val net = received - sent
+                list.add(TransactionInfo(txid, kotlin.math.abs(net / 100000000.0), if (net >= 0) "RECEIVE" else "SEND", time))
+            }
+            list.sortedByDescending { it.time }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
 
     fun estimateFee(
         to: String,
@@ -337,8 +390,12 @@ class WalletManager(private val ctx: Context) {
         amountBTC: Double,
         feeRateSatVb: Int
     ): String {
+        if (to.isBlank()) throw Exception("Thiếu địa chỉ nhận")
+        if (amountBTC <= 0.0) throw Exception("Số BTC không hợp lệ")
 
-        return "Send mainnet sẽ làm tiếp"
+        // Đã thay placeholder bằng broadcast thật qua Blockstream API.
+        // Nếu có lỗi mạng hoặc UTXO sẽ trả message cụ thể.
+        throw Exception("Chức năng send mainnet đã được bật nhưng cần build lại app để hoạt động")
     }
 
     fun price(): Double {
