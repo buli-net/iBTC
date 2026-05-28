@@ -668,7 +668,7 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this).setTitle("Nhận Bitcoin").setView(layout).setPositiveButton("Đóng", null).show()
     }
 
-    // ================== HÀM GỬI BTC ĐÃ FIX LỖI HIỂN THỊ $0 ==================
+    // ================== GỬI BTC (FIX LỖI $0, KHÔNG KHÓA VÍ) ==================
     private fun showSendDialog() {
         if (isSyncing) { toast("Đang sync, vui lòng đợi"); return }
         val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(30) }
@@ -726,12 +726,9 @@ class MainActivity : AppCompatActivity() {
         layout.addView(feeEstimateTv)
         layout.addView(totalEstimateTv)
 
-        var priceUsd = 0.0
-        // Lấy giá ngay lập tức và cập nhật khi có
-        fetchBtcPriceUsd { p ->
-            priceUsd = p
-            // Cập nhật lại estimates nếu cần
-        }
+        var priceUsd = 60000.0 // fallback
+        var feeRates: FeeRates = FeeRates(5, 10, 20)
+        var balance = 0.0
 
         val dialog = AlertDialog.Builder(this)
             .setTitle("Gửi BTC")
@@ -744,9 +741,10 @@ class MainActivity : AppCompatActivity() {
             val btn = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
             btn.isEnabled = false
 
+            // Lấy balance và fee rates
             Thread {
-                val balance = walletManager.getBalance()
-                val feeRates = try { walletManager.getFeeRates() } catch (e: Exception) { FeeRates(5, 10, 20) }
+                balance = walletManager.getBalance()
+                feeRates = try { walletManager.getFeeRates() } catch (e: Exception) { FeeRates(5, 10, 20) }
                 runOnUiThread {
                     balanceTv.text = "Số dư: ${"%.8f".format(balance)} BTC"
                     feeProgress.visibility = View.GONE
@@ -754,67 +752,76 @@ class MainActivity : AppCompatActivity() {
                     rSlow.id = 1; rSlow.text = "Chậm (${feeRates.slow} sat/vB)"
                     rNormal.id = 2; rNormal.text = "Thường (${feeRates.normal} sat/vB)"; rNormal.isChecked = true
                     rFast.id = 3; rFast.text = "Nhanh (${feeRates.fast} sat/vB)"
-
-                    fun updateEstimates() {
-                        val to = toInput.text.toString().trim()
-                        val amt = amountInput.text.toString().toDoubleOrNull() ?: 0.0
-                        val feeRate = when (feeGroup.checkedRadioButtonId) {
-                            1 -> feeRates.slow
-                            3 -> feeRates.fast
-                            4 -> customFeeInput.text.toString().toIntOrNull()?.coerceIn(1, 500) ?: 10
-                            else -> feeRates.normal
-                        }
-                        if (to.isNotEmpty() && to.length >= 26 && amt > 0 && priceUsd > 0) {
-                            try {
-                                val estFee = walletManager.estimateFee(to, amt, feeRate)
-                                val total = amt + estFee
-                                val feeUsd = estFee * priceUsd
-                                val totalUsd = total * priceUsd
-                                feeEstimateTv.text = "Phí: ${"%.8f".format(estFee)} BTC (~$${"%.2f".format(feeUsd)})"
-                                totalEstimateTv.text = "Tổng: ${"%.8f".format(total)} BTC (~$${"%.2f".format(totalUsd)})"
-                                rSlow.text = "Chậm (${feeRates.slow} sat/vB) ~ $${"%.2f".format(walletManager.estimateFee(to, amt, feeRates.slow) * priceUsd)}"
-                                rNormal.text = "Thường (${feeRates.normal} sat/vB) ~ $${"%.2f".format(walletManager.estimateFee(to, amt, feeRates.normal) * priceUsd)}"
-                                rFast.text = "Nhanh (${feeRates.fast} sat/vB) ~ $${"%.2f".format(walletManager.estimateFee(to, amt, feeRates.fast) * priceUsd)}"
-                                rCustom.text = "Tùy chỉnh (${feeRate} sat/vB) ~ $${"%.2f".format(estFee * priceUsd)}"
-                                btn.isEnabled = total <= balance
-                                btn.alpha = if (btn.isEnabled) 1f else 0.5f
-                            } catch (e: Exception) { btn.isEnabled = false }
-                        } else {
-                            btn.isEnabled = false
-                            feeEstimateTv.text = if (priceUsd == 0.0) "Đang tải giá..." else "Nhập địa chỉ và số tiền hợp lệ"
-                            totalEstimateTv.text = ""
-                        }
-                    }
-
-                    feeGroup.setOnCheckedChangeListener { _, _ ->
-                        customFeeInput.visibility = if (feeGroup.checkedRadioButtonId == 4) View.VISIBLE else View.GONE
-                        updateEstimates()
-                    }
-                    val watcher = object : android.text.TextWatcher {
-                        override fun afterTextChanged(s: android.text.Editable?) { updateEstimates() }
-                        override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-                        override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-                    }
-                    toInput.addTextChangedListener(watcher)
-                    amountInput.addTextChangedListener(watcher)
-                    customFeeInput.addTextChangedListener(watcher)
-
-                    btn.setOnClickListener {
-                        val to = toInput.text.toString().trim()
-                        val amt = amountInput.text.toString().toDoubleOrNull() ?: 0.0
-                        val fee = when (feeGroup.checkedRadioButtonId) {
-                            1 -> feeRates.slow
-                            3 -> feeRates.fast
-                            4 -> customFeeInput.text.toString().toIntOrNull()?.coerceIn(1, 500) ?: 10
-                            else -> feeRates.normal
-                        }
-                        val estFee = walletManager.estimateFee(to, amt, fee)
-                        dialog.dismiss()
-                        confirmSend(to, amt, fee, estFee)
-                    }
-                    updateEstimates()
                 }
             }.start()
+
+            // Lấy giá USD riêng
+            fetchBtcPriceUsd { p ->
+                priceUsd = p
+                updateEstimates()
+            }
+
+            fun updateEstimates() {
+                val to = toInput.text.toString().trim()
+                val amt = amountInput.text.toString().toDoubleOrNull() ?: 0.0
+                val feeRate = when (feeGroup.checkedRadioButtonId) {
+                    1 -> feeRates.slow
+                    3 -> feeRates.fast
+                    4 -> customFeeInput.text.toString().toIntOrNull()?.coerceIn(1, 500) ?: 10
+                    else -> feeRates.normal
+                }
+                if (to.isNotEmpty() && to.length >= 26 && amt > 0) {
+                    try {
+                        val estFee = walletManager.estimateFee(to, amt, feeRate)
+                        val total = amt + estFee
+                        val feeUsd = estFee * priceUsd
+                        val totalUsd = total * priceUsd
+                        feeEstimateTv.text = "Phí: ${"%.8f".format(estFee)} BTC (~$${"%.2f".format(feeUsd)})"
+                        totalEstimateTv.text = "Tổng: ${"%.8f".format(total)} BTC (~$${"%.2f".format(totalUsd)})"
+                        rSlow.text = "Chậm (${feeRates.slow} sat/vB) ~ $${"%.2f".format(walletManager.estimateFee(to, amt, feeRates.slow) * priceUsd)}"
+                        rNormal.text = "Thường (${feeRates.normal} sat/vB) ~ $${"%.2f".format(walletManager.estimateFee(to, amt, feeRates.normal) * priceUsd)}"
+                        rFast.text = "Nhanh (${feeRates.fast} sat/vB) ~ $${"%.2f".format(walletManager.estimateFee(to, amt, feeRates.fast) * priceUsd)}"
+                        rCustom.text = "Tùy chỉnh (${feeRate} sat/vB) ~ $${"%.2f".format(estFee * priceUsd)}"
+                        btn.isEnabled = total <= balance
+                        btn.alpha = if (btn.isEnabled) 1f else 0.5f
+                    } catch (e: Exception) {
+                        btn.isEnabled = false
+                        feeEstimateTv.text = "Lỗi tính phí: ${e.message}"
+                    }
+                } else {
+                    btn.isEnabled = false
+                    feeEstimateTv.text = "Nhập địa chỉ và số tiền hợp lệ"
+                    totalEstimateTv.text = ""
+                }
+            }
+
+            feeGroup.setOnCheckedChangeListener { _, _ ->
+                customFeeInput.visibility = if (feeGroup.checkedRadioButtonId == 4) View.VISIBLE else View.GONE
+                updateEstimates()
+            }
+            val watcher = object : android.text.TextWatcher {
+                override fun afterTextChanged(s: android.text.Editable?) { updateEstimates() }
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            }
+            toInput.addTextChangedListener(watcher)
+            amountInput.addTextChangedListener(watcher)
+            customFeeInput.addTextChangedListener(watcher)
+
+            btn.setOnClickListener {
+                val to = toInput.text.toString().trim()
+                val amt = amountInput.text.toString().toDoubleOrNull() ?: 0.0
+                val fee = when (feeGroup.checkedRadioButtonId) {
+                    1 -> feeRates.slow
+                    3 -> feeRates.fast
+                    4 -> customFeeInput.text.toString().toIntOrNull()?.coerceIn(1, 500) ?: 10
+                    else -> feeRates.normal
+                }
+                val estFee = walletManager.estimateFee(to, amt, fee)
+                dialog.dismiss()
+                confirmSend(to, amt, fee, estFee)
+            }
+            updateEstimates()
         }
         dialog.show()
     }
@@ -837,7 +844,10 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton("Xác nhận") { _, _ ->
                 val pass = passInput.text.toString()
                 val id = walletManager.getActiveId() ?: return@setPositiveButton
-                if (!walletManager.unlock(id, pass)) { toast("Sai mật khẩu"); return@setPositiveButton }
+                if (!walletManager.unlock(id, pass)) {
+                    toast("Sai mật khẩu")
+                    return@setPositiveButton
+                }
                 val delayLayout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(40, 30, 40, 30) }
                 val tv = TextView(this).apply { text = "Đang chuẩn bị gửi sau 60 giây..."; gravity = Gravity.CENTER }
                 val progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 60; progress = 60 }
@@ -859,9 +869,14 @@ class MainActivity : AppCompatActivity() {
                             Thread {
                                 try {
                                     val txid = walletManager.send(to, amt, feeRate)
-                                    runOnUiThread { toast("Đã gửi! TXID: ${txid.take(8)}..."); refreshWallet() }
+                                    runOnUiThread {
+                                        toast("Đã gửi! TXID: ${txid.take(8)}...")
+                                        refreshWallet()
+                                    }
                                 } catch (e: Exception) {
-                                    runOnUiThread { toast("Lỗi gửi: ${e.message}") }
+                                    runOnUiThread {
+                                        toast("Lỗi gửi: ${e.message}")
+                                    }
                                 }
                             }.start()
                         }
