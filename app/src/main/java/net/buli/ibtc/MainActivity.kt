@@ -602,10 +602,41 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread {
                     balanceText.text = String.format(Locale.US, "%.8f BTC", bal)
                     val balanceUsd = bal * price
-                    balanceUsdText.text = String.format(Locale.US, "≈ $%,.2f", balanceUsd)
-                    rateText.text = String.format(Locale.US, "BTC $%,.2f", price)
+                    // Tính biến động số dư
+                    val balChange = balanceUsd - lastBalanceUsd
+                    val balPct = if (lastBalanceUsd > 0) balChange / lastBalanceUsd * 100 else 0.0
+                    val balArrow = when {
+                        balChange > 0.01 -> "▲"
+                        balChange < -0.01 -> "▼"
+                        else -> "●"
+                    }
+                    val balColor = when {
+                        balChange > 0.01 -> Color.parseColor("#00C853")
+                        balChange < -0.01 -> Color.parseColor("#D50000")
+                        else -> Color.GRAY
+                    }
+                    balanceUsdText.setTextColor(balColor)
+                    balanceUsdText.text = String.format(Locale.US, "≈ $%,.2f %s %+.2f%% (%+.2f$)", balanceUsd, balArrow, balPct, balChange)
+
+                    // Tính biến động tỷ giá
+                    val priceChange = price - lastPrice
+                    val pricePct = if (lastPrice > 0) priceChange / lastPrice * 100 else 0.0
+                    val priceArrow = when {
+                        priceChange > 0.01 -> "▲"
+                        priceChange < -0.01 -> "▼"
+                        else -> "●"
+                    }
+                    val priceColor = when {
+                        priceChange > 0.01 -> Color.parseColor("#00C853")
+                        priceChange < -0.01 -> Color.parseColor("#D50000")
+                        else -> Color.GRAY
+                    }
+                    rateText.setTextColor(priceColor)
+                    rateText.text = String.format(Locale.US, "BTC $%,.2f %s %+.2f%% (%+.2f$)", price, priceArrow, pricePct, priceChange)
+
                     lastBalanceUsd = balanceUsd
                     lastPrice = price
+
                     addressText.text = "Địa chỉ: $addr"
                     syncText.text = "Đã đồng bộ • " + SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
                     syncProgressBar.progress = 100
@@ -671,7 +702,7 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this).setTitle("Nhận Bitcoin").setView(layout).setPositiveButton("Đóng", null).show()
     }
 
-    // ================== SEND DIALOG FIXED ==================
+    // ================== SEND DIALOG (FIX HIỂN THỊ PHÍ $) ==================
     private fun showSendDialog() {
         if (walletManager.isLocked()) {
             toast("Ví đang khóa, hãy mở khóa trước")
