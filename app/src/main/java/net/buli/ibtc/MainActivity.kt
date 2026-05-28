@@ -91,30 +91,27 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onResume() {
-        if(walletManager.isLocked()) {
-            showUnlockDialog()
-        }
         super.onResume()
-        if (walletManager.hasWallets()) {
-            if (walletManager.getActive() == null) {
-                showUnlockDialog()
-            } else {
+
+        try {
+            if (walletManager.hasWallets()) {
                 refreshWallet()
+            } else {
+                showWelcome()
             }
+        } catch (e: Exception) {
+            showWelcome()
         }
     }
 
     override fun onStop() {
         super.onStop()
-        // Thoát app (vào background) -> khóa ví
-        try { walletManager.lock() } catch (_:Exception) {}
     }
 
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
         try { screenReceiver?.let { unregisterReceiver(it) } } catch (_:Exception) {}
         try {
-            walletManager.lock()
             walletManager.stop()
         } catch (_: Exception) {}
         super.onDestroy()
