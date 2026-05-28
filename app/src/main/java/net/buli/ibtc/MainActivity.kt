@@ -668,7 +668,7 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this).setTitle("Nhận Bitcoin").setView(layout).setPositiveButton("Đóng", null).show()
     }
 
-    // ================== HÀM GỬI BTC ĐÃ FIX HOÀN TOÀN ==================
+    // ================== HÀM GỬI BTC ĐÃ FIX ==================
     private fun showSendDialog() {
         if (isSyncing) { toast("Đang sync, vui lòng đợi"); return }
         val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(30) }
@@ -760,7 +760,7 @@ class MainActivity : AppCompatActivity() {
                             4 -> customFeeInput.text.toString().toIntOrNull()?.coerceIn(1, 500) ?: 10
                             else -> feeRates.normal
                         }
-                        if (to.isNotEmpty() && to.length >= 26 && amt > 0) {
+                        if (to.isNotEmpty() && to.length >= 26 && amt > 0 && priceUsd > 0) {
                             try {
                                 val estFee = walletManager.estimateFee(to, amt, feeRate)
                                 val total = amt + estFee
@@ -777,7 +777,7 @@ class MainActivity : AppCompatActivity() {
                             } catch (e: Exception) { btn.isEnabled = false }
                         } else {
                             btn.isEnabled = false
-                            feeEstimateTv.text = "Nhập địa chỉ và số tiền hợp lệ"
+                            feeEstimateTv.text = if (priceUsd == 0.0) "Đang tải giá..." else "Nhập địa chỉ và số tiền hợp lệ"
                             totalEstimateTv.text = ""
                         }
                     }
@@ -856,7 +856,9 @@ class MainActivity : AppCompatActivity() {
                                 try {
                                     val txid = walletManager.send(to, amt, feeRate)
                                     runOnUiThread { toast("Đã gửi! TXID: ${txid.take(8)}..."); refreshWallet() }
-                                } catch (e: Exception) { runOnUiThread { toast("Lỗi gửi: ${e.message}") } }
+                                } catch (e: Exception) {
+                                    runOnUiThread { toast("Lỗi gửi: ${e.message}") }
+                                }
                             }.start()
                         }
                     }
