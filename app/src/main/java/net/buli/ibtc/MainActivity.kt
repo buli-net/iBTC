@@ -77,7 +77,7 @@ class MainActivity : AppCompatActivity() {
         screenReceiver = object : BroadcastReceiver() {
             override fun onReceive(c: Context?, intent: Intent?) {
                 if (intent?.action == Intent.ACTION_SCREEN_OFF) {
-                    try { walletManager.lock() } catch (_:Exception) {}
+                    // giữ session để tránh văng app khi mở lại
                 }
             }
         }
@@ -95,11 +95,15 @@ class MainActivity : AppCompatActivity() {
 
         try {
             if (walletManager.hasWallets()) {
-                refreshWallet()
+                if (walletManager.getActive() != null) {
+                    refreshWallet()
+                } else {
+                    showUnlockDialog()
+                }
             } else {
                 showWelcome()
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             showWelcome()
         }
     }
@@ -112,6 +116,7 @@ class MainActivity : AppCompatActivity() {
         handler.removeCallbacksAndMessages(null)
         try { screenReceiver?.let { unregisterReceiver(it) } } catch (_:Exception) {}
         try {
+            walletManager.lock()
             walletManager.stop()
         } catch (_: Exception) {}
         super.onDestroy()
