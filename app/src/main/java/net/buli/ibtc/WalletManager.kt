@@ -16,7 +16,6 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.security.SecureRandom
 import java.util.*
-import kotlin.math.abs
 
 data class WalletInfo(val id: String, val name: String)
 data class TransactionInfo(val txId: String, val amount: Double, val type: String, val time: Date)
@@ -245,34 +244,23 @@ class WalletManager(private val ctx: Context) {
         return FeeRates(slow = 5, normal = 10, fast = 20)
     }
 
-    // ================== TÍNH NĂNG GỬI BTC THẬT ==================
+    // ================== SEND BTC (đã sửa lỗi) ==================
 
-    /**
-     * Ước tính phí giao dịch dựa trên UTXO thực tế
-     */
     fun estimateFee(to: String, amountBTC: Double, feeRateSatVb: Int): Double {
         return try {
-            val address = getAddress()
-            if (address.isBlank()) return 0.0
-            val utxos = getUtxos(address)
+            val utxos = getUtxos(getAddress())
             val needSat = (amountBTC * 1e8).toLong()
-            val (selected, totalSat) = selectUtxos(utxos, needSat, feeRateSatVb)
+            val (selected, _) = selectUtxos(utxos, needSat, feeRateSatVb)
             if (selected.isEmpty()) return 0.0
-            val inputSize = selected.size * 68   // mỗi input segwit ~68 vB
-            val outputSize = 2 * 31              // output người nhận + change (nếu có)
+            val inputSize = selected.size * 68
+            val outputSize = 2 * 31
             val txSize = inputSize + outputSize + 10
-            val feeSat = txSize * feeRateSatVb
-            feeSat / 1e8
+            txSize * feeRateSatVb / 1e8
         } catch (e: Exception) {
-            // Fallback ước lượng đơn giản
             (68 + 62 + 10) * feeRateSatVb / 1e8
         }
     }
 
-    /**
-     * Gửi BTC thật lên mạng Bitcoin mainnet
-     * @return txid của giao dịch
-     */
     fun send(to: String, amountBTC: Double, feeRateSatVb: Int): String {
         val seedPhrase = cachedSeed ?: throw Exception("Ví chưa được mở khóa")
         val myAddressStr = getAddress()
@@ -280,60 +268,52 @@ class WalletManager(private val ctx: Context) {
         val needSat = (amountBTC * 1e8).toLong()
         if (needSat <= 0) throw Exception("Số tiền không hợp lệ")
 
-        // 1. Lấy UTXOs
         val utxos = getUtxos(myAddressStr)
-        // 2. Chọn UTXO đủ để gửi
         val (selectedUtxos, totalInputSat) = selectUtxos(utxos, needSat, feeRateSatVb)
-        if (selectedUtxos.isEmpty()) throw Exception("Không đủ số dư hoặc UTXO không khả dụng")
+        if (selectedUtxos.isEmpty()) throw Exception("Không đủ số dư")
 
-        // 3. Tạo giao dịch
         val tx = Transaction(params)
-        val changeAddress = SegwitAddress.fromString(params, myAddressStr)
-        val destAddress = try {
-            // Hỗ trợ cả địa chỉ legacy, nested segwit, native segwit
-            Address.fromString(params, to)
-        } catch (e: Exception) {
-            throw Exception("Địa chỉ nhận không hợp lệ")
-        }
+        val destAddress = Address.fromString(params, to)
         tx.addOutput(Coin.valueOf(needSat), destAddress)
 
         // Tính fee và change
-        var feeSat = (tx.estimatedSizeForSegwit() * feeRateSatVb).toLong()
+        var txSize = tx.bitcoinSerialize().size
+        var feeSat = txSize * feeRateSatVb
         var changeSat = totalInputSat - needSat - feeSat
         if (changeSat < 0) {
-            // Tăng phí nếu thiếu
-            feeSat = (tx.estimatedSizeForSegwit() + 50) * feeRateSatVb
+            txSize += 50 // dự phòng
+            feeSat = txSize * feeRateSatVb
             changeSat = totalInputSat - needSat - feeSat
-            if (changeSat < 0) throw Exception("Số dư không đủ để trả phí (thiếu ${abs(changeSat)} sat)")
+            if (changeSat < 0) throw Exception("Không đủ trả phí")
         }
-        if (changeSat > 546) {  // dust threshold
+        if (changeSat > 546) {
+            val changeAddress = Address.fromString(params, myAddressStr)
             tx.addOutput(Coin.valueOf(changeSat), changeAddress)
-        } else if (changeSat > 0) {
-            // Change nhỏ hơn dust -> cộng vào phí (không cần output change)
-            // fee sẽ tự động tăng vì không có output change
         }
 
-        // 4. Ký các input
-        for (i in selectedUtxos.indices) {
+        // Thêm input và ký
+        val key = getPrivateKeyForAddress(seedPhrase, myAddressStr)
+        for (utxo in selectedUtxos) {
+            val outPoint = Sha256Hash.wrap(utxo.txid)
+            tx.addInput(outPoint, utxo.vout.toLong(), ScriptBuilder.createOutputScript(destAddress))
+        }
+
+        // Ký từng input
+        for (i in 0 until tx.inputs.size) {
+            val input = tx.inputs[i]
             val utxo = selectedUtxos[i]
-            val outPoint = Sha256Hash.wrap(utxo.txid).reversed()
-            val input = tx.addInput(outPoint, utxo.vout, ScriptBuilder.createOutputScript(destAddress).program)
-            // Lấy private key cho địa chỉ của ví (m/84'/0'/0'/0/0)
-            val privKey = getPrivateKeyForAddress(seedPhrase, myAddressStr)
-            val ecKey = ECKey.fromPrivate(privKey.privKeyBytes)
-            val sighash = tx.hashForSignature(i, ScriptBuilder.createOutputScript(destAddress).program, Transaction.SigHash.ALL, false)
-            val sig = ecKey.sign(sighash)
+            val scriptPubKey = ScriptBuilder.createOutputScript(destAddress)
+            val sighash = tx.hashForSignature(i, scriptPubKey, Transaction.SigHash.ALL, false)
+            val sig = key.sign(sighash)
             val txSig = TransactionSignature(sig, Transaction.SigHash.ALL, false)
-            input.setWitness(TransactionWitness(listOf(txSig.encodeToBitcoin(), ecKey.pubKey)))
+            input.setWitness(TransactionWitness(listOf(txSig.encodeToBitcoin(), key.pubKey).toTypedArray()))
         }
 
-        // 5. Broadcast
         val txHex = Utils.HEX.encode(tx.bitcoinSerialize())
-        val txid = broadcastTx(txHex)
-        return txid
+        return broadcastTx(txHex)
     }
 
-    // ---------- Các hàm private hỗ trợ ----------
+    // ------------------ Hỗ trợ ------------------
     private data class Utxo(val txid: String, val vout: Int, val valueSat: Long, val scriptPubKey: String)
 
     private fun getUtxos(address: String): List<Utxo> {
@@ -361,9 +341,7 @@ class WalletManager(private val ctx: Context) {
             selected.add(utxo)
             total += utxo.valueSat
             val approxFee = (selected.size * 68 + 2 * 31 + 10) * feeRate
-            if (total >= needSat + approxFee) {
-                return Pair(selected, total)
-            }
+            if (total >= needSat + approxFee) return Pair(selected, total)
         }
         return Pair(emptyList(), 0L)
     }
@@ -372,7 +350,6 @@ class WalletManager(private val ctx: Context) {
         val seed = DeterministicSeed(seedPhrase.split(" "), null, "", 0L)
         val seedBytes = seed.seedBytes ?: throw Exception("Invalid seed")
         var key = HDKeyDerivation.createMasterPrivateKey(seedBytes)
-        // BIP84 path: m/84'/0'/0'/0/0
         val path = listOf(
             ChildNumber(84, true),
             ChildNumber(0, true),
@@ -380,9 +357,7 @@ class WalletManager(private val ctx: Context) {
             ChildNumber(0, false),
             ChildNumber(0, false)
         )
-        for (p in path) {
-            key = HDKeyDerivation.deriveChildKey(key, p)
-        }
+        for (p in path) key = HDKeyDerivation.deriveChildKey(key, p)
         return key
     }
 
@@ -404,7 +379,6 @@ class WalletManager(private val ctx: Context) {
         }
     }
 
-    // ---------- Các hàm cũ giữ nguyên ----------
     private fun restoreActiveWallet() {
         try {
             var id = prefs.getString("active_wallet_id", null)
