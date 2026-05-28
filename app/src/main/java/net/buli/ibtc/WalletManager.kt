@@ -342,7 +342,14 @@ class WalletManager(private val ctx: Context) {
                 val txId = tx.optString("txid", "")
                 val status = tx.optJSONObject("status")
                 val blockTime = status?.optLong("block_time", System.currentTimeMillis()/1000) ?: System.currentTimeMillis()/1000
-                list.add(TransactionInfo(txid,0.0,"BTC", java.util.Date(blockTime*1000)))
+               list.add(
+    TransactionInfo(
+        txId,
+        0.0,
+        "RECEIVE",
+        java.util.Date(blockTime * 1000)
+    )
+) 
             }
             list
         } catch (e: Exception) {
