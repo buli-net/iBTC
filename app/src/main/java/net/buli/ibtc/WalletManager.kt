@@ -242,7 +242,6 @@ class WalletManager(private val ctx: Context) {
         } catch (_: Exception) { lastPrice }
     }
 
-    // Lấy phí động từ mempool.space
     fun getFeeRates(): FeeRates {
         return try {
             val json = httpGet("https://mempool.space/api/v1/fees/recommended")
@@ -260,7 +259,7 @@ class WalletManager(private val ctx: Context) {
         }
     }
 
-    // ================== SEND BTC ==================
+    // ================== GỬI BTC ==================
 
     fun estimateFee(to: String, amountBTC: Double, feeRateSatVb: Int): Double {
         return try {
@@ -307,7 +306,6 @@ class WalletManager(private val ctx: Context) {
         }
 
         val key = getPrivateKeyForAddress(seedPhrase, myAddressStr)
-
         val scripts = mutableListOf<Script>()
         for (utxo in selectedUtxos) {
             val outPoint = Sha256Hash.wrap(utxo.txid)
@@ -332,7 +330,7 @@ class WalletManager(private val ctx: Context) {
         return broadcastTx(txHex)
     }
 
-    // ------------------ Hỗ trợ ------------------
+    // ------------------ Private helpers ------------------
     private data class Utxo(val txid: String, val vout: Int, val valueSat: Long, val scriptPubKey: String)
 
     private fun getUtxos(address: String): List<Utxo> {
