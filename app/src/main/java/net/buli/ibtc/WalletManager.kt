@@ -412,7 +412,7 @@ class WalletManager(private val ctx: Context) {
 
                 list.add(
                     TransactionInfo(
-                        txid = txid,
+                        txId = txid,
                         amount = btcAmount,
                         type = type,
                         time = java.util.Date(blockTime * 1000)
