@@ -106,7 +106,6 @@ class MainActivity : AppCompatActivity() {
         handler.removeCallbacksAndMessages(null)
         try { screenReceiver?.let { unregisterReceiver(it) } } catch (_: Exception) {}
         try { walletManager.stop() } catch (_: Exception) {}
-        walletManager.lock()
         super.onDestroy()
     }
 
@@ -127,12 +126,10 @@ class MainActivity : AppCompatActivity() {
         autoSyncStarted = true
         handler.postDelayed(object : Runnable {
             override fun run() {
-                if (walletManager.getActive() != null && !isSyncing && !isFinishing && !isDestroyed) {
+                if (walletManager.getActive() != null && !isSyncing) {
                     refreshWallet()
                 }
-                if (!isFinishing && !isDestroyed) {
-                    handler.postDelayed(this, 45000)
-                }
+                handler.postDelayed(this, 45000)
             }
         }, 45000)
     }
@@ -671,16 +668,9 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this).setTitle("Nhận Bitcoin").setView(layout).setPositiveButton("Đóng", null).show()
     }
 
-    // ================== GỬI BTC (FIX LỖI HOÀN TOÀN) ==================
+    // ================== GỬI BTC (FIX LỖI $0, KHÔNG KHÓA VÍ) ==================
     private fun showSendDialog() {
-        if (walletManager.isLocked()) {
-            toast("Ví đang khóa, hãy mở khóa trước")
-            return
-        }
-        if (isSyncing) {
-            toast("Đang sync, vui lòng đợi")
-            return
-        }
+        if (isSyncing) { toast("Đang sync, vui lòng đợi"); return }
         val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(30) }
         val toInput = EditText(this).apply { hint = "Địa chỉ BTC (bc1... hoặc 1... hoặc 3...)" }
         pendingAddressInput = toInput
@@ -736,7 +726,7 @@ class MainActivity : AppCompatActivity() {
         layout.addView(feeEstimateTv)
         layout.addView(totalEstimateTv)
 
-        var priceUsd = 60000.0
+        var priceUsd = 60000.0 // fallback
         var feeRates: FeeRates = FeeRates(5, 10, 20)
         var balance = 0.0
 
@@ -765,7 +755,11 @@ class MainActivity : AppCompatActivity() {
                 }
             }.start()
 
-            fetchBtcPriceUsd { p -> priceUsd = p }
+            // Lấy giá USD riêng
+            fetchBtcPriceUsd { p ->
+                priceUsd = p
+                updateEstimates()
+            }
 
             fun updateEstimates() {
                 val to = toInput.text.toString().trim()
@@ -777,13 +771,6 @@ class MainActivity : AppCompatActivity() {
                     else -> feeRates.normal
                 }
                 if (to.isNotEmpty() && to.length >= 26 && amt > 0) {
-                    if (priceUsd <= 0.0) {
-                        fetchBtcPriceUsd { p ->
-                            priceUsd = p
-                            updateEstimates()
-                        }
-                        return
-                    }
                     try {
                         val estFee = walletManager.estimateFee(to, amt, feeRate)
                         val total = amt + estFee
@@ -824,14 +811,6 @@ class MainActivity : AppCompatActivity() {
             btn.setOnClickListener {
                 val to = toInput.text.toString().trim()
                 val amt = amountInput.text.toString().toDoubleOrNull() ?: 0.0
-                if (amt <= 0.0) {
-                    toast("Số BTC không hợp lệ")
-                    return@setOnClickListener
-                }
-                if (!walletManager.isValidAddress(to)) {
-                    toast("Địa chỉ BTC không hợp lệ")
-                    return@setOnClickListener
-                }
                 val fee = when (feeGroup.checkedRadioButtonId) {
                     1 -> feeRates.slow
                     3 -> feeRates.fast
