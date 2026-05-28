@@ -83,7 +83,7 @@ class MainActivity : AppCompatActivity() {
         }
         registerReceiver(screenReceiver, IntentFilter(Intent.ACTION_SCREEN_OFF))
         
-        if (walletManager.hasWallets() && walletManager.getActive() != null) showMainWallet() else showWelcome()
+        if (walletManager.hasWallets()) showUnlockDialog() else showWelcome()
     }
 
     override fun onPause() {
@@ -708,11 +708,7 @@ private fun fetchBtcStats() {
                             return view
                         }
                     }
-                    if (txs.isEmpty()) {
-                        txListView.adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, listOf("Chưa có giao dịch hoặc API chưa đồng bộ"))
-                    } else {
-                        txListView.adapter = adapter
-                    }
+                    txListView.adapter = adapter
                     isSyncing = false
                 }
             } catch (e: Exception) {

@@ -67,7 +67,7 @@ class WalletManager(private val ctx: Context) {
             cachedPassword = password.toCharArray()
 
             active = WalletInfo(id,name)
-            prefs.edit().putString("active_wallet_id", id).apply()
+            prefs.edit().putString("active_wallet_id", id).commit()
             locked = false
 
             true
@@ -110,7 +110,7 @@ class WalletManager(private val ctx: Context) {
             .putString("${id}_name",walletName)
             .putString("${id}_seed",enc)
             .putString("${id}_address",address)
-            .apply()
+            .commit()
 
         val info =
             WalletInfo(id,walletName)
@@ -118,7 +118,7 @@ class WalletManager(private val ctx: Context) {
         cachedSeed = mnemonic
         cachedPassword = password.toCharArray()
         active = info
-        prefs.edit().putString("active_wallet_id", id).apply()
+        prefs.edit().putString("active_wallet_id", id).commit()
 
         return info
     }
@@ -243,7 +243,7 @@ class WalletManager(private val ctx: Context) {
                 .putString("${id}_name",walletName)
                 .putString("${id}_seed",enc)
                 .putString("${id}_address",address)
-                .apply()
+                .commit()
 
             val info =
                 WalletInfo(id,walletName)
@@ -251,7 +251,7 @@ class WalletManager(private val ctx: Context) {
             cachedSeed = clean
             cachedPassword = password.toCharArray()
             active = info
-            prefs.edit().putString("active_wallet_id", id).apply()
+            prefs.edit().putString("active_wallet_id", id).commit()
 
             info
 
@@ -340,30 +340,7 @@ class WalletManager(private val ctx: Context) {
                 val txid = tx.optString("txid", "")
                 val status = tx.optJSONObject("status")
                 val blockTime = status?.optLong("block_time", System.currentTimeMillis()/1000) ?: System.currentTimeMillis()/1000
-                val vin = tx.optJSONArray("vin")
-                val vout = tx.optJSONArray("vout")
-                var received = 0L
-                var sent = 0L
-                if (vout != null) {
-                    for (j in 0 until vout.length()) {
-                        val out = vout.getJSONObject(j)
-                        if (out.optString("scriptpubkey_address") == address) {
-                            received += out.optLong("value",0)
-                        }
-                    }
-                }
-                if (vin != null) {
-                    for (j in 0 until vin.length()) {
-                        val inn = vin.getJSONObject(j)
-                        val prev = inn.optJSONObject("prevout")
-                        if (prev != null && prev.optString("scriptpubkey_address") == address) {
-                            sent += prev.optLong("value",0)
-                        }
-                    }
-                }
-                val amount = (received - sent) / 100000000.0
-                val type = if (amount >= 0) "Nhận" else "Gửi"
-                list.add(TransactionInfo(txid,kotlin.math.abs(amount),type, java.util.Date(blockTime*1000)))
+                list.add(TransactionInfo(txid,0.0,"BTC", java.util.Date(blockTime*1000)))
             }
             list
         } catch (e: Exception) {
@@ -373,10 +350,21 @@ class WalletManager(private val ctx: Context) {
 
     private fun restoreActiveWallet() {
         try {
-            val id = prefs.getString("active_wallet_id", null) ?: return
+            var id = prefs.getString("active_wallet_id", null)
+
+            if (id == null) {
+                val seedKey = prefs.all.keys.firstOrNull { it.endsWith("_seed") }
+                if (seedKey != null) {
+                    id = seedKey.removeSuffix("_seed")
+                    prefs.edit().putString("active_wallet_id", id).commit()
+                }
+            }
+
+            if (id == null) return
+
             val name = prefs.getString("${id}_name", "Wallet") ?: "Wallet"
             active = WalletInfo(id, name)
-            locked = false
+            locked = true
         } catch (_: Exception) {}
     }
 
@@ -420,7 +408,7 @@ class WalletManager(private val ctx: Context) {
 
             prefs.edit()
                 .putFloat("last_price",rate.toFloat())
-                .apply()
+                .commit()
 
             rate
 
@@ -500,7 +488,7 @@ class WalletManager(private val ctx: Context) {
 
             prefs.edit()
                 .putString("${id}_seed", newEnc)
-                .apply()
+                .commit()
 
             cachedPassword =
                 newPassword.toCharArray()
@@ -522,7 +510,7 @@ class WalletManager(private val ctx: Context) {
 
         prefs.edit()
             .putString("${id}_name", newName)
-            .apply()
+            .commit()
 
         active =
             WalletInfo(id,newName)
