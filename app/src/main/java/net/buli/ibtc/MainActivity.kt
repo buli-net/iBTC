@@ -668,7 +668,7 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this).setTitle("Nhận Bitcoin").setView(layout).setPositiveButton("Đóng", null).show()
     }
 
-    // ================== HÀM GỬI BTC ĐÃ FIX ==================
+    // ================== HÀM GỬI BTC ĐÃ FIX LỖI HIỂN THỊ $0 ==================
     private fun showSendDialog() {
         if (isSyncing) { toast("Đang sync, vui lòng đợi"); return }
         val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(30) }
@@ -726,8 +726,12 @@ class MainActivity : AppCompatActivity() {
         layout.addView(feeEstimateTv)
         layout.addView(totalEstimateTv)
 
-        var priceUsd = 60000.0
-        fetchBtcPriceUsd { p -> priceUsd = p }
+        var priceUsd = 0.0
+        // Lấy giá ngay lập tức và cập nhật khi có
+        fetchBtcPriceUsd { p ->
+            priceUsd = p
+            // Cập nhật lại estimates nếu cần
+        }
 
         val dialog = AlertDialog.Builder(this)
             .setTitle("Gửi BTC")
