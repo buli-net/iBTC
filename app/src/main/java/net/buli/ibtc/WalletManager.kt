@@ -7,7 +7,6 @@ import org.bitcoinj.crypto.DeterministicKey
 import org.bitcoinj.crypto.HDKeyDerivation
 import org.bitcoinj.crypto.TransactionSignature
 import org.bitcoinj.params.MainNetParams
-import org.bitcoinj.script.Script
 import org.bitcoinj.script.ScriptBuilder
 import org.bitcoinj.wallet.DeterministicSeed
 import org.json.JSONArray
@@ -278,7 +277,6 @@ class WalletManager(private val ctx: Context) {
         }
     }
 
-    // ================== GỬI BTC - BẢN FIX LỖI BROADCAST ==================
     fun send(to: String, amountBTC: Double, feeRateSatVb: Int): String {
         val seedPhrase = cachedSeed ?: throw Exception("Ví chưa được mở khóa")
         val myAddressStr = getAddress()
@@ -286,43 +284,37 @@ class WalletManager(private val ctx: Context) {
         val needSat = (amountBTC * 1e8).toLong()
         if (needSat <= 0) throw Exception("Số tiền không hợp lệ")
 
-        // Lấy UTXO của ví (địa chỉ của chính mình)
         val utxos = getUtxos(myAddressStr)
-        if (utxos.isEmpty()) throw Exception("Không có UTXO nào (ví trống hoặc chưa sync)")
-        val (selectedUtxos, totalInputSat) = selectUtxos(utxos, needSat, feeRateSatVb)
-        if (selectedUtxos.isEmpty()) throw Exception("Không đủ số dư hoặc UTXO không đủ để cover fee")
+        if (utxos.isEmpty()) throw Exception("Ví không có UTXO nào (có thể chưa nhận được tiền hoặc đang đồng bộ)")
 
-        // Tạo transaction
+        val (selectedUtxos, totalInputSat) = selectUtxos(utxos, needSat, feeRateSatVb)
+        if (selectedUtxos.isEmpty()) throw Exception("Không đủ số dư (cần ${needSat/1e8} BTC, có ${totalInputSat/1e8} BTC)")
+
         val tx = Transaction(params)
         val destAddress = Address.fromString(params, to)
         tx.addOutput(Coin.valueOf(needSat), destAddress)
 
-        // Tính fee và change
-        var txSize = tx.bitcoinSerialize().size
+        var txSize = tx.bitcoinSerialize().size + selectedUtxos.size * 68
         var feeSat = txSize * feeRateSatVb
         var changeSat = totalInputSat - needSat - feeSat
         if (changeSat < 0) {
-            txSize += selectedUtxos.size * 68
-            feeSat = txSize * feeRateSatVb
+            feeSat = (txSize + 100) * feeRateSatVb
             changeSat = totalInputSat - needSat - feeSat
-            if (changeSat < 0) throw Exception("Không đủ trả phí, thiếu ${-changeSat} sat")
+            if (changeSat < 0) throw Exception("Số dư không đủ để trả phí (thiếu ${-changeSat} sat)")
         }
         if (changeSat > 546) {
             val changeAddress = Address.fromString(params, myAddressStr)
             tx.addOutput(Coin.valueOf(changeSat), changeAddress)
         }
 
-        // Lấy private key
         val key = getPrivateKeyForAddress(seedPhrase, myAddressStr)
-
-        // Thêm inputs với scriptPubKey đúng (script của UTXO, tức là script của chính địa chỉ ví)
-        val myScript = ScriptBuilder.createOutputScript(Address.fromString(params, myAddressStr))
+        val myAddress = Address.fromString(params, myAddressStr)
+        val myScript = ScriptBuilder.createOutputScript(myAddress)
         for (utxo in selectedUtxos) {
             val outPoint = Sha256Hash.wrap(utxo.txid)
             tx.addInput(outPoint, utxo.vout.toLong(), myScript)
         }
 
-        // Ký các input
         for (i in 0 until tx.inputs.size) {
             val input = tx.inputs[i]
             val sighash = tx.hashForSignature(i, myScript.program, Transaction.SigHash.ALL, false)
@@ -334,7 +326,6 @@ class WalletManager(private val ctx: Context) {
             input.setWitness(witness)
         }
 
-        // Xác thực transaction trước khi broadcast
         tx.verify()
         val txHex = Utils.HEX.encode(tx.bitcoinSerialize())
         return broadcastTx(txHex)
@@ -370,14 +361,13 @@ class WalletManager(private val ctx: Context) {
             val approxFee = (selected.size * 68 + 2 * 31 + 10) * feeRate
             if (total >= needSat + approxFee) return Pair(selected, total)
         }
-        return Pair(emptyList(), 0L)
+        return Pair(emptyList(), total)
     }
 
     private fun getPrivateKeyForAddress(seedPhrase: String, address: String): DeterministicKey {
         val seed = DeterministicSeed(seedPhrase.split(" "), null, "", 0L)
         val seedBytes = seed.seedBytes ?: throw Exception("Invalid seed")
         var key = HDKeyDerivation.createMasterPrivateKey(seedBytes)
-        // BIP84 path: m/84'/0'/0'/0/0
         val path = listOf(
             ChildNumber(84, true),
             ChildNumber(0, true),
@@ -391,21 +381,31 @@ class WalletManager(private val ctx: Context) {
 
     private fun broadcastTx(txHex: String): String {
         val url = "https://blockstream.info/api/tx"
-        val conn = URL(url).openConnection() as HttpURLConnection
-        conn.requestMethod = "POST"
-        conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
-        conn.doOutput = true
-        DataOutputStream(conn.outputStream).use { os ->
-            os.writeBytes("tx=$txHex")
+        var lastError = ""
+        for (attempt in 1..3) {
+            try {
+                val conn = URL(url).openConnection() as HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
+                conn.doOutput = true
+                conn.connectTimeout = 15000
+                conn.readTimeout = 15000
+                DataOutputStream(conn.outputStream).use { os ->
+                    os.writeBytes("tx=$txHex")
+                }
+                val responseCode = conn.responseCode
+                val response = conn.inputStream.bufferedReader().readText()
+                if (responseCode == 200) {
+                    return response.trim()
+                } else {
+                    lastError = "HTTP $responseCode: ${conn.responseMessage} - $response"
+                }
+            } catch (e: Exception) {
+                lastError = e.message ?: "Unknown error"
+            }
+            Thread.sleep(1000)
         }
-        val responseCode = conn.responseCode
-        val response = conn.inputStream.bufferedReader().readText()
-        if (responseCode == 200) {
-            return response.trim()
-        } else {
-            val error = conn.errorStream?.bufferedReader()?.readText() ?: "Unknown error"
-            throw Exception("Broadcast failed: $error")
-        }
+        throw Exception("Broadcast failed after 3 attempts: $lastError")
     }
 
     private fun restoreActiveWallet() {
