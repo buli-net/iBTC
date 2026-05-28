@@ -7,6 +7,7 @@ import org.bitcoinj.crypto.DeterministicKey
 import org.bitcoinj.crypto.HDKeyDerivation
 import org.bitcoinj.crypto.TransactionSignature
 import org.bitcoinj.params.MainNetParams
+import org.bitcoinj.script.Script
 import org.bitcoinj.script.ScriptBuilder
 import org.bitcoinj.wallet.DeterministicSeed
 import org.json.JSONArray
@@ -293,7 +294,7 @@ class WalletManager(private val ctx: Context) {
 
         val key = getPrivateKeyForAddress(seedPhrase, myAddressStr)
 
-        // Thêm inputs và lưu scriptPubKey tương ứng
+        // Thêm inputs và lưu scriptPubKey
         val scripts = mutableListOf<Script>()
         for (utxo in selectedUtxos) {
             val outPoint = Sha256Hash.wrap(utxo.txid)
@@ -306,10 +307,10 @@ class WalletManager(private val ctx: Context) {
         for (i in 0 until tx.inputs.size) {
             val input = tx.inputs[i]
             val scriptPubKey = scripts[i]
-            val sighash = tx.hashForSignature(i, scriptPubKey, Transaction.SigHash.ALL, false)
+            // Sử dụng program (ByteArray) để tránh overload ambiguity
+            val sighash = tx.hashForSignature(i, scriptPubKey.program, Transaction.SigHash.ALL, false)
             val sig = key.sign(sighash)
             val txSig = TransactionSignature(sig, Transaction.SigHash.ALL, false)
-            // Tạo witness với 2 phần: signature và public key
             val witness = TransactionWitness(2)
             witness.setPush(0, txSig.encodeToBitcoin())
             witness.setPush(1, key.pubKey)
