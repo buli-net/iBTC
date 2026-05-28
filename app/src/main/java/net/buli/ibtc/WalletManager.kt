@@ -364,7 +364,7 @@ class WalletManager(private val ctx: Context) {
 
             val name = prefs.getString("${id}_name", "Wallet") ?: "Wallet"
             active = WalletInfo(id, name)
-            locked = true
+            locked = false
         } catch (_: Exception) {}
     }
 
