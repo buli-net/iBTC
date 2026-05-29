@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import org.bitcoinj.core.*
 import org.bitcoinj.crypto.ChildNumber
+import org.bitcoinj.crypto.DeterministicKey
 import org.bitcoinj.crypto.HDKeyDerivation
 import org.bitcoinj.params.MainNetParams
 import org.bitcoinj.wallet.DeterministicSeed
@@ -13,782 +14,338 @@ import java.security.SecureRandom
 import java.util.*
 import kotlin.math.abs
 
-data class WalletInfo(
-val id: String,
-val name: String
-)
+data class WalletInfo(val id: String, val name: String)
+data class TransactionInfo(val txId: String, val amount: Double, val type: String, val time: Date)
+data class FeeRates(val slow: Int, val normal: Int, val fast: Int)
 
-data class TransactionInfo(
-val txId: String,
-val amount: Double,
-val type: String,
-val time: Date
-)
+class WalletManager(private val ctx: Context) {
 
-data class FeeRates(
-val slow: Int,
-val normal: Int,
-val fast: Int
-)
+    private val params = MainNetParams.get()
+    private var active: WalletInfo? = null
+    private var locked = false
+    private var cachedSeed: String? = null
+    private var cachedPassword: CharArray? = null
+    private val prefs = ctx.getSharedPreferences("wallets", Context.MODE_PRIVATE)
+    private var lastPrice = 60000.0
 
-class WalletManager(
-private val ctx: Context
-) {
+    private val DUST_THRESHOLD = 546L
+    private var syncCallback: ((Int, String) -> Unit)? = null
 
-private val params = MainNetParams.get()
-
-private var active: WalletInfo? = null
-
-private var locked = true
-
-private var cachedSeed: String? = null
-private var cachedPassword: CharArray? = null
-
-private val prefs =
-    ctx.getSharedPreferences(
-        "wallets",
-        Context.MODE_PRIVATE
-    )
-
-private val DUST_THRESHOLD = 546L
-
-private var lastPrice = 65000.0
-
-private var syncCallback:
-        ((Int, String) -> Unit)? = null
-
-init {
-    restoreActiveWallet()
-}
-
-fun onProgress(
-    cb: (Int, String) -> Unit
-) {
-    syncCallback = cb
-    SyncService.getInstance()
-        ?.setProgressCallback(cb)
-}
-
-fun hasWallets(): Boolean {
-
-    return prefs.all.keys.any {
-        it.endsWith("_seed")
-    }
-}
-
-fun getActive(): WalletInfo? {
-
-    if (active == null) {
+    init {
         restoreActiveWallet()
     }
 
-    return active
-}
-
-fun getActiveId(): String? {
-    return active?.id
-}
-
-fun unlock(
-    id: String,
-    password: String
-): Boolean {
-
-    return try {
-
-        val enc =
-            prefs.getString(
-                "${id}_seed",
-                ""
-            ) ?: return false
-
-        val seed =
-            CryptoUtil.decrypt(
-                enc,
-                password
-            )
-
-        val name =
-            prefs.getString(
-                "${id}_name",
-                "Wallet"
-            ) ?: "Wallet"
-
-        cachedSeed = seed
-        cachedPassword = password.toCharArray()
-
-        active = WalletInfo(id, name)
-
-        prefs.edit()
-            .putString(
-                "active_wallet_id",
-                id
-            )
-            .commit()
-
-        locked = false
-
-        val intent =
-            Intent(ctx, SyncService::class.java)
-                .apply {
-
-                    putExtra(
-                        "wallet_id",
-                        id
-                    )
-
-                    putExtra(
-                        "seed_phrase",
-                        seed
-                    )
-                }
-
-        if (android.os.Build.VERSION.SDK_INT >=
-            android.os.Build.VERSION_CODES.O
-        ) {
-            ctx.startForegroundService(intent)
-        } else {
-            ctx.startService(intent)
-        }
-
-        SyncService.getInstance()
-            ?.setProgressCallback(syncCallback)
-
-        true
-
-    } catch (e: Exception) {
-        false
+    fun onProgress(cb: (Int, String) -> Unit) {
+        syncCallback = cb
     }
-}
 
-fun lock() {
+    fun hasWallets(): Boolean {
+        return prefs.all.keys.any {
+            it.endsWith("_seed") || it.endsWith("_name") || it.endsWith("_address")
+        }
+    }
 
-    locked = true
+    fun getActive(): WalletInfo? {
+        if (active == null) restoreActiveWallet()
+        return active
+    }
 
-    cachedSeed = null
-    cachedPassword = null
+    fun getActiveId(): String? = active?.id
 
-    ctx.stopService(
-        Intent(
-            ctx,
-            SyncService::class.java
-        )
-    )
-}
+    fun unlock(id: String, password: String): Boolean {
+        return try {
+            val enc = prefs.getString("${id}_seed", "") ?: return false
+            val seed = CryptoUtil.decrypt(enc, password)
+            val name = prefs.getString("${id}_name", "Wallet") ?: "Wallet"
+            cachedSeed = seed
+            cachedPassword = password.toCharArray()
+            active = WalletInfo(id, name)
+            prefs.edit().putString("active_wallet_id", id).commit()
+            locked = false
 
-fun create(
-    name: String,
-    password: String
-): WalletInfo {
-
-    val id =
-        UUID.randomUUID().toString()
-
-    val seed =
-        DeterministicSeed(
-            SecureRandom(),
-            128,
-            ""
-        )
-
-    val mnemonic =
-        seed.mnemonicCode!!
-            .joinToString(" ")
-
-    val walletName =
-        if (name.isBlank())
-            "Ví Bitcoin"
-        else
-            name
-
-    val address =
-        getAddressAtIndex(
-            mnemonic,
-            0
-        )
-
-    val enc =
-        CryptoUtil.encrypt(
-            mnemonic,
-            password
-        )
-
-    prefs.edit()
-        .putString("${id}_name", walletName)
-        .putString("${id}_seed", enc)
-        .putString("${id}_address", address)
-        .commit()
-
-    val info =
-        WalletInfo(id, walletName)
-
-    cachedSeed = mnemonic
-    cachedPassword = password.toCharArray()
-
-    active = info
-
-    prefs.edit()
-        .putString(
-            "active_wallet_id",
-            id
-        )
-        .commit()
-
-    locked = false
-
-    val intent =
-        Intent(ctx, SyncService::class.java)
-            .apply {
-
-                putExtra(
-                    "wallet_id",
-                    id
-                )
-
-                putExtra(
-                    "seed_phrase",
-                    mnemonic
-                )
+            val intent = Intent(ctx, SyncService::class.java).apply {
+                putExtra("wallet_id", id)
+                putExtra("seed_phrase", seed)
             }
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                ctx.startForegroundService(intent)
+            } else {
+                ctx.startService(intent)
+            }
+            SyncService.getInstance()?.setProgressCallback(syncCallback)
 
-    if (android.os.Build.VERSION.SDK_INT >=
-        android.os.Build.VERSION_CODES.O
-    ) {
-        ctx.startForegroundService(intent)
-    } else {
-        ctx.startService(intent)
+            true
+        } catch (e: Exception) {
+            false
+        }
     }
 
-    return info
-}
+    fun lock() {
+        locked = true
+        cachedSeed = null
+        cachedPassword = null
+        ctx.stopService(Intent(ctx, SyncService::class.java))
+    }
 
-fun import(
-    name: String,
-    phrase: String,
-    password: String
-): WalletInfo? {
-
-    return try {
-
-        val clean =
-            phrase.trim()
-                .lowercase()
-                .replace(
-                    Regex("\\s+"),
-                    " "
-                )
-
-        val words = clean.split(" ")
-
-        if (words.size != 12 &&
-            words.size != 24
-        ) {
-            return null
-        }
-
-        DeterministicSeed(
-            words,
-            null,
-            "",
-            0L
-        )
-
-        val id =
-            UUID.randomUUID().toString()
-
-        val walletName =
-            if (name.isBlank())
-                "Imported Wallet"
-            else
-                name
-
-        val address =
-            getAddressAtIndex(
-                clean,
-                0
-            )
-
-        val enc =
-            CryptoUtil.encrypt(
-                clean,
-                password
-            )
-
+    fun create(name: String, password: String): WalletInfo {
+        val id = UUID.randomUUID().toString()
+        val seed = DeterministicSeed(SecureRandom(), 128, "")
+        val mnemonic = seed.mnemonicCode!!.joinToString(" ")
+        val walletName = if (name.isBlank()) "Ví Bitcoin" else name
+        val address = getAddressAtIndex(mnemonic, 0)
+        val enc = CryptoUtil.encrypt(mnemonic, password)
         prefs.edit()
             .putString("${id}_name", walletName)
             .putString("${id}_seed", enc)
             .putString("${id}_address", address)
             .commit()
-
-        val info =
-            WalletInfo(id, walletName)
-
-        cachedSeed = clean
+        val info = WalletInfo(id, walletName)
+        cachedSeed = mnemonic
         cachedPassword = password.toCharArray()
-
         active = info
-
-        prefs.edit()
-            .putString(
-                "active_wallet_id",
-                id
-            )
-            .commit()
-
+        prefs.edit().putString("active_wallet_id", id).commit()
         locked = false
 
-        val intent =
-            Intent(ctx, SyncService::class.java)
-                .apply {
-
-                    putExtra(
-                        "wallet_id",
-                        id
-                    )
-
-                    putExtra(
-                        "seed_phrase",
-                        clean
-                    )
-                }
-
-        if (android.os.Build.VERSION.SDK_INT >=
-            android.os.Build.VERSION_CODES.O
-        ) {
+        val intent = Intent(ctx, SyncService::class.java).apply {
+            putExtra("wallet_id", id)
+            putExtra("seed_phrase", mnemonic)
+        }
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
             ctx.startForegroundService(intent)
         } else {
             ctx.startService(intent)
         }
-
-        info
-
-    } catch (e: Exception) {
-        null
-    }
-}
-
-fun delete(id: String) {
-
-    lock()
-
-    prefs.edit()
-        .remove("${id}_name")
-        .remove("${id}_seed")
-        .remove("${id}_address")
-        .commit()
-}
-
-fun getSeed(): String {
-    return cachedSeed ?: ""
-}
-
-fun getAddress(): String {
-
-    val id =
-        active?.id ?: return ""
-
-    return prefs.getString(
-        "${id}_address",
-        ""
-    ) ?: ""
-}
-
-private fun getWallet(): Wallet? {
-    return SyncService.getInstance()
-        ?.getWallet()
-}
-
-fun getBalance(): Double {
-
-    val wallet =
-        getWallet() ?: return 0.0
-
-    return wallet.getBalance()
-        .toBigDecimal()
-        .toDouble()
-}
-
-fun getTransactions():
-        List<TransactionInfo> {
-
-    val wallet =
-        getWallet() ?: return emptyList()
-
-    val list =
-        mutableListOf<TransactionInfo>()
-
-    for (tx in wallet.getTransactionsByTime()) {
-
-        val value =
-            tx.getValue(wallet)
-
-        val amount =
-            value.toBigDecimal()
-                .toDouble()
-
-        val type =
-            if (amount >= 0)
-                "RECEIVE"
-            else
-                "SEND"
-
-        list.add(
-            TransactionInfo(
-                tx.hashAsString,
-                abs(amount),
-                type,
-                Date(tx.updateTime.time)
-            )
-        )
+        return info
     }
 
-    list.sortByDescending {
-        it.time
-    }
+    fun import(name: String, phrase: String, password: String): WalletInfo? {
+        return try {
+            val clean = phrase.trim().lowercase().replace(Regex("\\s+"), " ")
+            val words = clean.split(" ")
+            if (words.size != 12 && words.size != 24) return null
+            DeterministicSeed(words, null, "", 0L)
 
-    return list
-}
+            val id = UUID.randomUUID().toString()
+            val walletName = if (name.isBlank()) "Imported Wallet" else name
+            val address = getAddressAtIndex(clean, 0)
+            val enc = CryptoUtil.encrypt(clean, password)
+            prefs.edit()
+                .putString("${id}_name", walletName)
+                .putString("${id}_seed", enc)
+                .putString("${id}_address", address)
+                .commit()
+            val info = WalletInfo(id, walletName)
+            cachedSeed = clean
+            cachedPassword = password.toCharArray()
+            active = info
+            prefs.edit().putString("active_wallet_id", id).commit()
+            locked = false
 
-fun price(): Double {
-    return lastPrice
-}
-
-fun getFeeRates(): FeeRates {
-
-    return FeeRates(
-        5,
-        10,
-        20
-    )
-}
-
-fun isWalletSynced(): Boolean {
-
-    return SyncService.getInstance()
-        ?.isWalletSynced()
-        ?: false
-}
-
-fun isValidAddress(
-    address: String
-): Boolean {
-
-    return try {
-
-        Address.fromString(
-            params,
-            address
-        )
-
-        true
-
-    } catch (e: Exception) {
-        false
-    }
-}
-
-fun estimateFee(
-    to: String,
-    amountBTC: Double,
-    feeRateSatVb: Int
-): Double {
-
-    val wallet =
-        getWallet()
-            ?: return 0.00001
-
-    val utxos =
-        wallet.getUTXOs()
-
-    if (utxos.isEmpty()) {
-        return 0.00001
-    }
-
-    val txSize =
-        (utxos.size * 68) +
-                (2 * 31) +
-                11
-
-    return (txSize * feeRateSatVb)
-        .toDouble() / 1e8
-}
-
-fun send(
-    to: String,
-    amountBTC: Double,
-    feeRateSatVb: Int
-): String {
-
-    if (!isWalletSynced()) {
-        throw Exception(
-            "Blockchain chưa sync xong"
-        )
-    }
-
-    val wallet =
-        getWallet()
-            ?: throw Exception(
-                "Wallet chưa sẵn sàng"
-            )
-
-    val peerGroup =
-        SyncService.getInstance()
-            ?.getPeerGroup()
-            ?: throw Exception(
-                "PeerGroup null"
-            )
-
-    if (peerGroup.connectedPeers.isEmpty()) {
-        throw Exception(
-            "Chưa kết nối peer"
-        )
-    }
-
-    val amountSat =
-        (amountBTC * 100000000L).toLong()
-
-    if (amountSat <= DUST_THRESHOLD) {
-        throw Exception(
-            "Amount quá nhỏ"
-        )
-    }
-
-    val coin =
-        Coin.valueOf(amountSat)
-
-    val spendable =
-        wallet.getBalance(
-            Wallet.BalanceType
-                .AVAILABLE_SPENDABLE
-        )
-
-    if (spendable.isLessThan(coin)) {
-        throw Exception(
-            "Không đủ số dư"
-        )
-    }
-
-    val address =
-        Address.fromString(
-            params,
-            to
-        )
-
-    val req =
-        SendRequest.to(
-            address,
-            coin
-        )
-
-    req.feePerKb =
-        Coin.valueOf(
-            feeRateSatVb * 1000L
-        )
-
-    req.ensureMinRequiredFee = true
-
-    req.signInputs = true
-
-    req.shuffleOutputs = true
-
-    req.changeAddress =
-        wallet.currentReceiveAddress()
-
-    try {
-
-        wallet.completeTx(req)
-
-    } catch (e: Exception) {
-
-        throw Exception(
-            "Không tạo được transaction: ${e.message}"
-        )
-    }
-
-    try {
-
-        wallet.commitTx(req.tx)
-
-    } catch (e: Exception) {
-
-        throw Exception(
-            "Commit tx lỗi: ${e.message}"
-        )
-    }
-
-    try {
-
-        peerGroup
-            .broadcastTransaction(req.tx)
-            .future()
-            .get()
-
-    } catch (e: Exception) {
-
-        throw Exception(
-            "Broadcast lỗi: ${e.message}"
-        )
-    }
-
-    return req.tx.txId.toString()
-}
-
-private fun getAddressAtIndex(
-    seedPhrase: String,
-    index: Int
-): String {
-
-    val seed =
-        DeterministicSeed(
-            seedPhrase.split(" "),
-            null,
-            "",
-            0L
-        )
-
-    val seedBytes =
-        seed.seedBytes!!
-
-    var key =
-        HDKeyDerivation
-            .createMasterPrivateKey(seedBytes)
-
-    val path = listOf(
-        ChildNumber(84, true),
-        ChildNumber(0, true),
-        ChildNumber(0, true),
-        ChildNumber(0, false),
-        ChildNumber(index, false)
-    )
-
-    for (p in path) {
-        key =
-            HDKeyDerivation
-                .deriveChildKey(key, p)
-    }
-
-    return SegwitAddress
-        .fromKey(params, key)
-        .toString()
-}
-
-private fun restoreActiveWallet() {
-
-    try {
-
-        var id =
-            prefs.getString(
-                "active_wallet_id",
-                null
-            )
-
-        if (id == null) {
-
-            val seedKey =
-                prefs.all.keys.firstOrNull {
-                    it.endsWith("_seed")
-                }
-
-            if (seedKey != null) {
-
-                id =
-                    seedKey.removeSuffix("_seed")
-
-                prefs.edit()
-                    .putString(
-                        "active_wallet_id",
-                        id
-                    )
-                    .commit()
+            val intent = Intent(ctx, SyncService::class.java).apply {
+                putExtra("wallet_id", id)
+                putExtra("seed_phrase", clean)
             }
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                ctx.startForegroundService(intent)
+            } else {
+                ctx.startService(intent)
+            }
+            info
+        } catch (e: Exception) {
+            null
         }
-
-        if (id == null) {
-            return
-        }
-
-        val name =
-            prefs.getString(
-                "${id}_name",
-                "Wallet"
-            ) ?: "Wallet"
-
-        active =
-            WalletInfo(id, name)
-
-    } catch (_: Exception) {
     }
-}
 
-fun init() {}
-
-fun stop() {
-    lock()
-}
-
-fun isLocked(): Boolean {
-    return locked
-}
-
-fun changePassword(
-    oldPassword: String,
-    newPassword: String
-): Boolean {
-
-    return try {
-
-        val id =
-            active?.id ?: return false
-
-        val enc =
-            prefs.getString(
-                "${id}_seed",
-                null
-            ) ?: return false
-
-        val seed =
-            CryptoUtil.decrypt(
-                enc,
-                oldPassword
-            )
-
-        val newEnc =
-            CryptoUtil.encrypt(
-                seed,
-                newPassword
-            )
-
+    fun delete(id: String) {
+        lock()
         prefs.edit()
-            .putString(
-                "${id}_seed",
-                newEnc
-            )
+            .remove("${id}_name")
+            .remove("${id}_seed")
+            .remove("${id}_attempts")
+            .remove("${id}_address")
             .commit()
-
-        cachedPassword =
-            newPassword.toCharArray()
-
-        true
-
-    } catch (e: Exception) {
-        false
     }
-}
 
-fun rename(newName: String) {
+    fun getSeed(): String = cachedSeed ?: ""
 
-    val id =
-        active?.id ?: return
+    fun getAddress(): String {
+        val id = active?.id ?: return ""
+        return prefs.getString("${id}_address", "") ?: ""
+    }
 
-    prefs.edit()
-        .putString(
-            "${id}_name",
-            newName
+    // ========== SPV methods ==========
+    private fun getWallet(): Wallet? = SyncService.getInstance()?.getWallet()
+
+    fun getBalance(): Double {
+        val wallet = getWallet() ?: return 0.0
+        return wallet.getBalance().value / 1e8
+    }
+
+    fun getTransactions(): List<TransactionInfo> {
+        val wallet = getWallet() ?: return emptyList()
+        val list = mutableListOf<TransactionInfo>()
+        for (tx in wallet.getTransactionsByTime()) {
+            val value = tx.getValue(wallet)
+            val amount = value.value / 1e8
+            val type = if (amount > 0) "RECEIVE" else "SEND"
+            list.add(TransactionInfo(tx.hashAsString, abs(amount), type, Date(tx.updateTime.time)))
+        }
+        val pending = wallet.getTransactionPool().getPendingTransactions()
+        for ((_, tx) in pending) {
+            val value = tx.getValue(wallet)
+            val amount = value.value / 1e8
+            val type = if (amount > 0) "RECEIVE" else "SEND"
+            list.add(TransactionInfo(tx.hashAsString, abs(amount), "$type (pending)", Date(tx.updateTime.time)))
+        }
+        list.sortByDescending { it.time }
+        return list
+    }
+
+    fun price(): Double = lastPrice
+    fun getFeeRates(): FeeRates = FeeRates(5, 10, 20)
+
+    fun estimateFee(to: String, amountBTC: Double, feeRateSatVb: Int): Double {
+        val wallet = getWallet() ?: return (68 + 62 + 11) * feeRateSatVb / 1e8
+        val utxos = wallet.getUTXOs()
+        if (utxos.isEmpty()) return (68 + 62 + 11) * feeRateSatVb / 1e8
+        val needSat = (amountBTC * 1e8).toLong()
+        var selectedSize = 0
+        var totalSat = 0L
+        for (utxo in utxos) {
+            totalSat += utxo.value.value
+            selectedSize++
+            val approxFee = (selectedSize * 68 + 2 * 31 + 11) * feeRateSatVb
+            if (totalSat >= needSat + approxFee) break
+        }
+        val txSize = selectedSize * 68 + 2 * 31 + 11
+        return (txSize * feeRateSatVb).toDouble() / 1e8
+    }
+
+    fun isWalletSynced(): Boolean = SyncService.getInstance()?.isWalletSynced() ?: false
+
+    fun isValidAddress(address: String): Boolean {
+        return try {
+            Address.fromString(params, address)
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    // ========== SEND (fix missing money) ==========
+    fun send(to: String, amountBTC: Double, feeRateSatVb: Int): String {
+        if (feeRateSatVb < 1 || feeRateSatVb > 500) {
+            throw Exception("Fee rate không hợp lệ (1-500 sat/vB)")
+        }
+        val wallet = getWallet() ?: throw Exception("Wallet chưa sẵn sàng, vui lòng đợi đồng bộ")
+        val peerGroup = SyncService.getInstance()?.getPeerGroup()
+            ?: throw Exception("PeerGroup null, chưa kết nối mạng")
+
+        if (peerGroup.connectedPeers.isEmpty()) {
+            throw Exception("Chưa kết nối peer nào, không thể broadcast")
+        }
+
+        val amountSat = (amountBTC * 1e8).toLong()
+        if (amountSat <= DUST_THRESHOLD) {
+            throw Exception("Số tiền quá nhỏ (dưới 546 satoshi)")
+        }
+
+        val coin = Coin.valueOf(amountSat)
+        val balance = wallet.getBalance(Wallet.BalanceType.AVAILABLE_SPENDABLE)
+        if (balance.isLessThan(coin)) {
+            throw Exception("Không đủ số dư (cần ${amountBTC} BTC, có ${balance.value / 1e8} BTC)")
+        }
+
+        val address = Address.fromString(params, to)
+        val req = SendRequest.to(address, coin)
+
+        req.feePerKb = Coin.valueOf(feeRateSatVb * 1000L)
+        req.ensureMinRequiredFee = true
+        req.signInputs = true
+        req.shuffleOutputs = true
+        req.changeAddress = wallet.currentReceiveAddress()
+
+        // Cho phép chi tiêu UTXO chưa confirm (tránh missing money)
+        wallet.allowSpendingUnconfirmedTransactions()
+
+        // Tạo và ký giao dịch
+        try {
+            wallet.completeTx(req)
+        } catch (e: Exception) {
+            throw Exception("Không tạo được transaction: ${e.message}")
+        }
+
+        // Broadcast trước, sau đó commit vào wallet để tránh race condition
+        try {
+            val broadcastFuture = peerGroup.broadcastTransaction(req.tx)
+            broadcastFuture.future().get()  // chờ broadcast thành công
+        } catch (e: Exception) {
+            throw Exception("Broadcast lỗi: ${e.message}")
+        }
+
+        // Commit vào wallet sau khi broadcast thành công
+        try {
+            wallet.commitTx(req.tx)
+        } catch (e: Exception) {
+            // Commit có thể thất bại nếu tx đã có, nhưng broadcast đã thành công
+            // Ném exception để báo nhưng thực tế giao dịch đã gửi
+            throw Exception("Commit tx lỗi (nhưng giao dịch đã broadcast): ${e.message}")
+        }
+
+        return req.tx.txId.toString()
+    }
+
+    private fun getAddressAtIndex(seedPhrase: String, index: Int): String {
+        val seed = DeterministicSeed(seedPhrase.split(" "), null, "", 0L)
+        val seedBytes = seed.seedBytes!!
+        var key = HDKeyDerivation.createMasterPrivateKey(seedBytes)
+        val path = listOf(
+            ChildNumber(84, true),
+            ChildNumber(0, true),
+            ChildNumber(0, true),
+            ChildNumber(0, false),
+            ChildNumber(index, false)
         )
-        .commit()
+        for (p in path) key = HDKeyDerivation.deriveChildKey(key, p)
+        return SegwitAddress.fromKey(params, key).toString()
+    }
 
-    active =
-        WalletInfo(id, newName)
-}
+    private fun restoreActiveWallet() {
+        try {
+            var id = prefs.getString("active_wallet_id", null)
+            if (id == null) {
+                val seedKey = prefs.all.keys.firstOrNull { it.endsWith("_seed") }
+                if (seedKey != null) {
+                    id = seedKey.removeSuffix("_seed")
+                    prefs.edit().putString("active_wallet_id", id).commit()
+                }
+            }
+            if (id == null) return
+            val name = prefs.getString("${id}_name", "Wallet") ?: "Wallet"
+            active = WalletInfo(id, name)
+            locked = true
+        } catch (_: Exception) {}
+    }
 
+    fun init() {}
+    fun stop() { lock() }
+    fun isLocked(): Boolean = locked
+
+    fun changePassword(oldPassword: String, newPassword: String): Boolean {
+        return try {
+            val id = active?.id ?: return false
+            val enc = prefs.getString("${id}_seed", null) ?: return false
+            val seed = CryptoUtil.decrypt(enc, oldPassword)
+            val newEnc = CryptoUtil.encrypt(seed, newPassword)
+            prefs.edit().putString("${id}_seed", newEnc).commit()
+            cachedPassword = newPassword.toCharArray()
+            true
+        } catch (e: Exception) { false }
+    }
+
+    fun rename(newName: String) {
+        val id = active?.id ?: return
+        prefs.edit().putString("${id}_name", newName).commit()
+        active = WalletInfo(id, newName)
+    }
 }
