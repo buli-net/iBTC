@@ -2,7 +2,6 @@ package net.buli.ibtc
 
 import android.content.Context
 import android.content.Intent
-import android.util.Log
 import org.bitcoinj.core.*
 import org.bitcoinj.crypto.ChildNumber
 import org.bitcoinj.crypto.DeterministicKey
@@ -11,11 +10,6 @@ import org.bitcoinj.params.MainNetParams
 import org.bitcoinj.wallet.DeterministicSeed
 import org.bitcoinj.wallet.SendRequest
 import org.bitcoinj.wallet.Wallet
-import org.json.JSONArray
-import org.json.JSONObject
-import java.io.DataOutputStream
-import java.net.HttpURLConnection
-import java.net.URL
 import java.security.SecureRandom
 import java.util.*
 import kotlin.math.abs
@@ -32,7 +26,7 @@ class WalletManager(private val ctx: Context) {
     private var cachedSeed: String? = null
     private var cachedPassword: CharArray? = null
     private val prefs = ctx.getSharedPreferences("wallets", Context.MODE_PRIVATE)
-    private var lastPrice = prefs.getFloat("last_price", 65000f).toDouble()
+    private var lastPrice = 60000.0   // fallback price
 
     private val DUST_THRESHOLD = 546L
     private var syncCallback: ((Int, String) -> Unit)? = null
@@ -182,98 +176,73 @@ class WalletManager(private val ctx: Context) {
         return prefs.getString("${id}_address", "") ?: ""
     }
 
+    // ================== SPV METHODS ==================
+    private fun getWallet(): Wallet? = SyncService.getInstance()?.getWallet()
+
     fun getBalance(): Double {
-        return try {
-            val address = getAddress()
-            if (address.isBlank()) return 0.0
-            val json = httpGet("https://blockstream.info/api/address/$address")
-            if (json.isBlank()) return 0.0
-            val obj = JSONObject(json)
-            val chainStats = obj.getJSONObject("chain_stats")
-            val funded = chainStats.getLong("funded_txo_sum")
-            val spent = chainStats.getLong("spent_txo_sum")
-            (funded - spent) / 100000000.0
-        } catch (e: Exception) { 0.0 }
+        val wallet = getWallet() ?: return 0.0
+        return wallet.getBalance().toBigDecimal().toDouble()
     }
 
     fun getTransactions(): List<TransactionInfo> {
-        return try {
-            val address = getAddress()
-            if (address.isBlank()) return emptyList()
-            val json = httpGet("https://blockstream.info/api/address/$address/txs")
-            if (json.isBlank()) return emptyList()
-            val arr = JSONArray(json)
-            val list = mutableListOf<TransactionInfo>()
-            for (i in 0 until minOf(arr.length(), 20)) {
-                val tx = arr.getJSONObject(i)
-                val txId = tx.optString("txid", "")
-                val status = tx.optJSONObject("status")
-                val blockTime = status?.optLong("block_time", System.currentTimeMillis() / 1000) ?: (System.currentTimeMillis() / 1000)
-                var received = 0L
-                var sent = 0L
-                val vout = tx.optJSONArray("vout")
-                if (vout != null) {
-                    for (j in 0 until vout.length()) {
-                        val out = vout.getJSONObject(j)
-                        if (out.optString("scriptpubkey_address") == address) {
-                            received += out.optLong("value", 0L)
-                        }
-                    }
-                }
-                val vin = tx.optJSONArray("vin")
-                if (vin != null) {
-                    for (j in 0 until vin.length()) {
-                        val prev = vin.getJSONObject(j).optJSONObject("prevout")
-                        if (prev?.optString("scriptpubkey_address") == address) {
-                            sent += prev.optLong("value", 0L)
-                        }
-                    }
-                }
-                val net = received - sent
-                val btcAmount = abs(net.toDouble()) / 100000000.0
-                val type = if (net >= 0) "RECEIVE" else "SEND"
-                list.add(TransactionInfo(txId, btcAmount, type, Date(blockTime * 1000)))
-            }
-            list
-        } catch (e: Exception) { emptyList() }
+        val wallet = getWallet() ?: return emptyList()
+        val list = mutableListOf<TransactionInfo>()
+        for (tx in wallet.getTransactionsByTime()) {
+            val value = tx.getValue(wallet)
+            val amount = value.toBigDecimal().toDouble()
+            val type = if (amount > 0) "RECEIVE" else "SEND"
+            list.add(TransactionInfo(
+                tx.hashAsString,
+                abs(amount),
+                type,
+                Date(tx.updateTime.time)
+            ))
+        }
+        for (tx in wallet.getTransactionPool().pending) {
+            val value = tx.getValue(wallet)
+            val amount = value.toBigDecimal().toDouble()
+            val type = if (amount > 0) "RECEIVE" else "SEND"
+            list.add(TransactionInfo(
+                tx.hashAsString,
+                abs(amount),
+                "$type (pending)",
+                Date(tx.updateTime.time)
+            ))
+        }
+        list.sortByDescending { it.time }
+        return list
     }
 
+    // ================== PRICE & FEE (chỉ lấy giá từ API, có thể bỏ) ==================
     fun price(): Double {
-        return try {
-            val json = httpGet("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT")
-            if (json.isBlank()) return lastPrice
-            val rate = JSONObject(json).getString("price").toDouble()
-            lastPrice = rate
-            prefs.edit().putFloat("last_price", rate.toFloat()).commit()
-            rate
-        } catch (_: Exception) { lastPrice }
+        // Giá mặc định, có thể cập nhật thủ công từ nguồn khác
+        return lastPrice
     }
 
     fun getFeeRates(): FeeRates {
-        return try {
-            val json = httpGet("https://mempool.space/api/v1/fees/recommended")
-            if (json.isNotBlank()) {
-                val obj = JSONObject(json)
-                FeeRates(
-                    slow = maxOf(obj.optInt("hourFee", 5), 1),
-                    normal = maxOf(obj.optInt("halfHourFee", 10), 1),
-                    fast = maxOf(obj.optInt("fastestFee", 20), 1)
-                )
-            } else {
-                FeeRates(5, 10, 20)
-            }
-        } catch (e: Exception) {
-            FeeRates(5, 10, 20)
-        }
+        // Giả sử phí mặc định, có thể lấy từ API nếu muốn
+        return FeeRates(5, 10, 20)
     }
 
     fun estimateFee(to: String, amountBTC: Double, feeRateSatVb: Int): Double {
-        return (68 + 62 + 11) * feeRateSatVb / 1e8
+        val wallet = getWallet()
+        if (wallet == null) return (68 + 62 + 11) * feeRateSatVb / 1e8
+        val utxos = wallet.getUTXOs()
+        if (utxos.isEmpty()) return (68 + 62 + 11) * feeRateSatVb / 1e8
+        val needSat = (amountBTC * 1e8).toLong()
+        var selectedSize = 0
+        var totalSat = 0L
+        for (utxo in utxos) {
+            totalSat += utxo.value.value
+            selectedSize++
+            val approxFee = (selectedSize * 68 + 2 * 31 + 11) * feeRateSatVb
+            if (totalSat >= needSat + approxFee) break
+        }
+        val txSize = selectedSize * 68 + 2 * 31 + 11
+        return (txSize * feeRateSatVb).toDouble() / 1e8
     }
 
-    fun isWalletSynced(): Boolean {
-        return SyncService.getInstance()?.isWalletSynced() ?: false
-    }
+    fun isWalletSynced(): Boolean = SyncService.getInstance()?.isWalletSynced() ?: false
 
     fun isValidAddress(address: String): Boolean {
         return try {
@@ -284,11 +253,7 @@ class WalletManager(private val ctx: Context) {
         }
     }
 
-    private fun getWallet(): Wallet? {
-        return SyncService.getInstance()?.getWallet()
-    }
-
-    // ================== SEND ==================
+    // ================== SEND (SPV only) ==================
     fun send(to: String, amountBTC: Double, feeRateSatVb: Int): String {
         if (feeRateSatVb < 1 || feeRateSatVb > 500) {
             throw Exception("Fee rate không hợp lệ (1-500 sat/vB)")
@@ -311,40 +276,12 @@ class WalletManager(private val ctx: Context) {
             ?: throw Exception("Send failed, không tạo được transaction")
 
         val peerGroup = SyncService.getInstance()?.getPeerGroup()
-        if (peerGroup != null && peerGroup.connectedPeers.isNotEmpty()) {
-            peerGroup.broadcastTransaction(result.tx).future()
-        } else {
-            val txHex = Utils.HEX.encode(result.tx.bitcoinSerialize())
-            broadcastViaApi(txHex)
+        if (peerGroup == null || peerGroup.connectedPeers.isEmpty()) {
+            throw Exception("Không có kết nối peer nào, không thể broadcast giao dịch. Vui lòng thử lại sau.")
         }
+        peerGroup.broadcastTransaction(result.tx).future()
 
         return result.tx.hashAsString
-    }
-
-    private fun broadcastViaApi(txHex: String): String {
-        val url = "https://blockstream.info/api/tx"
-        var conn: HttpURLConnection? = null
-        try {
-            conn = URL(url).openConnection() as HttpURLConnection
-            conn.requestMethod = "POST"
-            conn.doOutput = true
-            conn.setRequestProperty("Content-Type", "text/plain")
-            conn.connectTimeout = 15000
-            conn.readTimeout = 15000
-            DataOutputStream(conn.outputStream).use { os -> os.writeBytes(txHex) }
-            val responseCode = conn.responseCode
-            val response = if (responseCode in 200..299) {
-                conn.inputStream.bufferedReader().readText()
-            } else {
-                conn.errorStream?.bufferedReader()?.readText() ?: "Unknown error"
-            }
-            if (responseCode in 200..299) return response.trim()
-            else throw Exception(response)
-        } catch (e: Exception) {
-            throw Exception("Broadcast failed: ${e.message}")
-        } finally {
-            conn?.disconnect()
-        }
     }
 
     private fun getAddressAtIndex(seedPhrase: String, index: Int): String {
@@ -377,17 +314,6 @@ class WalletManager(private val ctx: Context) {
             active = WalletInfo(id, name)
             locked = true
         } catch (_: Exception) {}
-    }
-
-    private fun httpGet(url: String): String {
-        return try {
-            val conn = URL(url).openConnection() as HttpURLConnection
-            conn.requestMethod = "GET"
-            conn.connectTimeout = 10000
-            conn.readTimeout = 10000
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0")
-            conn.inputStream.bufferedReader().use { it.readText() }
-        } catch (e: Exception) { "" }
     }
 
     fun init() {}
