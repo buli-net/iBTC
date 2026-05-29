@@ -25,6 +25,7 @@ class SyncService : Service() {
     private val NOTIFICATION_ID = 1
     private var progressCallback: ((Int, String) -> Unit)? = null
     private var currentWalletId: String = ""
+    private var isSynced = false  // thêm biến để theo dõi trạng thái sync
 
     companion object {
         private var instance: SyncService? = null
@@ -108,6 +109,7 @@ class SyncService : Service() {
                 }
 
                 override fun doneDownload() {
+                    isSynced = true  // đánh dấu đã sync xong
                     updateNotification("Đã đồng bộ xong")
                     progressCallback?.invoke(100, "Đã đồng bộ blockchain")
                 }
@@ -131,11 +133,8 @@ class SyncService : Service() {
     fun getPeerGroup() = kit?.peerGroup()
     fun getWalletId(): String = currentWalletId
 
-    // Hàm kiểm tra đồng bộ (thay thế isSynced)
-    fun isWalletSynced(): Boolean {
-        val pg = kit?.peerGroup()
-        return pg != null && pg.downloadPct >= 100.0 && (kit?.wallet()?.isConsistent() == true)
-    }
+    // Kiểm tra đồng bộ dựa trên biến isSynced từ callback
+    fun isWalletSynced(): Boolean = isSynced
 
     override fun onDestroy() {
         super.onDestroy()
