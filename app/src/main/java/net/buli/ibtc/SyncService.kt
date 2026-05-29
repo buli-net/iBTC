@@ -87,7 +87,6 @@ class SyncService : Service() {
 
             val walletFile = File(dir, walletId)
 
-            // Nếu file wallet chưa tồn tại, tạo mới từ seed
             if (!walletFile.exists()) {
                 val words = seedPhrase.trim().lowercase().split(" ")
                 if (words.size == 12 || words.size == 24) {
@@ -131,6 +130,12 @@ class SyncService : Service() {
     fun getWallet(): Wallet? = kit?.wallet()
     fun getPeerGroup() = kit?.peerGroup()
     fun getWalletId(): String = currentWalletId
+
+    // Hàm kiểm tra đồng bộ (thay thế isSynced)
+    fun isWalletSynced(): Boolean {
+        val pg = kit?.peerGroup()
+        return pg != null && pg.downloadPct >= 100.0 && (kit?.wallet()?.isConsistent() == true)
+    }
 
     override fun onDestroy() {
         super.onDestroy()
