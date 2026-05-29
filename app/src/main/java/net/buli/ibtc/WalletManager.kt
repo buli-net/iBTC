@@ -238,7 +238,7 @@ class WalletManager(private val ctx: Context) {
         return (68 + 62 + 11) * feeRateSatVb / 1e8
     }
 
-    // ================== SEND ĐÃ SỬA (BỎ useSegwit) ==================
+    // ================== SEND ĐÃ SỬA ==================
     fun send(to: String, amountBTC: Double, feeRateSatVb: Int): String {
         if (feeRateSatVb < 1 || feeRateSatVb > 500) {
             throw Exception("Fee rate không hợp lệ (1-500 sat/vB)")
@@ -254,19 +254,16 @@ class WalletManager(private val ctx: Context) {
         val address = Address.fromString(params, to)
         val req = SendRequest.to(address, coin)
 
-        // FIX: fee đúng đơn vị sat/kB
         req.feePerKb = Coin.valueOf(feeRateSatVb * 1000L)
-
-        // FIX: set change address (bitcoinj sẽ tự chọn nếu không set, nhưng set để chắc chắn)
         req.changeAddress = wallet.currentReceiveAddress()
-
         req.ensureMinRequiredFee = true
 
         val result = wallet.sendCoins(req)
             ?: throw Exception("Send failed, không tạo được transaction")
 
         val peerGroup = WalletKitService.peerGroup()
-        if (peerGroup != null && peerGroup.connectedPeers > 0) {
+        // SỬA LỖI: connectedPeers là List, cần lấy size
+        if (peerGroup != null && peerGroup.connectedPeers.isNotEmpty()) {
             peerGroup.broadcastTransaction(result.tx).future()
         } else {
             val txHex = Utils.HEX.encode(result.tx.bitcoinSerialize())
