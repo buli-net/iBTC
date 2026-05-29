@@ -33,7 +33,6 @@ class WalletManager(private val ctx: Context) {
     private val prefs = ctx.getSharedPreferences("wallets", Context.MODE_PRIVATE)
     private var lastPrice = prefs.getFloat("last_price", 65000f).toDouble()
 
-    // Dust threshold cho segwit output (546 satoshi)
     private val DUST_THRESHOLD = 546L
 
     init {
@@ -272,16 +271,22 @@ class WalletManager(private val ctx: Context) {
 
     fun estimateFee(to: String, amountBTC: Double, feeRateSatVb: Int): Double {
         return try {
-            val utxos = getUtxos(getAddress())
+            val address = getAddress()
+            if (address.isBlank()) return 0.0
+            val utxos = getUtxos(address)
+            if (utxos.isEmpty()) return 0.0
             val needSat = (amountBTC * 1e8).toLong()
+            if (needSat <= 0) return 0.0
             val (selected, _) = selectUtxos(utxos, needSat, feeRateSatVb)
             if (selected.isEmpty()) return 0.0
+            // Kích thước ước lượng: mỗi input segwit ~68 bytes, 2 output (nhận + change) ~31 bytes mỗi output
             val inputSize = selected.size * 68
-            val outputSize = 2 * 31  // 1 output cho người nhận + 1 change (nếu có)
+            val outputSize = 2 * 31
             val txSize = inputSize + outputSize + 11
-            (txSize * feeRateSatVb).toDouble() / 1e8
+            val feeSat = txSize * feeRateSatVb
+            feeSat.toDouble() / 1e8
         } catch (e: Exception) {
-            // fallback: giả sử 1 input, 2 outputs
+            Log.e("WalletManager", "estimateFee error: ${e.message}")
             (68 + 62 + 11) * feeRateSatVb / 1e8
         }
     }
@@ -307,27 +312,25 @@ class WalletManager(private val ctx: Context) {
         val destAddress = Address.fromString(params, to)
         tx.addOutput(Coin.valueOf(needSat), destAddress)
 
-        // Tính toán kích thước giao dịch và fee tạm thời
+        // Tính toán tạm thời fee và change
         var txSize = tx.bitcoinSerialize().size + selectedUtxos.size * 68
         var feeSat = (txSize * feeRateSatVb).toLong()
         var changeSat = totalInputSat - needSat - feeSat
-
-        // Nếu change nhỏ hơn dust, gộp vào fee (không tạo output change)
         var hasChange = false
+
         if (changeSat >= DUST_THRESHOLD) {
             hasChange = true
         } else if (changeSat > 0) {
-            // change nhỏ hơn dust -> cộng vào fee
+            // Gộp change nhỏ vào fee
             feeSat += changeSat
             changeSat = 0
-            // Cập nhật lại kích thước tx (không có output change)
+            // Tính lại kích thước (không có output change)
             txSize = tx.bitcoinSerialize().size + selectedUtxos.size * 68
             feeSat = (txSize * feeRateSatVb).toLong()
             changeSat = totalInputSat - needSat - feeSat
             if (changeSat >= DUST_THRESHOLD) {
                 hasChange = true
             } else if (changeSat > 0) {
-                // vẫn còn change nhỏ -> cộng tiếp vào fee
                 feeSat += changeSat
                 changeSat = 0
                 hasChange = false
@@ -337,6 +340,8 @@ class WalletManager(private val ctx: Context) {
         if (hasChange && changeSat > 0) {
             val changeAddress = Address.fromString(params, myAddressStr)
             tx.addOutput(Coin.valueOf(changeSat), changeAddress)
+        } else if (changeSat < 0) {
+            throw Exception("Số dư không đủ để trả phí")
         }
 
         // Lấy private key
@@ -363,6 +368,7 @@ class WalletManager(private val ctx: Context) {
             input.setWitness(witness)
         }
 
+        // Verify trước khi broadcast
         tx.verify()
         val txHex = Utils.HEX.encode(tx.bitcoinSerialize())
         Log.d("WalletManager", "TX hex: $txHex")
