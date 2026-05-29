@@ -4,6 +4,7 @@ import android.content.Context
 import org.bitcoinj.core.listeners.DownloadProgressTracker
 import org.bitcoinj.kits.WalletAppKit
 import org.bitcoinj.params.MainNetParams
+import org.bitcoinj.wallet.DeterministicSeed
 import java.io.File
 
 object WalletKitService {
@@ -22,10 +23,13 @@ object WalletKitService {
             }
         }
 
-        // Nếu có seed, khôi phục wallet (override file cũ nếu cần)
-        if (seedPhrase != null && !file.exists()) {
-            val seed = DeterministicSeed(seedPhrase.split(" "), null, "", 0L)
-            kit?.wallet()?.addKeyChain(seed)
+        // Nếu có seed, khôi phục wallet (dùng restoreFromSeed thay vì addKeyChain)
+        if (seedPhrase != null) {
+            val words = seedPhrase.trim().lowercase().split(" ")
+            if (words.size == 12 || words.size == 24) {
+                val seed = DeterministicSeed(words, null, "", 0L)
+                kit?.wallet()?.restoreFromSeed(seed)
+            }
         }
 
         kit?.setBlockingStartup(false)
