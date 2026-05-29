@@ -50,7 +50,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var txListView: ListView
     private lateinit var walletNameText: TextView
     private lateinit var statsContainer: LinearLayout
-    private lateinit var spvStatusText: TextView   // Dòng hiển thị trạng thái SPV
+    private lateinit var spvStatusText: TextView
+    private lateinit var spvProgressBar: ProgressBar   // thanh progress riêng cho SPV
     private val statBars = mutableMapOf<String, ProgressBar>()
     private val statTexts = mutableMapOf<String, TextView>()
     private var isSyncing = false
@@ -467,12 +468,20 @@ class MainActivity : AppCompatActivity() {
             max = 100
             progress = 0
         }
-        // SPV status - thêm dòng này
+        // SPV status text
         spvStatusText = TextView(this).apply {
             text = "SPV: Đang khởi động..."
             textSize = 12f
             setTextColor(Color.GRAY)
-            setPadding(0, 4, 0, 8)
+            setPadding(0, 4, 0, 4)
+        }
+        // SPV progress bar riêng
+        spvProgressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 100
+            progress = 0
+            progressTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#F7931A"))
+            scaleY = 2f
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = 4; bottomMargin = 8 }
         }
         addressText = TextView(this).apply {
             textSize = 12f
@@ -542,7 +551,8 @@ class MainActivity : AppCompatActivity() {
         rootLayout.addView(rateText)
         rootLayout.addView(syncText)
         rootLayout.addView(syncProgressBar)
-        rootLayout.addView(spvStatusText) // thêm dòng này
+        rootLayout.addView(spvStatusText)
+        rootLayout.addView(spvProgressBar)   // thêm thanh progress SPV
         rootLayout.addView(addressText)
         rootLayout.addView(Space(this).apply { layoutParams = LinearLayout.LayoutParams(1, 20) })
         rootLayout.addView(btnRow1)
@@ -575,11 +585,11 @@ class MainActivity : AppCompatActivity() {
         }
         btnSettings.setOnClickListener { showSettings() }
 
-        // Cập nhật SPV status từ walletManager
+        // Cập nhật trạng thái SPV
         walletManager.onProgress { pct, txt ->
             runOnUiThread {
                 spvStatusText.text = "SPV: $txt"
-                syncProgressBar.progress = pct
+                spvProgressBar.progress = pct
             }
         }
 
