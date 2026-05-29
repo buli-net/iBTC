@@ -4,7 +4,9 @@ import android.content.Context
 import org.bitcoinj.core.listeners.DownloadProgressTracker
 import org.bitcoinj.kits.WalletAppKit
 import org.bitcoinj.params.MainNetParams
+import org.bitcoinj.script.Script
 import org.bitcoinj.wallet.DeterministicSeed
+import org.bitcoinj.wallet.Wallet
 import java.io.File
 
 object WalletKitService {
@@ -18,17 +20,21 @@ object WalletKitService {
         val dir = File(context.filesDir, "spv_wallets")
         if (!dir.exists()) dir.mkdirs()
 
+        val walletFile = File(dir, walletId)
+
+        // Nếu có seed và file wallet chưa tồn tại, tạo wallet từ seed và lưu
+        if (seedPhrase != null && !walletFile.exists()) {
+            val words = seedPhrase.trim().lowercase().split(" ")
+            if (words.size == 12 || words.size == 24) {
+                val seed = DeterministicSeed(words, null, "", 0L)
+                val wallet = Wallet.fromSeed(params, seed, Script.ScriptType.P2WPKH)
+                wallet.saveToFile(walletFile)
+            }
+        }
+
         kit = object : WalletAppKit(params, dir, walletId) {
             override fun onSetupCompleted() {
                 println("WalletAppKit READY")
-                // Import seed đúng cách nếu có và wallet chưa có seed
-                if (seedPhrase != null && wallet().keyChainSeed.isEncrypted() && wallet().keyChainSeed.mnemonicCode == null) {
-                    val words = seedPhrase.trim().lowercase().split(" ")
-                    if (words.size == 12 || words.size == 24) {
-                        val seed = DeterministicSeed(words, null, "", 0L)
-                        wallet().importSeed(seed)
-                    }
-                }
             }
         }
 
