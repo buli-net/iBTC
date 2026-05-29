@@ -18,20 +18,21 @@ object WalletKitService {
 
         val params = MainNetParams.get()
         val file = File(context.filesDir, "spv_wallets")
+        val walletFile = File(file, walletId)
 
-        kit = object : WalletAppKit(params, file, walletId) {
-            override fun onSetupCompleted() {
-                println("WalletAppKit ready")
-            }
-        }
-
-        // Nếu có seed, tạo wallet từ seed và set vào kit trước khi start
-        if (seedPhrase != null) {
+        // Nếu có seed và wallet chưa tồn tại, tạo wallet từ seed và lưu
+        if (seedPhrase != null && !walletFile.exists()) {
             val words = seedPhrase.trim().lowercase().split(" ")
             if (words.size == 12 || words.size == 24) {
                 val seed = DeterministicSeed(words, null, "", 0L)
                 val wallet = Wallet.fromSeed(params, seed, Script.ScriptType.P2WPKH)
-                kit?.setWallet(wallet)
+                wallet.saveToFile(walletFile)
+            }
+        }
+
+        kit = object : WalletAppKit(params, file, walletId) {
+            override fun onSetupCompleted() {
+                println("WalletAppKit ready")
             }
         }
 
