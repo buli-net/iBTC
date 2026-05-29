@@ -98,7 +98,7 @@ class WalletManager(private val ctx: Context) {
 
     fun import(name: String, phrase: String, password: String): WalletInfo? {
         return try {
-            val clean = phrase.trim().lowercase().replace(Regex("\\s+"), " ")
+            val clean = phrase.trim().lowercase().replace(Regex("\s+"), " ")
             val words = clean.split(" ")
             if (words.size != 12 && words.size != 24) return null
             DeterministicSeed(words, null, "", 0L)
@@ -259,7 +259,7 @@ class WalletManager(private val ctx: Context) {
 
         // 2. Tính phí
         val estSize = 10 + inputs.size * 68 + 34 * 2
-        val fee = estSize * feeRateSatVb.toLong()
+        val fee = estSize * feeRateSatVb
         val change = totalIn - amountSat - fee
 
         if (change < 0) throw Exception("Insufficient money, thiếu ${-change} sats cho phí")
@@ -277,7 +277,7 @@ class WalletManager(private val ctx: Context) {
 
         // Add inputs
         for ((txid, vout, _) in inputs) {
-            tx.addInput(Sha256Hash.wrap(txid), vout.toLong(), ScriptBuilder.createEmpty())
+            tx.addInput(Sha256Hash.wrap(txid), vout, ScriptBuilder.createEmpty())
         }
 
         // 4. Ký
