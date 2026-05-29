@@ -132,7 +132,6 @@ class SyncService : Service() {
 
     fun setProgressCallback(callback: ((Int, String) -> Unit)?) {
         progressCallback = callback
-        // Gửi lại trạng thái hiện tại ngay khi callback được đăng ký
         callback?.invoke(lastProgress, lastMessage)
     }
 
