@@ -257,9 +257,20 @@ class WalletManager(private val ctx: Context) {
         }
         val wallet = getWallet() ?: throw Exception("Wallet chưa sẵn sàng, vui lòng đợi đồng bộ")
 
+        val spendable = wallet.getBalance(Wallet.BalanceType.AVAILABLE_SPENDABLE)
         val coin = Coin.valueOf((amountBTC * 1e8).toLong())
+
         if (coin.isLessThan(Coin.valueOf(DUST_THRESHOLD))) {
             throw Exception("Số tiền quá nhỏ (dưới 546 satoshi)")
+        }
+
+        if (spendable.isLessThan(coin)) {
+            throw Exception("Số dư khả dụng không đủ")
+        }
+
+        val peerGroup = SyncService.getInstance()?.getPeerGroup()
+        if (peerGroup == null || peerGroup.connectedPeers.isEmpty()) {
+            throw Exception("Chưa kết nối peer network")
         }
 
         val address = Address.fromString(params, to)
@@ -268,17 +279,13 @@ class WalletManager(private val ctx: Context) {
         req.feePerKb = Coin.valueOf(feeRateSatVb * 1000L)
         req.changeAddress = wallet.currentReceiveAddress()
         req.ensureMinRequiredFee = true
+        req.signInputs = true
 
-        val result = wallet.sendCoins(req)
-            ?: throw Exception("Send failed, không tạo được transaction")
+        wallet.completeTx(req)
+        wallet.commitTx(req.tx)
+        peerGroup.broadcastTransaction(req.tx)
 
-        val peerGroup = SyncService.getInstance()?.getPeerGroup()
-        if (peerGroup == null || peerGroup.connectedPeers.isEmpty()) {
-            throw Exception("Không có kết nối peer nào, không thể broadcast giao dịch. Vui lòng thử lại sau.")
-        }
-        peerGroup.broadcastTransaction(result.tx).future()
-
-        return result.tx.hashAsString
+        return req.tx.hashAsString
     }
 
     private fun getAddressAtIndex(seedPhrase: String, index: Int): String {

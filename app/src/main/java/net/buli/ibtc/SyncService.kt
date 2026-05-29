@@ -20,7 +20,7 @@ import java.io.File
 
 class SyncService : Service() {
 
-    private lateinit var kit: WalletAppKit
+    private var kit: WalletAppKit? = null
     private val CHANNEL_ID = "bitcoin_sync_channel"
     private val NOTIFICATION_ID = 1
     private var progressCallback: ((Int, String) -> Unit)? = null
@@ -46,7 +46,11 @@ class SyncService : Service() {
         val walletId = intent?.getStringExtra("wallet_id") ?: "default_wallet"
         currentWalletId = walletId
         if (seedPhrase != null) {
-            startBitcoinSync(walletId, seedPhrase)
+            if (kit != null && currentWalletId == walletId) {
+                setProgressCallback(progressCallback)
+            } else {
+                startBitcoinSync(walletId, seedPhrase)
+            }
         }
         return START_STICKY
     }
@@ -99,10 +103,12 @@ class SyncService : Service() {
                 }
             }
 
+            try { kit?.stopAsync() } catch (_: Exception) {}
+
             kit = WalletAppKit(params, dir, walletId)
 
-            kit.setBlockingStartup(false)
-            kit.setDownloadListener(object : DownloadProgressTracker() {
+            kit?.setBlockingStartup(false)
+            kit?.setDownloadListener(object : DownloadProgressTracker() {
                 override fun progress(pct: Double, blocksSoFar: Int, date: java.util.Date?) {
                     var percent = pct.toInt()
                     if (percent > 100) percent = 100
@@ -122,7 +128,7 @@ class SyncService : Service() {
                 }
             })
 
-            kit.startAsync()
+            kit?.startAsync()
         }.start()
     }
 
@@ -144,15 +150,15 @@ class SyncService : Service() {
         callback?.invoke(displayProgress, displayMessage)
     }
 
-    fun getWallet(): Wallet? = kit?.wallet()
-    fun getPeerGroup() = kit?.peerGroup()
+    fun getWallet(): Wallet? = try { kit?.wallet() } catch (_: Exception) { null }
+    fun getPeerGroup() = try { kit?.peerGroup() } catch (_: Exception) { null }
     fun getWalletId(): String = currentWalletId
     fun isWalletSynced(): Boolean = isSynced
 
     override fun onDestroy() {
         super.onDestroy()
         instance = null
-        kit?.stopAsync()
+        try { kit?.stopAsync() } catch (_: Exception) {}
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
