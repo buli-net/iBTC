@@ -12,9 +12,12 @@ import java.io.File
 object WalletKitService {
 
     private var kit: WalletAppKit? = null
+    private var progressCallback: ((Int, String) -> Unit)? = null
 
-    fun start(context: Context, walletId: String, seedPhrase: String? = null) {
+    fun start(context: Context, walletId: String, seedPhrase: String? = null, callback: ((Int, String) -> Unit)? = null) {
         if (kit != null) return
+
+        progressCallback = callback
 
         val params = MainNetParams.get()
         val dir = File(context.filesDir, "spv_wallets")
@@ -22,7 +25,6 @@ object WalletKitService {
 
         val walletFile = File(dir, walletId)
 
-        // Nếu có seed và file wallet chưa tồn tại, tạo wallet từ seed và lưu
         if (seedPhrase != null && !walletFile.exists()) {
             val words = seedPhrase.trim().lowercase().split(" ")
             if (words.size == 12 || words.size == 24) {
@@ -35,16 +37,20 @@ object WalletKitService {
         kit = object : WalletAppKit(params, dir, walletId) {
             override fun onSetupCompleted() {
                 println("WalletAppKit READY")
+                callback?.invoke(100, "Ví sẵn sàng")
             }
         }
 
         kit?.setBlockingStartup(false)
         kit?.setDownloadListener(object : DownloadProgressTracker() {
             override fun progress(pct: Double, blocksSoFar: Int, date: java.util.Date?) {
-                println("Sync: $pct%")
+                val percent = pct.toInt()
+                println("Sync: $percent%")
+                callback?.invoke(percent, "Đồng bộ blockchain: $percent%")
             }
             override fun doneDownload() {
                 println("Blockchain synced")
+                callback?.invoke(100, "Đã đồng bộ blockchain")
             }
         })
         kit?.startAsync()
@@ -55,5 +61,6 @@ object WalletKitService {
     fun stop() {
         kit?.stopAsync()
         kit = null
+        progressCallback = null
     }
 }
