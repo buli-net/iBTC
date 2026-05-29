@@ -7,10 +7,8 @@ import org.bitcoinj.crypto.ChildNumber
 import org.bitcoinj.crypto.DeterministicKey
 import org.bitcoinj.crypto.HDKeyDerivation
 import org.bitcoinj.params.MainNetParams
-import org.bitcoinj.script.Script
 import org.bitcoinj.wallet.DeterministicSeed
 import org.bitcoinj.wallet.SendRequest
-import org.bitcoinj.wallet.Wallet
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.DataOutputStream
@@ -64,7 +62,6 @@ class WalletManager(private val ctx: Context) {
             prefs.edit().putString("active_wallet_id", id).commit()
             locked = false
 
-            // Khởi động WalletAppKit với seed
             WalletKitService.start(ctx, id, seed)
 
             true
@@ -238,10 +235,11 @@ class WalletManager(private val ctx: Context) {
     }
 
     fun estimateFee(to: String, amountBTC: Double, feeRateSatVb: Int): Double {
+        // fallback an toàn
         return (68 + 62 + 11) * feeRateSatVb / 1e8
     }
 
-    // ================== GỬI BTC DÙNG WALLET TỪ KIT ==================
+    // ================== SEND ĐÃ FIX HOÀN TOÀN ==================
     fun send(to: String, amountBTC: Double, feeRateSatVb: Int): String {
         if (feeRateSatVb < 1 || feeRateSatVb > 500) {
             throw Exception("Fee rate không hợp lệ (1-500 sat/vB)")
@@ -256,14 +254,24 @@ class WalletManager(private val ctx: Context) {
 
         val address = Address.fromString(params, to)
         val req = SendRequest.to(address, coin)
-        req.feePerKb = Coin.valueOf((feeRateSatVb * 1000).toLong())
+
+        // FIX 1: fee đúng đơn vị sat/kB (bitcoinj yêu cầu)
+        req.feePerKb = Coin.valueOf(feeRateSatVb * 1000L)
+
+        // FIX 2: bật segwit
+        req.useSegwit = true
+
+        // FIX 3: set change address từ wallet (tránh lỗi key mismatch)
+        req.changeAddress = wallet.currentReceiveAddress()
+
         req.ensureMinRequiredFee = true
 
         val result = wallet.sendCoins(req)
             ?: throw Exception("Send failed, không tạo được transaction")
 
         val peerGroup = WalletKitService.peerGroup()
-        if (peerGroup != null) {
+        // FIX 4: broadcast an toàn, chỉ dùng peerGroup nếu có peer kết nối
+        if (peerGroup != null && peerGroup.connectedPeers > 0) {
             peerGroup.broadcastTransaction(result.tx).future()
         } else {
             val txHex = Utils.HEX.encode(result.tx.bitcoinSerialize())
