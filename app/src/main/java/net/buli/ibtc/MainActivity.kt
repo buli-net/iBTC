@@ -430,7 +430,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun showMainWallet() {
         val id = walletManager.getActiveId()
-        if (id != null) WalletKitService.start(this, id)
+        if (id != null) {
+            // WalletKitService không cần dùng nữa, vì SyncService đã thay thế
+            // WalletKitService.start(this, id)
+        }
         rootLayout.removeAllViews()
         val isDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
         val mainColor = if (isDark) Color.WHITE else Color.BLACK
@@ -468,6 +471,7 @@ class MainActivity : AppCompatActivity() {
             max = 100
             progress = 0
         }
+        // SPV status
         spvStatusText = TextView(this).apply {
             text = "SPV: Đang khởi động..."
             textSize = 12f
@@ -583,6 +587,7 @@ class MainActivity : AppCompatActivity() {
         }
         btnSettings.setOnClickListener { showSettings() }
 
+        // Cập nhật trạng thái SPV từ SyncService (qua walletManager)
         walletManager.onProgress { pct, txt ->
             runOnUiThread {
                 spvStatusText.text = "SPV: $txt"
@@ -718,7 +723,7 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this).setTitle("Nhận Bitcoin").setView(layout).setPositiveButton("Đóng", null).show()
     }
 
-    // ================== DIALOG GỬI CÓ CẢNH BÁO ==================
+    // ================== DIALOG GỬI BTC (có cảnh báo) ==================
     private fun showSendDialog() {
         if (isSyncing) {
             toast("Đang sync API, vui lòng đợi")
