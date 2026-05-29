@@ -1,6 +1,7 @@
 package net.buli.ibtc
 
 import android.content.Context
+import android.content.Intent
 import android.util.Log
 import org.bitcoinj.core.*
 import org.bitcoinj.crypto.ChildNumber
@@ -9,6 +10,7 @@ import org.bitcoinj.crypto.HDKeyDerivation
 import org.bitcoinj.params.MainNetParams
 import org.bitcoinj.wallet.DeterministicSeed
 import org.bitcoinj.wallet.SendRequest
+import org.bitcoinj.wallet.Wallet
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.DataOutputStream
@@ -67,7 +69,19 @@ class WalletManager(private val ctx: Context) {
             prefs.edit().putString("active_wallet_id", id).commit()
             locked = false
 
-            WalletKitService.start(ctx, id, seed, syncCallback)
+            // Khởi động SyncService
+            val intent = Intent(ctx, SyncService::class.java).apply {
+                putExtra("wallet_id", id)
+                putExtra("seed_phrase", seed)
+            }
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                ctx.startForegroundService(intent)
+            } else {
+                ctx.startService(intent)
+            }
+
+            // Đăng ký callback để cập nhật giao diện (nếu có)
+            SyncService.getInstance()?.setProgressCallback(syncCallback)
 
             true
         } catch (e: Exception) {
@@ -79,7 +93,7 @@ class WalletManager(private val ctx: Context) {
         locked = true
         cachedSeed = null
         cachedPassword = null
-        WalletKitService.stop()
+        ctx.stopService(Intent(ctx, SyncService::class.java))
     }
 
     fun create(name: String, password: String): WalletInfo {
@@ -101,7 +115,15 @@ class WalletManager(private val ctx: Context) {
         prefs.edit().putString("active_wallet_id", id).commit()
         locked = false
 
-        WalletKitService.start(ctx, id, mnemonic, syncCallback)
+        val intent = Intent(ctx, SyncService::class.java).apply {
+            putExtra("wallet_id", id)
+            putExtra("seed_phrase", mnemonic)
+        }
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            ctx.startForegroundService(intent)
+        } else {
+            ctx.startService(intent)
+        }
 
         return info
     }
@@ -129,7 +151,15 @@ class WalletManager(private val ctx: Context) {
             prefs.edit().putString("active_wallet_id", id).commit()
             locked = false
 
-            WalletKitService.start(ctx, id, clean, syncCallback)
+            val intent = Intent(ctx, SyncService::class.java).apply {
+                putExtra("wallet_id", id)
+                putExtra("seed_phrase", clean)
+            }
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                ctx.startForegroundService(intent)
+            } else {
+                ctx.startService(intent)
+            }
 
             info
         } catch (e: Exception) {
@@ -244,7 +274,7 @@ class WalletManager(private val ctx: Context) {
     }
 
     fun isWalletSynced(): Boolean {
-        return WalletKitService.wallet()?.isSynced() ?: false
+        return SyncService.getInstance()?.getWallet()?.isSynced() ?: false
     }
 
     fun isValidAddress(address: String): Boolean {
@@ -256,13 +286,16 @@ class WalletManager(private val ctx: Context) {
         }
     }
 
+    private fun getWallet(): Wallet? {
+        return SyncService.getInstance()?.getWallet()
+    }
+
     // ================== SEND ==================
     fun send(to: String, amountBTC: Double, feeRateSatVb: Int): String {
         if (feeRateSatVb < 1 || feeRateSatVb > 500) {
             throw Exception("Fee rate không hợp lệ (1-500 sat/vB)")
         }
-        val wallet = WalletKitService.wallet()
-            ?: throw Exception("Wallet chưa sẵn sàng, vui lòng đợi đồng bộ")
+        val wallet = getWallet() ?: throw Exception("Wallet chưa sẵn sàng, vui lòng đợi đồng bộ")
 
         val coin = Coin.valueOf((amountBTC * 1e8).toLong())
         if (coin.isLessThan(Coin.valueOf(DUST_THRESHOLD))) {
@@ -279,7 +312,7 @@ class WalletManager(private val ctx: Context) {
         val result = wallet.sendCoins(req)
             ?: throw Exception("Send failed, không tạo được transaction")
 
-        val peerGroup = WalletKitService.peerGroup()
+        val peerGroup = SyncService.getInstance()?.getPeerGroup()
         if (peerGroup != null && peerGroup.connectedPeers.isNotEmpty()) {
             peerGroup.broadcastTransaction(result.tx).future()
         } else {
@@ -360,7 +393,7 @@ class WalletManager(private val ctx: Context) {
     }
 
     fun init() {}
-    fun stop() { WalletKitService.stop() }
+    fun stop() { lock() }
     fun isLocked(): Boolean = locked
 
     fun changePassword(oldPassword: String, newPassword: String): Boolean {
