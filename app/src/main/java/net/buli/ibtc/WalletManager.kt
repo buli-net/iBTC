@@ -188,14 +188,14 @@ class WalletManager(private val ctx: Context) {
             val value = tx.getValue(wallet)
             val amount = value.value / 1e8
             val type = if (amount > 0) "RECEIVE" else "SEND"
-            list.add(TransactionInfo(tx.getTxId().toString(), abs(amount), type, Date(tx.getUpdateTime().time)))
+            list.add(TransactionInfo(tx.getHashAsString(), abs(amount), type, tx.getUpdateTime()))
         }
         val pending = wallet.getTransactionPool().getPendingTransactions()
-        for ((_, tx) in pending) {
+        for (tx in pending) {
             val value = tx.getValue(wallet)
             val amount = value.value / 1e8
             val type = if (amount > 0) "RECEIVE" else "SEND"
-            list.add(TransactionInfo(tx.getTxId().toString(), abs(amount), "$type (pending)", Date(tx.getUpdateTime().time)))
+            list.add(TransactionInfo(tx.getHashAsString(), abs(amount), "$type (pending)", tx.getUpdateTime()))
         }
         list.sortByDescending { it.time }
         return list
@@ -205,20 +205,8 @@ class WalletManager(private val ctx: Context) {
     fun getFeeRates(): FeeRates = FeeRates(5, 10, 20)
 
     fun estimateFee(to: String, amountBTC: Double, feeRateSatVb: Int): Double {
-        val wallet = getWallet() ?: return (68 + 62 + 11) * feeRateSatVb / 1e8
-        val utxos = wallet.getUTXOs()
-        if (utxos.isEmpty()) return (68 + 62 + 11) * feeRateSatVb / 1e8
-        val needSat = (amountBTC * 1e8).toLong()
-        var selectedSize = 0
-        var totalSat = 0L
-        for (utxo in utxos) {
-            totalSat += utxo.getValue().value
-            selectedSize++
-            val approxFee = (selectedSize * 68 + 2 * 31 + 11) * feeRateSatVb
-            if (totalSat >= needSat + approxFee) break
-        }
-        val txSize = selectedSize * 68 + 2 * 31 + 11
-        return (txSize * feeRateSatVb).toDouble() / 1e8
+        // fallback an toàn: 1 input + 2 outputs
+        return (68 + 62 + 11) * feeRateSatVb / 1e8
     }
 
     fun isWalletSynced(): Boolean = SyncService.getInstance()?.isWalletSynced() ?: false
@@ -232,7 +220,7 @@ class WalletManager(private val ctx: Context) {
         }
     }
 
-    // ========== SEND ==========
+    // ========== SEND (FIXED) ==========
     fun send(to: String, amountBTC: Double, feeRateSatVb: Int): String {
         if (feeRateSatVb < 1 || feeRateSatVb > 500) {
             throw Exception("Fee rate không hợp lệ (1-500 sat/vB)")
@@ -241,7 +229,7 @@ class WalletManager(private val ctx: Context) {
         val peerGroup = SyncService.getInstance()?.getPeerGroup()
             ?: throw Exception("PeerGroup null, chưa kết nối mạng")
 
-        if (peerGroup.getConnectedPeers().isEmpty()) {
+        if (peerGroup.connectedPeers.isEmpty()) {
             throw Exception("Chưa kết nối peer nào, không thể broadcast")
         }
 
@@ -265,6 +253,7 @@ class WalletManager(private val ctx: Context) {
         req.shuffleOutputs = true
         req.changeAddress = wallet.currentReceiveAddress()
 
+        // Cho phép chi tiêu UTXO chưa confirm (tránh missing money)
         wallet.allowSpendingUnconfirmedTransactions()
 
         try {
@@ -273,6 +262,7 @@ class WalletManager(private val ctx: Context) {
             throw Exception("Không tạo được transaction: ${e.message}")
         }
 
+        // Broadcast trước, commit sau
         try {
             val broadcastFuture = peerGroup.broadcastTransaction(req.tx)
             broadcastFuture.future().get()
@@ -283,10 +273,11 @@ class WalletManager(private val ctx: Context) {
         try {
             wallet.commitTx(req.tx)
         } catch (e: Exception) {
-            throw Exception("Commit tx lỗi (nhưng giao dịch đã broadcast): ${e.message}")
+            // Commit có thể thất bại nếu tx đã có, nhưng broadcast đã thành công
+            throw Exception("Commit tx lỗi (giao dịch đã broadcast): ${e.message}")
         }
 
-        return req.tx.getTxId().toString()
+        return req.tx.getHashAsString()
     }
 
     private fun getAddressAtIndex(seedPhrase: String, index: Int): String {
