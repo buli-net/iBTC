@@ -188,14 +188,14 @@ class WalletManager(private val ctx: Context) {
             val value = tx.getValue(wallet)
             val amount = value.value / 1e8
             val type = if (amount > 0) "RECEIVE" else "SEND"
-            list.add(TransactionInfo(tx.hashAsString, abs(amount), type, Date(tx.updateTime.time)))
+            list.add(TransactionInfo(tx.txId.toString(), abs(amount), type, Date(tx.updateTime.time)))
         }
         val pending = wallet.getTransactionPool().getPendingTransactions()
         for ((_, tx) in pending) {
             val value = tx.getValue(wallet)
             val amount = value.value / 1e8
             val type = if (amount > 0) "RECEIVE" else "SEND"
-            list.add(TransactionInfo(tx.hashAsString, abs(amount), "$type (pending)", Date(tx.updateTime.time)))
+            list.add(TransactionInfo(tx.txId.toString(), abs(amount), "$type (pending)", Date(tx.updateTime.time)))
         }
         list.sortByDescending { it.time }
         return list
