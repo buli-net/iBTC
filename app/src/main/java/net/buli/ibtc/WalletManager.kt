@@ -69,7 +69,6 @@ class WalletManager(private val ctx: Context) {
             prefs.edit().putString("active_wallet_id", id).commit()
             locked = false
 
-            // Khởi động SyncService
             val intent = Intent(ctx, SyncService::class.java).apply {
                 putExtra("wallet_id", id)
                 putExtra("seed_phrase", seed)
@@ -80,7 +79,6 @@ class WalletManager(private val ctx: Context) {
                 ctx.startService(intent)
             }
 
-            // Đăng ký callback để cập nhật giao diện (nếu có)
             SyncService.getInstance()?.setProgressCallback(syncCallback)
 
             true
@@ -274,7 +272,7 @@ class WalletManager(private val ctx: Context) {
     }
 
     fun isWalletSynced(): Boolean {
-        return SyncService.getInstance()?.getWallet()?.isSynced() ?: false
+        return SyncService.getInstance()?.isWalletSynced() ?: false
     }
 
     fun isValidAddress(address: String): Boolean {
