@@ -34,7 +34,7 @@ class WalletManager(private val ctx: Context) {
     private var lastPrice = prefs.getFloat("last_price", 65000f).toDouble()
 
     private val DUST_THRESHOLD = 546L
-    private val GAP_LIMIT = 50   // scan 50 địa chỉ đầu tiên
+    private val GAP_LIMIT = 50
 
     init {
         restoreActiveWallet()
@@ -80,7 +80,8 @@ class WalletManager(private val ctx: Context) {
         val seed = DeterministicSeed(SecureRandom(), 128, "")
         val mnemonic = seed.mnemonicCode!!.joinToString(" ")
         val walletName = if (name.isBlank()) "Ví Bitcoin" else name
-        val address = getAddressAtIndex(0) // lấy address index 0 để lưu làm mặc định
+        // Lưu address đầu tiên làm địa chỉ mặc định
+        val address = getAddressAtIndex(mnemonic, 0)
         val enc = CryptoUtil.encrypt(mnemonic, password)
         prefs.edit()
             .putString("${id}_name", walletName)
@@ -96,25 +97,9 @@ class WalletManager(private val ctx: Context) {
         return info
     }
 
-    // Lấy address theo derivation index (BIP84: m/84'/0'/0'/0/index)
-    private fun getAddressAtIndex(index: Int): String {
-        val seed = DeterministicSeed(cachedSeed!!.split(" "), null, "", 0L)
-        val seedBytes = seed.seedBytes!!
-        var key = HDKeyDerivation.createMasterPrivateKey(seedBytes)
-        val path = listOf(
-            ChildNumber(84, true),
-            ChildNumber(0, true),
-            ChildNumber(0, true),
-            ChildNumber(0, false),
-            ChildNumber(index, false)
-        )
-        for (p in path) key = HDKeyDerivation.deriveChildKey(key, p)
-        return SegwitAddress.fromKey(params, key).toString()
-    }
-
-    // Lấy private key theo index
-    private fun getPrivateKeyAtIndex(index: Int): DeterministicKey {
-        val seed = DeterministicSeed(cachedSeed!!.split(" "), null, "", 0L)
+    // Hàm derive key từ seed phrase và index (BIP84)
+    private fun deriveKeyAtIndex(seedPhrase: String, index: Int): DeterministicKey {
+        val seed = DeterministicSeed(seedPhrase.split(" "), null, "", 0L)
         val seedBytes = seed.seedBytes!!
         var key = HDKeyDerivation.createMasterPrivateKey(seedBytes)
         val path = listOf(
@@ -128,16 +113,73 @@ class WalletManager(private val ctx: Context) {
         return key
     }
 
-    // Build map address -> index bằng cách scan các index từ 0..GAP_LIMIT
-    private fun buildAddressIndexMap(): Map<String, Int> {
+    // Lấy address theo index
+    private fun getAddressAtIndex(seedPhrase: String, index: Int): String {
+        val key = deriveKeyAtIndex(seedPhrase, index)
+        return SegwitAddress.fromKey(params, key).toString()
+    }
+
+    // Lấy danh sách address từ index 0 đến GAP_LIMIT
+    private fun buildAddressList(seedPhrase: String): List<String> {
+        val list = mutableListOf<String>()
+        for (i in 0..GAP_LIMIT) {
+            list.add(getAddressAtIndex(seedPhrase, i))
+        }
+        return list
+    }
+
+    // Map address -> index
+    private fun buildAddressIndexMap(seedPhrase: String): Map<String, Int> {
         val map = mutableMapOf<String, Int>()
         for (i in 0..GAP_LIMIT) {
-            val addr = getAddressAtIndex(i)
+            val addr = getAddressAtIndex(seedPhrase, i)
             map[addr] = i
         }
         return map
     }
 
+    // Lấy tất cả UTXO của ví (quét nhiều address)
+    private fun getAllUtxos(seedPhrase: String): List<UtxoWithIndex> {
+        val addressMap = buildAddressIndexMap(seedPhrase)
+        val all = mutableListOf<UtxoWithIndex>()
+        for ((address, idx) in addressMap) {
+            val utxos = getUtxosForAddress(address)
+            for (u in utxos) {
+                all.add(UtxoWithIndex(u.txid, u.vout, u.valueSat, address, idx))
+            }
+        }
+        return all
+    }
+
+    private data class UtxoWithIndex(
+        val txid: String,
+        val vout: Int,
+        val valueSat: Long,
+        val address: String,
+        val index: Int
+    )
+    private data class SimpleUtxo(val txid: String, val vout: Int, val valueSat: Long)
+
+    private fun getUtxosForAddress(address: String): List<SimpleUtxo> {
+        val json = httpGet("https://blockstream.info/api/address/$address/utxo")
+        if (json.isBlank()) return emptyList()
+        val arr = JSONArray(json)
+        val list = mutableListOf<SimpleUtxo>()
+        for (i in 0 until arr.length()) {
+            val obj = arr.getJSONObject(i)
+            val status = obj.optJSONObject("status")
+            val confirmed = status?.optBoolean("confirmed", false) ?: false
+            if (!confirmed) continue
+            list.add(SimpleUtxo(
+                obj.getString("txid"),
+                obj.getInt("vout"),
+                obj.getLong("value")
+            ))
+        }
+        return list
+    }
+
+    // Các hàm cũ giữ nguyên (getNativeSegwitAddress, getNestedSegwitAddress, getLegacyAddress...)
     private fun deriveKey(seedPhrase: String, purpose: Int): DeterministicKey {
         val seed = DeterministicSeed(seedPhrase.split(" "), null, "", 0L)
         val seedBytes = seed.seedBytes!!
@@ -174,15 +216,21 @@ class WalletManager(private val ctx: Context) {
         } catch (_: Exception) { "" }
     }
 
+    // Import ví - FIX lỗi seed không hợp lệ
     fun import(name: String, phrase: String, password: String): WalletInfo? {
         return try {
             val clean = phrase.trim().lowercase().replace(Regex("\\s+"), " ")
             val words = clean.split(" ")
-            if (words.size != 12 && words.size != 24) return null
+            if (words.size != 12 && words.size != 24) {
+                Log.e("WalletManager", "Seed phrase must have 12 or 24 words, got ${words.size}")
+                return null
+            }
+            // Validate seed bằng cách tạo DeterministicSeed
             DeterministicSeed(words, null, "", 0L)
             val id = UUID.randomUUID().toString()
             val walletName = if (name.isBlank()) "Imported Wallet" else name
-            val address = getAddressAtIndex(0) // lưu address index 0
+            // Lấy address đầu tiên làm địa chỉ mặc định
+            val address = getAddressAtIndex(clean, 0)
             val enc = CryptoUtil.encrypt(clean, password)
             prefs.edit()
                 .putString("${id}_name", walletName)
@@ -197,6 +245,7 @@ class WalletManager(private val ctx: Context) {
             locked = false
             info
         } catch (e: Exception) {
+            Log.e("WalletManager", "Import failed: ${e.message}")
             null
         }
     }
@@ -311,11 +360,11 @@ class WalletManager(private val ctx: Context) {
     }
 
     fun estimateFee(to: String, amountBTC: Double, feeRateSatVb: Int): Double {
-        // fallback an toàn: 1 input, 2 outputs
+        // fallback: 1 input segwit + 2 outputs
         return (68 + 62 + 11) * feeRateSatVb / 1e8
     }
 
-    // ================== GỬI BTC - FIX ĐÚNG ==================
+    // ================== GỬI BTC (ĐÃ SỬA LỖI IMPORT & DERIVE) ==================
     fun send(to: String, amountBTC: Double, feeRateSatVb: Int): String {
         if (feeRateSatVb < 1 || feeRateSatVb > 500) {
             throw Exception("Fee rate không hợp lệ (1-500 sat/vB)")
@@ -325,21 +374,21 @@ class WalletManager(private val ctx: Context) {
         if (needSat <= 0) throw Exception("Số tiền không hợp lệ")
         if (needSat < DUST_THRESHOLD) throw Exception("Số tiền quá nhỏ (dưới 546 satoshi)")
 
-        // 1. Lấy tất cả UTXO của toàn bộ ví (scan nhiều address)
-        val allUtxos = getAllUtxos()
+        // 1. Lấy tất cả UTXO
+        val allUtxos = getAllUtxos(seedPhrase)
         if (allUtxos.isEmpty()) throw Exception("Ví không có UTXO nào")
 
-        // 2. Chọn UTXO đủ để gửi
-        val sortedUtxos = allUtxos.sortedByDescending { it.valueSat }
+        // 2. Chọn UTXO
+        val sorted = allUtxos.sortedByDescending { it.valueSat }
         var total = 0L
         val selected = mutableListOf<UtxoWithIndex>()
-        for (utxo in sortedUtxos) {
+        for (utxo in sorted) {
             selected.add(utxo)
             total += utxo.valueSat
             val approxFee = (selected.size * 68 + 2 * 31 + 10) * feeRateSatVb
             if (total >= needSat + approxFee) break
         }
-        if (total < needSat) throw Exception("Không đủ số dư (cần ${needSat/1e8} BTC, có ${total/1e8} BTC)")
+        if (total < needSat) throw Exception("Không đủ số dư")
 
         // 3. Tạo transaction
         val tx = Transaction(params)
@@ -362,13 +411,13 @@ class WalletManager(private val ctx: Context) {
             }
         }
         if (changeSat >= DUST_THRESHOLD) {
-            val changeAddress = getAddressAtIndex(0) // trả change về address index 0
+            val changeAddress = getAddressAtIndex(seedPhrase, 0)
             tx.addOutput(Coin.valueOf(changeSat), Address.fromString(params, changeAddress))
         } else if (changeSat < 0) {
             throw Exception("Số dư không đủ trả phí, thiếu ${-changeSat} sat")
         }
 
-        // 5. Thêm inputs và ký đúng từng UTXO với key đúng index
+        // 5. Thêm inputs
         for (utxo in selected) {
             val outPoint = Sha256Hash.wrap(utxo.txid)
             val txOutPoint = TransactionOutPoint(params, utxo.vout.toLong(), outPoint)
@@ -376,10 +425,10 @@ class WalletManager(private val ctx: Context) {
             tx.addInput(input)
         }
 
-        // Ký từng input
+        // 6. Ký đúng từng input
         for (i in tx.inputs.indices) {
             val utxo = selected[i]
-            val key = getPrivateKeyAtIndex(utxo.index)
+            val key = deriveKeyAtIndex(seedPhrase, utxo.index)
             val myScript = ScriptBuilder.createOutputScript(Address.fromString(params, utxo.address))
             val sighash = tx.hashForSignature(i, myScript.program, Transaction.SigHash.ALL, false)
             val sig = key.sign(sighash)
@@ -390,7 +439,6 @@ class WalletManager(private val ctx: Context) {
             tx.inputs[i].setWitness(witness)
         }
 
-        // 6. Verify sau khi ký
         tx.verify()
         val txHex = Utils.HEX.encode(tx.bitcoinSerialize())
         Log.d("WalletManager", "TX size: ${tx.bitcoinSerialize().size} bytes")
@@ -404,48 +452,6 @@ class WalletManager(private val ctx: Context) {
         } catch (e: Exception) {
             false
         }
-    }
-
-    // ------------------ Lấy UTXO từ tất cả các address đã scan ------------------
-    private data class UtxoWithIndex(
-        val txid: String,
-        val vout: Int,
-        val valueSat: Long,
-        val address: String,
-        val index: Int
-    )
-
-    private fun getAllUtxos(): List<UtxoWithIndex> {
-        val addressIndexMap = buildAddressIndexMap()
-        val all = mutableListOf<UtxoWithIndex>()
-        for ((address, idx) in addressIndexMap) {
-            val utxos = getUtxosForAddress(address)
-            for (u in utxos) {
-                all.add(UtxoWithIndex(u.txid, u.vout, u.valueSat, address, idx))
-            }
-        }
-        return all
-    }
-
-    private data class SimpleUtxo(val txid: String, val vout: Int, val valueSat: Long)
-
-    private fun getUtxosForAddress(address: String): List<SimpleUtxo> {
-        val json = httpGet("https://blockstream.info/api/address/$address/utxo")
-        if (json.isBlank()) return emptyList()
-        val arr = JSONArray(json)
-        val list = mutableListOf<SimpleUtxo>()
-        for (i in 0 until arr.length()) {
-            val obj = arr.getJSONObject(i)
-            val status = obj.optJSONObject("status")
-            val confirmed = status?.optBoolean("confirmed", false) ?: false
-            if (!confirmed) continue
-            list.add(SimpleUtxo(
-                obj.getString("txid"),
-                obj.getInt("vout"),
-                obj.getLong("value")
-            ))
-        }
-        return list
     }
 
     private fun broadcastTx(txHex: String): String {
