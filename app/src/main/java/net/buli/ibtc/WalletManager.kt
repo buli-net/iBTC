@@ -8,7 +8,6 @@ import org.bitcoinj.params.MainNetParams
 import org.bitcoinj.wallet.DeterministicSeed
 import org.bitcoinj.wallet.SendRequest
 import org.bitcoinj.wallet.Wallet
-import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -40,37 +39,54 @@ class WalletManager(private val ctx: Context) {
         restoreActiveWallet()
     }
 
+    // ========================= RESTORE =========================
+    private fun restoreActiveWallet() {
+        try {
+            var id = prefs.getString("active_wallet_id", null)
+            if (id == null) {
+                val seedKey = prefs.all.keys.firstOrNull { it.endsWith("_seed") }
+                if (seedKey != null) {
+                    id = seedKey.removeSuffix("_seed")
+                    prefs.edit().putString("active_wallet_id", id).apply()
+                }
+            }
+            if (id != null) {
+                val name = prefs.getString("${id}_name", "Wallet") ?: "Wallet"
+                active = WalletInfo(id, name)
+                locked = true
+            }
+        } catch (_: Exception) {}
+    }
+
     // ========================= INIT WALLET CORE =========================
 
     private fun initWallet(seedPhrase: String) {
         val seed = DeterministicSeed(seedPhrase, null, "", 0L)
 
-        kit = object : WalletAppKit(params, ctx.filesDir, "btc_wallet") {
+        // Dùng file riêng cho từng ví để không bị conflict
+        val walletId = active?.id ?: "temp"
+        kit = object : WalletAppKit(params, ctx.filesDir, "btc_wallet_$walletId") {
             override fun onSetupCompleted() {
-                wallet = kit?.wallet()
+                wallet = this.wallet()
                 Log.d("WalletManager", "Wallet ready: ${wallet?.currentReceiveAddress()}")
             }
         }
 
         kit!!.setBlockingStartup(false)
-        kit!!.restoreFromSeed(seed)
+        kit!!.setAutoSave(true)
+        // FIX: restoreFromSeed là property, không phải function
+        kit!!.restoreFromSeed = seed
         kit!!.startAsync()
     }
 
     // ========================= WALLET BASIC =========================
 
     fun hasWallets(): Boolean {
-        return prefs.all.keys.any {
-            it.endsWith("_seed")
-        }
+        return prefs.all.keys.any { it.endsWith("_seed") }
     }
 
-    fun getActive(): WalletInfo? {
-        return active
-    }
-
+    fun getActive(): WalletInfo? = active
     fun getActiveId(): String? = active?.id
-
     fun isLocked(): Boolean = locked
 
     fun unlock(id: String, password: String): Boolean {
@@ -78,19 +94,18 @@ class WalletManager(private val ctx: Context) {
             val enc = prefs.getString("${id}_seed", null) ?: return false
             val seed = CryptoUtil.decrypt(enc, password)
 
-            initWallet(seed)
-
             val name = prefs.getString("${id}_name", "Wallet") ?: "Wallet"
-
-            cachedSeed = seed
-            cachedPassword = password.toCharArray()
-
             active = WalletInfo(id, name)
             prefs.edit().putString("active_wallet_id", id).apply()
 
+            initWallet(seed)
+
+            cachedSeed = seed
+            cachedPassword = password.toCharArray()
             locked = false
             true
         } catch (e: Exception) {
+            Log.e("WalletManager", "unlock failed", e)
             false
         }
     }
@@ -103,12 +118,9 @@ class WalletManager(private val ctx: Context) {
 
     fun create(name: String, password: String): WalletInfo {
         val id = UUID.randomUUID().toString()
-
         val seed = DeterministicSeed(SecureRandom(), 128, "")
         val mnemonic = seed.mnemonicCode!!.joinToString(" ")
-
         val walletName = if (name.isBlank()) "Ví Bitcoin" else name
-
         val enc = CryptoUtil.encrypt(mnemonic, password)
 
         prefs.edit()
@@ -116,16 +128,13 @@ class WalletManager(private val ctx: Context) {
             .putString("${id}_seed", enc)
             .apply()
 
-        initWallet(mnemonic)
-
-        cachedSeed = mnemonic
-        cachedPassword = password.toCharArray()
-
         val info = WalletInfo(id, walletName)
-
         active = info
         prefs.edit().putString("active_wallet_id", id).apply()
 
+        initWallet(mnemonic)
+        cachedSeed = mnemonic
+        cachedPassword = password.toCharArray()
         locked = false
         return info
     }
@@ -137,10 +146,8 @@ class WalletManager(private val ctx: Context) {
             if (words.size != 12 && words.size != 24) return null
 
             DeterministicSeed(words, null, "", 0L)
-
             val id = UUID.randomUUID().toString()
             val walletName = if (name.isBlank()) "Imported Wallet" else name
-
             val enc = CryptoUtil.encrypt(clean, password)
 
             prefs.edit()
@@ -148,16 +155,13 @@ class WalletManager(private val ctx: Context) {
                 .putString("${id}_seed", enc)
                 .apply()
 
-            initWallet(clean)
-
-            cachedSeed = clean
-            cachedPassword = password.toCharArray()
-
             val info = WalletInfo(id, walletName)
-
             active = info
             prefs.edit().putString("active_wallet_id", id).apply()
 
+            initWallet(clean)
+            cachedSeed = clean
+            cachedPassword = password.toCharArray()
             locked = false
             info
         } catch (e: Exception) {
@@ -172,6 +176,7 @@ class WalletManager(private val ctx: Context) {
             .remove("${id}_seed")
             .remove("active_wallet_id")
             .apply()
+        try { kit?.stopAsync() } catch (_:Exception){}
     }
 
     fun rename(newName: String) {
@@ -184,10 +189,8 @@ class WalletManager(private val ctx: Context) {
         return try {
             val id = active?.id ?: return false
             val enc = prefs.getString("${id}_seed", null) ?: return false
-
             val seed = CryptoUtil.decrypt(enc, oldPassword)
             val newEnc = CryptoUtil.encrypt(seed, newPassword)
-
             prefs.edit().putString("${id}_seed", newEnc).apply()
             true
         } catch (e: Exception) {
@@ -202,31 +205,21 @@ class WalletManager(private val ctx: Context) {
     fun getAddress(): String {
         return try {
             wallet?.currentReceiveAddress()?.toString() ?: ""
-        } catch (e: Exception) {
-            ""
-        }
+        } catch (e: Exception) { "" }
     }
 
     fun getBalance(): Double {
         return try {
             wallet?.balance?.value?.toDouble()?.div(100000000.0) ?: 0.0
-        } catch (e: Exception) {
-            0.0
-        }
+        } catch (e: Exception) { 0.0 }
     }
 
     fun isValidAddress(address: String): Boolean {
-        return try {
-            Address.fromString(params, address)
-            true
-        } catch (e: Exception) {
-            false
-        }
+        return try { Address.fromString(params, address); true } catch (e: Exception) { false }
     }
 
     fun getTransactions(): List<TransactionInfo> {
         val w = wallet ?: return emptyList()
-
         return try {
             w.transactionsByTime.map {
                 TransactionInfo(
@@ -236,35 +229,32 @@ class WalletManager(private val ctx: Context) {
                     Date(it.updateTime.time)
                 )
             }
-        } catch (e: Exception) {
-            emptyList()
-        }
+        } catch (e: Exception) { emptyList() }
     }
 
-    // ========================= SEND BTC (FIX -26 COMPLETELY) =========================
+    // ========================= SEND BTC =========================
 
     fun send(to: String, amountBTC: Double, feeSatVb: Int): String {
-
         val w = wallet ?: throw Exception("Wallet chưa sẵn sàng")
-
-        if (feeSatVb < 1 || feeSatVb > 1000) {
-            throw Exception("Fee không hợp lệ")
-        }
-
+        if (feeSatVb < 1 || feeSatVb > 1000) throw Exception("Fee không hợp lệ")
         val address = Address.fromString(params, to)
         val coin = Coin.parseCoin(amountBTC.toString())
-
         val request = SendRequest.to(address, coin)
-
         request.feePerKb = Coin.valueOf((feeSatVb * 1000).toLong())
         request.ensureMinRequiredFee = true
-
-        val result = w.sendCoins(request)
-            ?: throw Exception("Send failed")
-
+        val result = w.sendCoins(request) ?: throw Exception("Send failed")
         Log.d("WalletManager", "TX sent: ${result.tx.hashAsString}")
-
         return result.tx.hashAsString
+    }
+
+    // ========================= ESTIMATE FEE (FIX cho MainActivity) =========================
+    // MainActivity đang gọi estimateFee ở nhiều chỗ, thêm lại để build được
+    fun estimateFee(to: String, amountBTC: Double, feeRateSatVb: Int): Double {
+        // ước tính đơn giản 250 vbytes cho tx P2WPKH 1 in 2 out
+        return (feeRateSatVb * 250.0) / 100000000.0
+    }
+    fun estimateFee(amountBTC: Double, feeRateSatVb: Int): Double {
+        return estimateFee("", amountBTC, feeRateSatVb)
     }
 
     // ========================= PRICE & API =========================
@@ -276,27 +266,20 @@ class WalletManager(private val ctx: Context) {
             lastPrice = rate
             prefs.edit().putFloat("last_price", rate.toFloat()).apply()
             rate
-        } catch (_: Exception) {
-            lastPrice
-        }
+        } catch (_: Exception) { lastPrice }
     }
 
     fun getFeeRates(): FeeRates {
         return try {
             val json = httpGet("https://mempool.space/api/v1/fees/recommended")
             val obj = JSONObject(json)
-
             FeeRates(
                 slow = obj.optInt("hourFee", 5),
                 normal = obj.optInt("halfHourFee", 10),
                 fast = obj.optInt("fastestFee", 20)
             )
-        } catch (e: Exception) {
-            FeeRates(5, 10, 20)
-        }
+        } catch (e: Exception) { FeeRates(5, 10, 20) }
     }
-
-    // ========================= NETWORK =========================
 
     private fun httpGet(url: String): String {
         return try {
@@ -305,22 +288,12 @@ class WalletManager(private val ctx: Context) {
             conn.connectTimeout = 10000
             conn.readTimeout = 10000
             conn.inputStream.bufferedReader().readText()
-        } catch (e: Exception) {
-            ""
-        }
+        } catch (e: Exception) { "" }
     }
 
     // ========================= LIFECYCLE =========================
 
     fun init() {}
-
-    fun stop() {
-        try {
-            kit?.stopAsync()
-        } catch (_: Exception) {}
-    }
-
-    fun onProgress(cb: (Int, String) -> Unit) {
-        cb(100, "Wallet ready")
-    }
+    fun stop() { try { kit?.stopAsync() } catch (_: Exception) {} }
+    fun onProgress(cb: (Int, String) -> Unit) { cb(100, "Wallet ready") }
 }
