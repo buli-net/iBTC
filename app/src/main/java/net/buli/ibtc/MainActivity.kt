@@ -432,7 +432,6 @@ class MainActivity : AppCompatActivity() {
         val id = walletManager.getActiveId()
         if (id != null) {
             // WalletKitService không cần dùng nữa, vì SyncService đã thay thế
-            // WalletKitService.start(this, id)
         }
         rootLayout.removeAllViews()
         val isDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
@@ -471,7 +470,6 @@ class MainActivity : AppCompatActivity() {
             max = 100
             progress = 0
         }
-        // SPV status
         spvStatusText = TextView(this).apply {
             text = "SPV: Đang khởi động..."
             textSize = 12f
@@ -587,8 +585,15 @@ class MainActivity : AppCompatActivity() {
         }
         btnSettings.setOnClickListener { showSettings() }
 
-        // Cập nhật trạng thái SPV từ SyncService (qua walletManager)
+        // Đăng ký callback từ WalletManager (chuyển tiếp đến SyncService)
         walletManager.onProgress { pct, txt ->
+            runOnUiThread {
+                spvStatusText.text = "SPV: $txt"
+                spvProgressBar.progress = pct
+            }
+        }
+        // Đồng bộ trạng thái hiện tại từ service (nếu đã chạy)
+        SyncService.getInstance()?.setProgressCallback { pct, txt ->
             runOnUiThread {
                 spvStatusText.text = "SPV: $txt"
                 spvProgressBar.progress = pct
