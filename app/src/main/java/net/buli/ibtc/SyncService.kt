@@ -104,9 +104,11 @@ class SyncService : Service() {
             kit.setBlockingStartup(false)
             kit.setDownloadListener(object : DownloadProgressTracker() {
                 override fun progress(pct: Double, blocksSoFar: Int, date: java.util.Date?) {
-                    val percent = pct.toInt()
+                    var percent = pct.toInt()
+                    if (percent > 100) percent = 100
+                    if (percent < 0) percent = 0
                     lastProgress = percent
-                    lastMessage = "Đồng bộ blockchain: $percent%"
+                    lastMessage = if (percent < 100) "Đồng bộ blockchain: $percent%" else "Đã đồng bộ blockchain (xử lý...)"
                     updateNotification(lastMessage)
                     progressCallback?.invoke(lastProgress, lastMessage)
                 }
@@ -132,7 +134,14 @@ class SyncService : Service() {
 
     fun setProgressCallback(callback: ((Int, String) -> Unit)?) {
         progressCallback = callback
-        callback?.invoke(lastProgress, lastMessage)
+        // Gửi lại trạng thái hiện tại, đảm bảo không vượt 100
+        val displayProgress = if (lastProgress > 100) 100 else lastProgress
+        val displayMessage = when {
+            isSynced -> "Đã đồng bộ blockchain"
+            lastProgress >= 100 -> "Đã đồng bộ blockchain"
+            else -> lastMessage
+        }
+        callback?.invoke(displayProgress, displayMessage)
     }
 
     fun getWallet(): Wallet? = kit?.wallet()
