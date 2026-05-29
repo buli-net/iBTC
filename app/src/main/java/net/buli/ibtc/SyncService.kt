@@ -129,7 +129,7 @@ class SyncService : Service() {
                     kit?.awaitTerminated()
                 } catch (_: Exception) {}
 
-                // Tạo kit mới - KHÔNG DÙNG CHECKPOINT
+                // Tạo kit mới - KHÔNG DÙNG CHECKPOINT, KHÔNG awaitRunning() sớm
                 val newKit = WalletAppKit(params, dir, walletId).apply {
                     setBlockingStartup(false)
                     setDownloadListener(object : DownloadProgressTracker() {
@@ -153,13 +153,16 @@ class SyncService : Service() {
                         }
                     })
                     startAsync()
+                    // KHÔNG GỌI awaitRunning() Ở ĐÂY - tránh lỗi "Cannot call until startup is complete"
+                    // Đợi một chút rồi bật autosave (nếu cần)
+                    Thread.sleep(3000)
                     try {
-                        awaitRunning()  // có thể block nhưng trong thread riêng
+                        if (wallet() != null) {
+                            wallet().autosaveToFile(File(dir, "$walletId.wallet"), 1, TimeUnit.SECONDS, null)
+                        }
                     } catch (e: Exception) {
-                        // Nếu awaitRunning thất bại, không ném exception, chỉ log
-                        lastMessage = "Cảnh báo: awaitRunning thất bại"
+                        // Bỏ qua lỗi autosave nếu chưa sẵn sàng
                     }
-                    wallet().autosaveToFile(File(dir, "$walletId.wallet"), 1, TimeUnit.SECONDS, null)
                 }
                 kit = newKit
 
@@ -174,8 +177,8 @@ class SyncService : Service() {
                 lastMessage = "Lỗi sync: ${e.message}"
                 updateNotification(lastMessage)
                 progressCallback?.invoke(lastProgress, lastMessage)
-                // Thử lại sau 5 giây
-                Thread.sleep(5000)
+                // Thử lại sau 10 giây
+                Thread.sleep(10000)
                 synchronized(this) { syncing = false }
             }
         }.start()
