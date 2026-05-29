@@ -269,7 +269,6 @@ class WalletManager(private val ctx: Context) {
         }
     }
 
-    // Ước tính phí: fallback an toàn nếu không có UTXO
     fun estimateFee(to: String, amountBTC: Double, feeRateSatVb: Int): Double {
         return try {
             val address = getAddress()
@@ -289,6 +288,7 @@ class WalletManager(private val ctx: Context) {
         }
     }
 
+    // ================== SEND BTC - FIX LỖI DUST ==================
     fun send(to: String, amountBTC: Double, feeRateSatVb: Int): String {
         if (feeRateSatVb < 1 || feeRateSatVb > 500) {
             throw Exception("Fee rate không hợp lệ (1-500 sat/vB)")
@@ -300,8 +300,15 @@ class WalletManager(private val ctx: Context) {
         if (needSat <= 0) throw Exception("Số tiền không hợp lệ")
         if (needSat < DUST_THRESHOLD) throw Exception("Số tiền quá nhỏ (dưới 546 satoshi)")
 
-        val utxos = getUtxos(myAddressStr)
-        if (utxos.isEmpty()) throw Exception("Ví không có UTXO nào (có thể chưa nhận được tiền)")
+        // Lấy UTXO (chỉ lấy confirmed để tránh double spend)
+        var utxos = getUtxos(myAddressStr)
+        if (utxos.isEmpty()) {
+            // Thử lấy cả unconfirmed nếu cần (có thể dùng nhưng rủi ro)
+            val allUtxos = getUtxosAll(myAddressStr)
+            if (allUtxos.isEmpty()) throw Exception("Ví không có UTXO nào (có thể chưa nhận được tiền)")
+            utxos = allUtxos
+        }
+        Log.d("WalletManager", "UTXOs found: ${utxos.size}, total value: ${utxos.sumOf { it.valueSat }} sat")
 
         val (selectedUtxos, totalInputSat) = selectUtxos(utxos, needSat, feeRateSatVb)
         if (selectedUtxos.isEmpty()) throw Exception("Không đủ số dư (cần ${needSat/1e8} BTC, có ${totalInputSat/1e8} BTC)")
@@ -310,38 +317,65 @@ class WalletManager(private val ctx: Context) {
         val destAddress = Address.fromString(params, to)
         tx.addOutput(Coin.valueOf(needSat), destAddress)
 
-        var txSize = tx.bitcoinSerialize().size + selectedUtxos.size * 68
+        // Tính toán kích thước và fee
+        var txSize = tx.bitcoinSerialize().size + selectedUtxos.size * 68 + 10
         var feeSat = (txSize * feeRateSatVb).toLong()
         var changeSat = totalInputSat - needSat - feeSat
-        var hasChange = false
 
-        if (changeSat >= DUST_THRESHOLD) {
-            hasChange = true
-        } else if (changeSat > 0) {
+        // Xử lý change nhỏ hơn dust
+        if (changeSat in 1 until DUST_THRESHOLD) {
+            // Cộng change vào fee
             feeSat += changeSat
             changeSat = 0
-            txSize = tx.bitcoinSerialize().size + selectedUtxos.size * 68
+            // Tính lại kích thước (không có output change)
+            txSize = tx.bitcoinSerialize().size + selectedUtxos.size * 68 + 10
             feeSat = (txSize * feeRateSatVb).toLong()
             changeSat = totalInputSat - needSat - feeSat
-            if (changeSat >= DUST_THRESHOLD) {
-                hasChange = true
-            } else if (changeSat > 0) {
+            if (changeSat > 0 && changeSat < DUST_THRESHOLD) {
+                // Vẫn còn dust? cộng tiếp
                 feeSat += changeSat
                 changeSat = 0
-                hasChange = false
             }
         }
 
-        if (hasChange && changeSat > 0) {
+        if (changeSat > 0 && changeSat < DUST_THRESHOLD) {
+            throw Exception("Change output quá nhỏ ($changeSat sat) không thể xử lý")
+        }
+
+        if (changeSat >= DUST_THRESHOLD) {
             val changeAddress = Address.fromString(params, myAddressStr)
             tx.addOutput(Coin.valueOf(changeSat), changeAddress)
         } else if (changeSat < 0) {
-            throw Exception("Số dư không đủ để trả phí")
+            throw Exception("Số dư không đủ để trả phí, thiếu ${-changeSat} sat")
         }
 
+        // Đảm bảo fee tối thiểu 1 sat/byte
+        val minFee = tx.bitcoinSerialize().size * 1L
+        if (feeSat < minFee) {
+            feeSat = minFee
+            changeSat = totalInputSat - needSat - feeSat
+            if (changeSat >= DUST_THRESHOLD) {
+                if (tx.outputs.size > 1) {
+                    tx.outputs[1].value = Coin.valueOf(changeSat)
+                } else {
+                    val changeAddress = Address.fromString(params, myAddressStr)
+                    tx.addOutput(Coin.valueOf(changeSat), changeAddress)
+                }
+            } else if (changeSat > 0) {
+                // Cộng change vào fee
+                feeSat += changeSat
+                changeSat = 0
+                if (tx.outputs.size > 1) tx.outputs.removeAt(1)
+            }
+        }
+
+        Log.d("WalletManager", "Final fee: $feeSat sat, change: $changeSat sat")
+
+        // Lấy private key
         val key = getPrivateKeyForAddress(seedPhrase, myAddressStr)
         val myScript = ScriptBuilder.createOutputScript(Address.fromString(params, myAddressStr))
 
+        // Thêm inputs
         for (utxo in selectedUtxos) {
             val outPoint = Sha256Hash.wrap(utxo.txid)
             val txOutPoint = TransactionOutPoint(params, utxo.vout.toLong(), outPoint)
@@ -349,6 +383,7 @@ class WalletManager(private val ctx: Context) {
             tx.addInput(input)
         }
 
+        // Ký
         for (i in 0 until tx.inputs.size) {
             val input = tx.inputs[i]
             val sighash = tx.hashForSignature(i, myScript.program, Transaction.SigHash.ALL, false)
@@ -362,7 +397,7 @@ class WalletManager(private val ctx: Context) {
 
         tx.verify()
         val txHex = Utils.HEX.encode(tx.bitcoinSerialize())
-        Log.d("WalletManager", "TX hex: $txHex")
+        Log.d("WalletManager", "TX size: ${tx.bitcoinSerialize().size} bytes")
         return broadcastTx(txHex)
     }
 
@@ -378,6 +413,26 @@ class WalletManager(private val ctx: Context) {
     private data class Utxo(val txid: String, val vout: Int, val valueSat: Long, val scriptPubKey: String)
 
     private fun getUtxos(address: String): List<Utxo> {
+        val json = httpGet("https://blockstream.info/api/address/$address/utxo")
+        if (json.isBlank()) return emptyList()
+        val arr = JSONArray(json)
+        val list = mutableListOf<Utxo>()
+        for (i in 0 until arr.length()) {
+            val obj = arr.getJSONObject(i)
+            val status = obj.optJSONObject("status")
+            val confirmed = status?.optBoolean("confirmed", false) ?: false
+            if (!confirmed) continue
+            list.add(Utxo(
+                obj.getString("txid"),
+                obj.getInt("vout"),
+                obj.getLong("value"),
+                obj.optString("scriptpubkey", "")
+            ))
+        }
+        return list
+    }
+
+    private fun getUtxosAll(address: String): List<Utxo> {
         val json = httpGet("https://blockstream.info/api/address/$address/utxo")
         if (json.isBlank()) return emptyList()
         val arr = JSONArray(json)
