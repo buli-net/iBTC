@@ -700,7 +700,7 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this).setTitle("Nhận Bitcoin").setView(layout).setPositiveButton("Đóng", null).show()
     }
 
-    // ================== GỬI BTC (FIX LỖI DUST & HIỂN THỊ PHÍ) ==================
+    // ================== DIALOG GỬI BTC (FIX HIỂN THỊ PHÍ) ==================
     private fun showSendDialog() {
         if (isSyncing) {
             toast("Đang sync, vui lòng đợi")
@@ -772,6 +772,7 @@ class MainActivity : AppCompatActivity() {
         layout.addView(totalEstimateTv)
 
         var priceUsd = 60000.0
+        // Lấy giá ngay khi dialog hiện
         fetchBtcPriceUsd { p -> priceUsd = p }
 
         val dialog = AlertDialog.Builder(this)
@@ -792,9 +793,9 @@ class MainActivity : AppCompatActivity() {
                     balanceTv.text = "Số dư: ${"%.8f".format(currentBalance)} BTC"
                     feeProgress.visibility = View.GONE
                     feeGroup.visibility = View.VISIBLE
-                    rSlow.id = 1; rSlow.text = "Chậm ~60' (${feeRates.slow} sat/vB)"
-                    rNormal.id = 2; rNormal.text = "Thường ~30' (${feeRates.normal} sat/vB)"; rNormal.isChecked = true
-                    rFast.id = 3; rFast.text = "Nhanh ~10' (${feeRates.fast} sat/vB)"
+                    rSlow.id = 1; rSlow.text = "Chậm (${feeRates.slow} sat/vB)"
+                    rNormal.id = 2; rNormal.text = "Thường (${feeRates.normal} sat/vB)"; rNormal.isChecked = true
+                    rFast.id = 3; rFast.text = "Nhanh (${feeRates.fast} sat/vB)"
 
                     fun updateEstimates() {
                         val to = toInput.text.toString().trim()
@@ -806,8 +807,11 @@ class MainActivity : AppCompatActivity() {
                             else -> feeRates.normal
                         }
                         if (to.isNotEmpty() && to.length >= 26 && amt > 0) {
+                            // Nếu chưa có giá, hiển thị đang tải
                             if (priceUsd <= 0.0) {
                                 feeEstimateTv.text = "Đang tải giá..."
+                                totalEstimateTv.text = ""
+                                btn.isEnabled = false
                                 return
                             }
                             try {
@@ -817,7 +821,7 @@ class MainActivity : AppCompatActivity() {
                                 val totalUsd = total * priceUsd
                                 feeEstimateTv.text = "Phí: ${"%.8f".format(estFee)} BTC (~$${"%.2f".format(feeUsd)})"
                                 totalEstimateTv.text = "Tổng: ${"%.8f".format(total)} BTC (~$${"%.2f".format(totalUsd)})"
-                                // Cập nhật hiển thị radio
+                                // Cập nhật radio với USD
                                 rSlow.text = "Chậm (${feeRates.slow} sat/vB) ~ $${"%.2f".format(walletManager.estimateFee(to, amt, feeRates.slow) * priceUsd)}"
                                 rNormal.text = "Thường (${feeRates.normal} sat/vB) ~ $${"%.2f".format(walletManager.estimateFee(to, amt, feeRates.normal) * priceUsd)}"
                                 rFast.text = "Nhanh (${feeRates.fast} sat/vB) ~ $${"%.2f".format(walletManager.estimateFee(to, amt, feeRates.fast) * priceUsd)}"
