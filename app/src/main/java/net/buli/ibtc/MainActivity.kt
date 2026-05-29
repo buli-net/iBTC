@@ -700,7 +700,7 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this).setTitle("Nhận Bitcoin").setView(layout).setPositiveButton("Đóng", null).show()
     }
 
-    // ================== GỬI BTC - BẢN CẬP NHẬT LẤY SỐ DƯ ĐÚNG ==================
+    // ================== GỬI BTC (FIX LỖI DUST & HIỂN THỊ PHÍ) ==================
     private fun showSendDialog() {
         if (isSyncing) {
             toast("Đang sync, vui lòng đợi")
@@ -750,7 +750,7 @@ class MainActivity : AppCompatActivity() {
         val rFast = RadioButton(this)
         val rCustom = RadioButton(this).apply { id = 4; text = "Tùy chỉnh" }
         val customFeeInput = EditText(this).apply {
-            hint = "1-100 sat/vB"
+            hint = "1-500 sat/vB"
             inputType = InputType.TYPE_CLASS_NUMBER
             visibility = View.GONE
             setText("10")
@@ -785,7 +785,6 @@ class MainActivity : AppCompatActivity() {
             val btn = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
             btn.isEnabled = false
 
-            // Lấy balance và fee rates trong luồng nền
             Thread {
                 val currentBalance = walletManager.getBalance()
                 val feeRates = try { walletManager.getFeeRates() } catch (e: Exception) { FeeRates(5, 10, 20) }
@@ -803,10 +802,9 @@ class MainActivity : AppCompatActivity() {
                         val feeRate = when (feeGroup.checkedRadioButtonId) {
                             1 -> feeRates.slow
                             3 -> feeRates.fast
-                            4 -> customFeeInput.text.toString().toIntOrNull()?.coerceIn(1, 100) ?: 10
+                            4 -> customFeeInput.text.toString().toIntOrNull()?.coerceIn(1, 500) ?: 10
                             else -> feeRates.normal
                         }
-                        // Chỉ tính khi đã có địa chỉ và số tiền >0
                         if (to.isNotEmpty() && to.length >= 26 && amt > 0) {
                             if (priceUsd <= 0.0) {
                                 feeEstimateTv.text = "Đang tải giá..."
@@ -817,14 +815,13 @@ class MainActivity : AppCompatActivity() {
                                 val total = amt + estFee
                                 val feeUsd = estFee * priceUsd
                                 val totalUsd = total * priceUsd
-                                feeEstimateTv.text = "Ước tính phí: ${"%.8f".format(estFee)} BTC (~$${"%.2f".format(feeUsd)})"
+                                feeEstimateTv.text = "Phí: ${"%.8f".format(estFee)} BTC (~$${"%.2f".format(feeUsd)})"
                                 totalEstimateTv.text = "Tổng: ${"%.8f".format(total)} BTC (~$${"%.2f".format(totalUsd)})"
-                                // Cập nhật text cho các radio
-                                rSlow.text = "Chậm ~60' (${feeRates.slow} sat/vB) ~ $${"%.2f".format(walletManager.estimateFee(to, amt, feeRates.slow) * priceUsd)}"
-                                rNormal.text = "Thường ~30' (${feeRates.normal} sat/vB) ~ $${"%.2f".format(walletManager.estimateFee(to, amt, feeRates.normal) * priceUsd)}"
-                                rFast.text = "Nhanh ~10' (${feeRates.fast} sat/vB) ~ $${"%.2f".format(walletManager.estimateFee(to, amt, feeRates.fast) * priceUsd)}"
+                                // Cập nhật hiển thị radio
+                                rSlow.text = "Chậm (${feeRates.slow} sat/vB) ~ $${"%.2f".format(walletManager.estimateFee(to, amt, feeRates.slow) * priceUsd)}"
+                                rNormal.text = "Thường (${feeRates.normal} sat/vB) ~ $${"%.2f".format(walletManager.estimateFee(to, amt, feeRates.normal) * priceUsd)}"
+                                rFast.text = "Nhanh (${feeRates.fast} sat/vB) ~ $${"%.2f".format(walletManager.estimateFee(to, amt, feeRates.fast) * priceUsd)}"
                                 rCustom.text = "Tùy chỉnh (${feeRate} sat/vB) ~ $${"%.2f".format(estFee * priceUsd)}"
-                                // Quyết định enable nút dựa trên số dư hiện tại
                                 btn.isEnabled = total <= currentBalance
                                 btn.alpha = if (btn.isEnabled) 1f else 0.5f
                             } catch (e: Exception) {
@@ -865,7 +862,7 @@ class MainActivity : AppCompatActivity() {
                         val fee = when (feeGroup.checkedRadioButtonId) {
                             1 -> feeRates.slow
                             3 -> feeRates.fast
-                            4 -> customFeeInput.text.toString().toIntOrNull()?.coerceIn(1, 100) ?: 10
+                            4 -> customFeeInput.text.toString().toIntOrNull()?.coerceIn(1, 500) ?: 10
                             else -> feeRates.normal
                         }
                         val estFee = walletManager.estimateFee(to, amt, fee)
