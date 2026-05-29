@@ -10,6 +10,11 @@ import org.bitcoinj.params.MainNetParams
 import org.bitcoinj.wallet.DeterministicSeed
 import org.bitcoinj.wallet.SendRequest
 import org.bitcoinj.wallet.Wallet
+import org.json.JSONObject
+import java.io.BufferedReader
+import java.io.InputStreamReader
+import java.net.HttpURLConnection
+import java.net.URL
 import java.security.SecureRandom
 import java.util.*
 import kotlin.math.abs
@@ -26,7 +31,7 @@ class WalletManager(private val ctx: Context) {
     private var cachedSeed: String? = null
     private var cachedPassword: CharArray? = null
     private val prefs = ctx.getSharedPreferences("wallets", Context.MODE_PRIVATE)
-    private var lastPrice = 60000.0
+    private var lastPrice = 0.0  // khởi tạo 0, sẽ cập nhật khi gọi price()
 
     private val DUST_THRESHOLD = 546L
     private var syncCallback: ((Int, String) -> Unit)? = null
@@ -190,7 +195,6 @@ class WalletManager(private val ctx: Context) {
             val type = if (amount > 0) "RECEIVE" else "SEND"
             list.add(TransactionInfo(tx.getHashAsString(), abs(amount), type, tx.getUpdateTime()))
         }
-        // Sử dụng getPendingTransactions() không tham số (bitcoinj 0.16.3)
         val pending = wallet.getPendingTransactions()
         for (tx in pending) {
             val value = tx.getValue(wallet)
@@ -202,7 +206,30 @@ class WalletManager(private val ctx: Context) {
         return list
     }
 
-    fun price(): Double = lastPrice
+    // ================== LẤY GIÁ BTC TỪ API (KHÔNG CỨNG) ==================
+    fun price(): Double {
+        return try {
+            val url = URL("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT")
+            val conn = url.openConnection() as HttpURLConnection
+            conn.requestMethod = "GET"
+            conn.connectTimeout = 5000
+            conn.readTimeout = 5000
+            val reader = BufferedReader(InputStreamReader(conn.inputStream))
+            val response = reader.readText()
+            reader.close()
+            val json = JSONObject(response)
+            val price = json.getString("price").toDouble()
+            // Lưu lại để lần sau dùng
+            lastPrice = price
+            prefs.edit().putFloat("last_price", price.toFloat()).commit()
+            price
+        } catch (e: Exception) {
+            // Fallback: lấy giá đã lưu, nếu không có thì trả 0.0 (MainActivity sẽ hiển thị ---)
+            val saved = prefs.getFloat("last_price", 0f).toDouble()
+            if (saved > 0) saved else 0.0
+        }
+    }
+
     fun getFeeRates(): FeeRates = FeeRates(5, 10, 20)
 
     fun estimateFee(to: String, amountBTC: Double, feeRateSatVb: Int): Double {
