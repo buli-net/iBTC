@@ -113,7 +113,7 @@ class SyncService : Service() {
 
                 val walletFile = File(dir, "$walletId.wallet")
 
-                // KHÔNG XÓA FILE WALLET CŨ - CHỈ TẠO NẾU CHƯA CÓ
+                // Tạo wallet mới nếu chưa có (không xóa nếu đã có)
                 if (!walletFile.exists()) {
                     val words = seedPhrase.trim().lowercase().split(" ")
                     if (words.size == 12 || words.size == 24) {
@@ -129,7 +129,7 @@ class SyncService : Service() {
                     kit?.awaitTerminated()
                 } catch (_: Exception) {}
 
-                // Tạo kit mới - KHÔNG awaitRunning, KHÔNG xóa file
+                // Tạo kit mới - KHÔNG DÙNG CHECKPOINT
                 val newKit = WalletAppKit(params, dir, walletId).apply {
                     setBlockingStartup(false)
                     setDownloadListener(object : DownloadProgressTracker() {
@@ -153,33 +153,39 @@ class SyncService : Service() {
                         }
                     })
                     startAsync()
-                    // Bật autosave sau vài giây
-                    Thread.sleep(5000)
+                    // KHÔNG GỌI awaitRunning() để tránh lỗi
+                    // Đợi một chút rồi bật autosave
+                    Thread.sleep(3000)
                     try {
                         if (wallet() != null) {
                             wallet().autosaveToFile(File(dir, "$walletId.wallet"), 1, TimeUnit.SECONDS, null)
                         }
                     } catch (e: Exception) {
-                        // Bỏ qua
+                        // Bỏ qua lỗi autosave
                     }
                 }
                 kit = newKit
 
             } catch (e: Exception) {
-                // CHỈ XÓA FILE NẾU LỖI LIÊN QUAN ĐẾN SEED HOẶC WALLET CORRUPT
+                // *** SỬA QUAN TRỌNG: Chỉ xóa file nếu lỗi liên quan đến hỏng dữ liệu ***
                 val isWalletCorrupted = e.message?.contains("seed") == true ||
                                         e.message?.contains("wallet") == true ||
                                         e.message?.contains("checksum") == true
                 if (isWalletCorrupted) {
                     val dir = File(filesDir, "spv_wallets")
                     val walletFile = File(dir, "$walletId.wallet")
-                    if (walletFile.exists()) walletFile.delete()
+                    if (walletFile.exists()) {
+                        walletFile.delete()
+                    }
                 }
                 syncing = false
                 lastMessage = "Lỗi sync: ${e.message}"
                 updateNotification(lastMessage)
                 progressCallback?.invoke(lastProgress, lastMessage)
-                Thread.sleep(10000)
+                // Thử lại sau 10 giây nếu lỗi không phải do wallet hỏng
+                if (!isWalletCorrupted) {
+                    Thread.sleep(10000)
+                }
                 synchronized(this) { syncing = false }
             }
         }.start()
