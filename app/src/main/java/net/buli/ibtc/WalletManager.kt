@@ -7,8 +7,10 @@ import org.bitcoinj.crypto.ChildNumber
 import org.bitcoinj.crypto.DeterministicKey
 import org.bitcoinj.crypto.HDKeyDerivation
 import org.bitcoinj.params.MainNetParams
+import org.bitcoinj.script.Script
 import org.bitcoinj.wallet.DeterministicSeed
 import org.bitcoinj.wallet.SendRequest
+import org.bitcoinj.wallet.Wallet
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.DataOutputStream
@@ -62,6 +64,7 @@ class WalletManager(private val ctx: Context) {
             prefs.edit().putString("active_wallet_id", id).commit()
             locked = false
 
+            // Khởi động WalletAppKit với seed
             WalletKitService.start(ctx, id, seed)
 
             true
@@ -238,6 +241,7 @@ class WalletManager(private val ctx: Context) {
         return (68 + 62 + 11) * feeRateSatVb / 1e8
     }
 
+    // ================== GỬI BTC DÙNG WALLET TỪ KIT ==================
     fun send(to: String, amountBTC: Double, feeRateSatVb: Int): String {
         if (feeRateSatVb < 1 || feeRateSatVb > 500) {
             throw Exception("Fee rate không hợp lệ (1-500 sat/vB)")
