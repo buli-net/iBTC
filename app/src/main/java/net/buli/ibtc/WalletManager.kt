@@ -9,9 +9,9 @@ import org.bitcoinj.crypto.HDKeyDerivation
 import org.bitcoinj.params.MainNetParams
 import org.bitcoinj.wallet.DeterministicSeed
 import org.bitcoinj.wallet.SendRequest
-import org.bitcoinj.wallet.Wallet
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.DataOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.SecureRandom
@@ -33,7 +33,6 @@ class WalletManager(private val ctx: Context) {
     private var lastPrice = prefs.getFloat("last_price", 65000f).toDouble()
 
     private val DUST_THRESHOLD = 546L
-    private val GAP_LIMIT = 50
 
     init {
         restoreActiveWallet()
@@ -63,7 +62,6 @@ class WalletManager(private val ctx: Context) {
             prefs.edit().putString("active_wallet_id", id).commit()
             locked = false
 
-            // Khởi động WalletAppKit với seed
             WalletKitService.start(ctx, id, seed)
 
             true
@@ -98,7 +96,6 @@ class WalletManager(private val ctx: Context) {
         prefs.edit().putString("active_wallet_id", id).commit()
         locked = false
 
-        // Khởi động WalletAppKit với seed mới
         WalletKitService.start(ctx, id, mnemonic)
 
         return info
@@ -109,7 +106,7 @@ class WalletManager(private val ctx: Context) {
             val clean = phrase.trim().lowercase().replace(Regex("\\s+"), " ")
             val words = clean.split(" ")
             if (words.size != 12 && words.size != 24) return null
-            DeterministicSeed(words, null, "", 0L)  // validate
+            DeterministicSeed(words, null, "", 0L)
 
             val id = UUID.randomUUID().toString()
             val walletName = if (name.isBlank()) "Imported Wallet" else name
@@ -152,7 +149,6 @@ class WalletManager(private val ctx: Context) {
         return prefs.getString("${id}_address", "") ?: ""
     }
 
-    // ================== BALANCE & TRANSACTIONS (vẫn dùng API) ==================
     fun getBalance(): Double {
         return try {
             val address = getAddress()
@@ -239,16 +235,13 @@ class WalletManager(private val ctx: Context) {
     }
 
     fun estimateFee(to: String, amountBTC: Double, feeRateSatVb: Int): Double {
-        // Ước lượng đơn giản 1 input + 2 outputs
         return (68 + 62 + 11) * feeRateSatVb / 1e8
     }
 
-    // ================== GỬI BTC DÙNG SendRequest (FIX -26) ==================
     fun send(to: String, amountBTC: Double, feeRateSatVb: Int): String {
         if (feeRateSatVb < 1 || feeRateSatVb > 500) {
             throw Exception("Fee rate không hợp lệ (1-500 sat/vB)")
         }
-        val seedPhrase = cachedSeed ?: throw Exception("Ví chưa được mở khóa")
         val wallet = WalletKitService.wallet()
             ?: throw Exception("Wallet chưa sẵn sàng, vui lòng đợi đồng bộ")
 
@@ -259,20 +252,16 @@ class WalletManager(private val ctx: Context) {
 
         val address = Address.fromString(params, to)
         val req = SendRequest.to(address, coin)
-        // Bitcoinj dùng fee per Kb, quy đổi từ sat/vB
         req.feePerKb = Coin.valueOf((feeRateSatVb * 1000).toLong())
         req.ensureMinRequiredFee = true
 
-        // Gửi transaction
         val result = wallet.sendCoins(req)
             ?: throw Exception("Send failed, không tạo được transaction")
 
-        // Broadcast qua peer group nếu có
         val peerGroup = WalletKitService.peerGroup()
         if (peerGroup != null) {
             peerGroup.broadcastTransaction(result.tx).future()
         } else {
-            // Fallback: broadcast qua API
             val txHex = Utils.HEX.encode(result.tx.bitcoinSerialize())
             broadcastViaApi(txHex)
         }
@@ -315,7 +304,6 @@ class WalletManager(private val ctx: Context) {
         }
     }
 
-    // Helper: get address từ seed và index
     private fun getAddressAtIndex(seedPhrase: String, index: Int): String {
         val seed = DeterministicSeed(seedPhrase.split(" "), null, "", 0L)
         val seedBytes = seed.seedBytes!!
