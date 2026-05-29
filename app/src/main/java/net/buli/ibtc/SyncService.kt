@@ -25,7 +25,9 @@ class SyncService : Service() {
     private val NOTIFICATION_ID = 1
     private var progressCallback: ((Int, String) -> Unit)? = null
     private var currentWalletId: String = ""
-    private var isSynced = false  // thêm biến để theo dõi trạng thái sync
+    private var isSynced = false
+    private var lastProgress = 0
+    private var lastMessage = "Đang khởi động..."
 
     companion object {
         private var instance: SyncService? = null
@@ -36,7 +38,7 @@ class SyncService : Service() {
         super.onCreate()
         instance = this
         createNotificationChannel()
-        startForeground(NOTIFICATION_ID, buildNotification("Đang khởi động..."))
+        startForeground(NOTIFICATION_ID, buildNotification(lastMessage))
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -103,15 +105,18 @@ class SyncService : Service() {
             kit.setDownloadListener(object : DownloadProgressTracker() {
                 override fun progress(pct: Double, blocksSoFar: Int, date: java.util.Date?) {
                     val percent = pct.toInt()
-                    val msg = "Đồng bộ blockchain: $percent%"
-                    updateNotification(msg)
-                    progressCallback?.invoke(percent, msg)
+                    lastProgress = percent
+                    lastMessage = "Đồng bộ blockchain: $percent%"
+                    updateNotification(lastMessage)
+                    progressCallback?.invoke(lastProgress, lastMessage)
                 }
 
                 override fun doneDownload() {
-                    isSynced = true  // đánh dấu đã sync xong
-                    updateNotification("Đã đồng bộ xong")
-                    progressCallback?.invoke(100, "Đã đồng bộ blockchain")
+                    isSynced = true
+                    lastProgress = 100
+                    lastMessage = "Đã đồng bộ blockchain"
+                    updateNotification(lastMessage)
+                    progressCallback?.invoke(lastProgress, lastMessage)
                 }
             })
 
@@ -127,13 +132,13 @@ class SyncService : Service() {
 
     fun setProgressCallback(callback: ((Int, String) -> Unit)?) {
         progressCallback = callback
+        // Gửi lại trạng thái hiện tại ngay khi callback được đăng ký
+        callback?.invoke(lastProgress, lastMessage)
     }
 
     fun getWallet(): Wallet? = kit?.wallet()
     fun getPeerGroup() = kit?.peerGroup()
     fun getWalletId(): String = currentWalletId
-
-    // Kiểm tra đồng bộ dựa trên biến isSynced từ callback
     fun isWalletSynced(): Boolean = isSynced
 
     override fun onDestroy() {
