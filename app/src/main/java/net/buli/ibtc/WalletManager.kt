@@ -98,7 +98,7 @@ class WalletManager(private val ctx: Context) {
 
     fun import(name: String, phrase: String, password: String): WalletInfo? {
         return try {
-            val clean = phrase.trim().lowercase().replace(Regex("\s+"), " ")
+            val clean = phrase.trim().lowercase().replace(Regex("\\s+"), " ")
             val words = clean.split(" ")
             if (words.size != 12 && words.size != 24) return null
             DeterministicSeed(words, null, "", 0L)
@@ -259,7 +259,7 @@ class WalletManager(private val ctx: Context) {
 
         // 2. Tính phí
         val estSize = 10 + inputs.size * 68 + 34 * 2
-        val fee = estSize * feeRateSatVb
+        val fee = estSize * feeRateSatVb.toLong()
         val change = totalIn - amountSat - fee
 
         if (change < 0) throw Exception("Insufficient money, thiếu ${-change} sats cho phí")
@@ -277,7 +277,7 @@ class WalletManager(private val ctx: Context) {
 
         // Add inputs
         for ((txid, vout, _) in inputs) {
-            tx.addInput(Sha256Hash.wrap(txid), vout, ScriptBuilder.createEmpty())
+            tx.addInput(Sha256Hash.wrap(txid), vout.toLong(), ScriptBuilder.createEmpty())
         }
 
         // 4. Ký
@@ -298,7 +298,9 @@ class WalletManager(private val ctx: Context) {
         for (i in inputs.indices) {
             val value = Coin.valueOf(inputs[i].third)
             val sig = tx.calculateWitnessSignature(i, ecKey, fromScript.program, value, Transaction.SigHash.ALL, false)
-            val witness = TransactionWitness.of(sig.encodeToBitcoin(), ecKey.pubKey)
+            val witness = TransactionWitness(2)
+            witness.setPush(0, sig.encodeToBitcoin())
+            witness.setPush(1, ecKey.pubKey)
             tx.getInput(i).setWitness(witness)
         }
 
