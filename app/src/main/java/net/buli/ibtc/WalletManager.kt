@@ -33,9 +33,14 @@ class WalletManager(private val ctx: Context) {
     private var lastPrice = prefs.getFloat("last_price", 65000f).toDouble()
 
     private val DUST_THRESHOLD = 546L
+    private var syncCallback: ((Int, String) -> Unit)? = null
 
     init {
         restoreActiveWallet()
+    }
+
+    fun onProgress(cb: (Int, String) -> Unit) {
+        syncCallback = cb
     }
 
     fun hasWallets(): Boolean {
@@ -62,7 +67,7 @@ class WalletManager(private val ctx: Context) {
             prefs.edit().putString("active_wallet_id", id).commit()
             locked = false
 
-            WalletKitService.start(ctx, id, seed)
+            WalletKitService.start(ctx, id, seed, syncCallback)
 
             true
         } catch (e: Exception) {
@@ -96,7 +101,7 @@ class WalletManager(private val ctx: Context) {
         prefs.edit().putString("active_wallet_id", id).commit()
         locked = false
 
-        WalletKitService.start(ctx, id, mnemonic)
+        WalletKitService.start(ctx, id, mnemonic, syncCallback)
 
         return info
     }
@@ -124,7 +129,7 @@ class WalletManager(private val ctx: Context) {
             prefs.edit().putString("active_wallet_id", id).commit()
             locked = false
 
-            WalletKitService.start(ctx, id, clean)
+            WalletKitService.start(ctx, id, clean, syncCallback)
 
             info
         } catch (e: Exception) {
@@ -238,11 +243,9 @@ class WalletManager(private val ctx: Context) {
         return (68 + 62 + 11) * feeRateSatVb / 1e8
     }
 
-    // ================== SEND ĐÃ SỬA ==================
+    // ================== SEND (có cập nhật trạng thái) ==================
     fun send(to: String, amountBTC: Double, feeRateSatVb: Int): String {
-        if (feeRateSatVb < 1 || feeRateSatVb > 500) {
-            throw Exception("Fee rate không hợp lệ (1-500 sat/vB)")
-        }
+        syncCallback?.invoke(10, "Kiểm tra wallet...")
         val wallet = WalletKitService.wallet()
             ?: throw Exception("Wallet chưa sẵn sàng, vui lòng đợi đồng bộ")
 
@@ -258,11 +261,12 @@ class WalletManager(private val ctx: Context) {
         req.changeAddress = wallet.currentReceiveAddress()
         req.ensureMinRequiredFee = true
 
+        syncCallback?.invoke(40, "Đang tạo và ký giao dịch...")
         val result = wallet.sendCoins(req)
             ?: throw Exception("Send failed, không tạo được transaction")
 
+        syncCallback?.invoke(70, "Đang broadcast giao dịch...")
         val peerGroup = WalletKitService.peerGroup()
-        // SỬA LỖI: connectedPeers là List, cần lấy size
         if (peerGroup != null && peerGroup.connectedPeers.isNotEmpty()) {
             peerGroup.broadcastTransaction(result.tx).future()
         } else {
@@ -270,6 +274,7 @@ class WalletManager(private val ctx: Context) {
             broadcastViaApi(txHex)
         }
 
+        syncCallback?.invoke(100, "Đã gửi thành công! TXID: ${result.tx.hashAsString.take(8)}...")
         return result.tx.hashAsString
     }
 
@@ -354,7 +359,6 @@ class WalletManager(private val ctx: Context) {
     fun init() {}
     fun stop() { WalletKitService.stop() }
     fun isLocked(): Boolean = locked
-    fun onProgress(cb: (Int, String) -> Unit) { cb(100, "Ví sẵn sàng") }
 
     fun changePassword(oldPassword: String, newPassword: String): Boolean {
         return try {
