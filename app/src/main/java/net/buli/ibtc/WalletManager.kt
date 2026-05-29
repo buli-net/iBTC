@@ -4,10 +4,11 @@ import android.content.Context
 import android.util.Log
 import org.bitcoinj.core.*
 import org.bitcoinj.crypto.ChildNumber
+import org.bitcoinj.crypto.DeterministicKey
 import org.bitcoinj.crypto.HDKeyDerivation
 import org.bitcoinj.params.MainNetParams
-import org.bitcoinj.script.ScriptBuilder
 import org.bitcoinj.wallet.DeterministicSeed
+import org.bitcoinj.wallet.SendRequest
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.DataOutputStream
@@ -60,7 +61,9 @@ class WalletManager(private val ctx: Context) {
             active = WalletInfo(id, name)
             prefs.edit().putString("active_wallet_id", id).commit()
             locked = false
+
             WalletKitService.start(ctx, id, seed)
+
             true
         } catch (e: Exception) {
             false
@@ -92,7 +95,9 @@ class WalletManager(private val ctx: Context) {
         active = info
         prefs.edit().putString("active_wallet_id", id).commit()
         locked = false
+
         WalletKitService.start(ctx, id, mnemonic)
+
         return info
     }
 
@@ -118,7 +123,9 @@ class WalletManager(private val ctx: Context) {
             active = info
             prefs.edit().putString("active_wallet_id", id).commit()
             locked = false
+
             WalletKitService.start(ctx, id, clean)
+
             info
         } catch (e: Exception) {
             null
@@ -228,85 +235,42 @@ class WalletManager(private val ctx: Context) {
     }
 
     fun estimateFee(to: String, amountBTC: Double, feeRateSatVb: Int): Double {
-        return (141 * feeRateSatVb) / 1e8
+        return (68 + 62 + 11) * feeRateSatVb / 1e8
     }
 
-    // ================== SEND API-BASED (FIX) ==================
+    // ================== SEND ĐÃ SỬA ==================
     fun send(to: String, amountBTC: Double, feeRateSatVb: Int): String {
-        val seedPhrase = cachedSeed ?: throw Exception("Vui lòng unlock ví")
         if (feeRateSatVb < 1 || feeRateSatVb > 500) {
             throw Exception("Fee rate không hợp lệ (1-500 sat/vB)")
         }
-        val fromAddress = getAddress()
-        val amountSat = (amountBTC * 1e8).toLong()
-        if (amountSat < DUST_THRESHOLD) throw Exception("Số tiền quá nhỏ (dưới 546 sat)")
+        val wallet = WalletKitService.wallet()
+            ?: throw Exception("Wallet chưa sẵn sàng, vui lòng đợi đồng bộ")
 
-        // 1. Lấy UTXO từ Blockstream
-        val utxoJson = httpGet("https://blockstream.info/api/address/$fromAddress/utxo")
-        if (utxoJson.isBlank()) throw Exception("Không lấy được UTXO")
-        val utxos = JSONArray(utxoJson)
-        if (utxos.length() == 0) throw Exception("Ví không có UTXO")
-
-        var totalIn = 0L
-        val inputs = mutableListOf<Triple<String, Int, Long>>()
-        for (i in 0 until utxos.length()) {
-            val u = utxos.getJSONObject(i)
-            val value = u.getLong("value")
-            totalIn += value
-            inputs.add(Triple(u.getString("txid"), u.getInt("vout"), value))
-            if (totalIn >= amountSat + 20000) break
+        val coin = Coin.valueOf((amountBTC * 1e8).toLong())
+        if (coin.isLessThan(Coin.valueOf(DUST_THRESHOLD))) {
+            throw Exception("Số tiền quá nhỏ (dưới 546 satoshi)")
         }
 
-        // 2. Tính phí
-        val estSize = 10 + inputs.size * 68 + 34 * 2
-        val fee = estSize * feeRateSatVb
-        val change = totalIn - amountSat - fee
+        val address = Address.fromString(params, to)
+        val req = SendRequest.to(address, coin)
 
-        if (change < 0) throw Exception("Insufficient money, thiếu ${-change} sats cho phí")
-        
-        // 3. Tạo transaction
-        val tx = Transaction(params)
-        val toAddr = Address.fromString(params, to)
-        tx.addOutput(Coin.valueOf(amountSat), toAddr)
-        
-        var hasChange = false
-        if (change >= DUST_THRESHOLD) {
-            tx.addOutput(Coin.valueOf(change), Address.fromString(params, fromAddress))
-            hasChange = true
+        req.feePerKb = Coin.valueOf(feeRateSatVb * 1000L)
+        req.changeAddress = wallet.currentReceiveAddress()
+        req.ensureMinRequiredFee = true
+
+        val result = wallet.sendCoins(req)
+            ?: throw Exception("Send failed, không tạo được transaction")
+
+        val peerGroup = WalletKitService.peerGroup()
+        // SỬA LỖI: connectedPeers là List, cần lấy size
+        if (peerGroup != null && peerGroup.connectedPeers.isNotEmpty()) {
+            peerGroup.broadcastTransaction(result.tx).future()
+        } else {
+            val txHex = Utils.HEX.encode(result.tx.bitcoinSerialize())
+            broadcastViaApi(txHex)
         }
 
-        // Add inputs
-        for ((txid, vout, _) in inputs) {
-            tx.addInput(Sha256Hash.wrap(txid), vout.toLong(), ScriptBuilder.createEmpty())
-        }
-
-        // 4. Ký
-        val seed = DeterministicSeed(seedPhrase.split(" "), null, "", 0L)
-        var key = HDKeyDerivation.createMasterPrivateKey(seed.seedBytes!!)
-        val path = listOf(
-            ChildNumber(84, true),
-            ChildNumber(0, true),
-            ChildNumber(0, true),
-            ChildNumber(0, false),
-            ChildNumber(0, false)
-        )
-        for (p in path) key = HDKeyDerivation.deriveChildKey(key, p)
-        val ecKey = ECKey.fromPrivate(key.privKeyBytes!!)
-
-        val fromScript = ScriptBuilder.createOutputScript(Address.fromString(params, fromAddress))
-
-        for (i in inputs.indices) {
-            val value = Coin.valueOf(inputs[i].third)
-            val sig = tx.calculateWitnessSignature(i, ecKey, fromScript.program, value, Transaction.SigHash.ALL, false)
-            val witness = TransactionWitness(2)
-            witness.setPush(0, sig.encodeToBitcoin())
-            witness.setPush(1, ecKey.pubKey)
-            tx.getInput(i).witness = witness
-        }
-
-        // 5. Broadcast
-        val txHex = Utils.HEX.encode(tx.bitcoinSerialize())
-        return broadcastViaApi(txHex)
+        return result.tx.hashAsString
     }
 
     private fun broadcastViaApi(txHex: String): String {
