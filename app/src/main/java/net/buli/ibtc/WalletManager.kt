@@ -188,14 +188,14 @@ class WalletManager(private val ctx: Context) {
             val value = tx.getValue(wallet)
             val amount = value.value / 1e8
             val type = if (amount > 0) "RECEIVE" else "SEND"
-            list.add(TransactionInfo(tx.txId.toString(), abs(amount), type, Date(tx.updateTime.time)))
+            list.add(TransactionInfo(tx.getTxId().toString(), abs(amount), type, Date(tx.getUpdateTime().time)))
         }
         val pending = wallet.getTransactionPool().getPendingTransactions()
         for ((_, tx) in pending) {
             val value = tx.getValue(wallet)
             val amount = value.value / 1e8
             val type = if (amount > 0) "RECEIVE" else "SEND"
-            list.add(TransactionInfo(tx.txId.toString(), abs(amount), "$type (pending)", Date(tx.updateTime.time)))
+            list.add(TransactionInfo(tx.getTxId().toString(), abs(amount), "$type (pending)", Date(tx.getUpdateTime().time)))
         }
         list.sortByDescending { it.time }
         return list
@@ -212,7 +212,7 @@ class WalletManager(private val ctx: Context) {
         var selectedSize = 0
         var totalSat = 0L
         for (utxo in utxos) {
-            totalSat += utxo.value.value
+            totalSat += utxo.getValue().value
             selectedSize++
             val approxFee = (selectedSize * 68 + 2 * 31 + 11) * feeRateSatVb
             if (totalSat >= needSat + approxFee) break
@@ -241,7 +241,7 @@ class WalletManager(private val ctx: Context) {
         val peerGroup = SyncService.getInstance()?.getPeerGroup()
             ?: throw Exception("PeerGroup null, chưa kết nối mạng")
 
-        if (peerGroup.connectedPeers.isEmpty()) {
+        if (peerGroup.getConnectedPeers().isEmpty()) {
             throw Exception("Chưa kết nối peer nào, không thể broadcast")
         }
 
@@ -286,7 +286,7 @@ class WalletManager(private val ctx: Context) {
             throw Exception("Commit tx lỗi (nhưng giao dịch đã broadcast): ${e.message}")
         }
 
-        return req.tx.txId.toString()
+        return req.tx.getTxId().toString()
     }
 
     private fun getAddressAtIndex(seedPhrase: String, index: Int): String {
