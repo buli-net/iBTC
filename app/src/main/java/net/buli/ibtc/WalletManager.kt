@@ -190,7 +190,8 @@ class WalletManager(private val ctx: Context) {
             val type = if (amount > 0) "RECEIVE" else "SEND"
             list.add(TransactionInfo(tx.getHashAsString(), abs(amount), type, tx.getUpdateTime()))
         }
-        val pending = wallet.getTransactionPool().getPendingTransactions()
+        // Sử dụng getPendingTransactions() không tham số (bitcoinj 0.16.3)
+        val pending = wallet.getPendingTransactions()
         for (tx in pending) {
             val value = tx.getValue(wallet)
             val amount = value.value / 1e8
@@ -220,7 +221,7 @@ class WalletManager(private val ctx: Context) {
         }
     }
 
-    // ========== SEND (FIXED) ==========
+    // ========== SEND ==========
     fun send(to: String, amountBTC: Double, feeRateSatVb: Int): String {
         if (feeRateSatVb < 1 || feeRateSatVb > 500) {
             throw Exception("Fee rate không hợp lệ (1-500 sat/vB)")
@@ -253,16 +254,12 @@ class WalletManager(private val ctx: Context) {
         req.shuffleOutputs = true
         req.changeAddress = wallet.currentReceiveAddress()
 
-        // Cho phép chi tiêu UTXO chưa confirm (tránh missing money)
-        wallet.allowSpendingUnconfirmedTransactions()
-
         try {
             wallet.completeTx(req)
         } catch (e: Exception) {
             throw Exception("Không tạo được transaction: ${e.message}")
         }
 
-        // Broadcast trước, commit sau
         try {
             val broadcastFuture = peerGroup.broadcastTransaction(req.tx)
             broadcastFuture.future().get()
@@ -273,7 +270,6 @@ class WalletManager(private val ctx: Context) {
         try {
             wallet.commitTx(req.tx)
         } catch (e: Exception) {
-            // Commit có thể thất bại nếu tx đã có, nhưng broadcast đã thành công
             throw Exception("Commit tx lỗi (giao dịch đã broadcast): ${e.message}")
         }
 
