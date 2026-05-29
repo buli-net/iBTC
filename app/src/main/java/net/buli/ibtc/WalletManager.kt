@@ -269,24 +269,34 @@ class WalletManager(private val ctx: Context) {
         }
     }
 
+    // ================== ESTIMATE FEE DỰA TRÊN UTXO THỰC ==================
     fun estimateFee(to: String, amountBTC: Double, feeRateSatVb: Int): Double {
         return try {
             val address = getAddress()
-            if (address.isBlank()) return 0.0
+            if (address.isBlank()) {
+                Log.e("WalletManager", "estimateFee: address blank")
+                return 0.0
+            }
             val utxos = getUtxos(address)
-            if (utxos.isEmpty()) return 0.0
+            if (utxos.isEmpty()) {
+                Log.e("WalletManager", "estimateFee: no utxos found")
+                return 0.0
+            }
             val needSat = (amountBTC * 1e8).toLong()
             if (needSat <= 0) return 0.0
+
+            // Chọn UTXO tạm thời để ước lượng số lượng input cần dùng
             val (selected, _) = selectUtxos(utxos, needSat, feeRateSatVb)
             if (selected.isEmpty()) return 0.0
-            // Kích thước ước lượng: mỗi input segwit ~68 bytes, 2 output (nhận + change) ~31 bytes mỗi output
+
             val inputSize = selected.size * 68
-            val outputSize = 2 * 31
+            val outputSize = 2 * 31  // 1 cho người nhận + 1 change (nếu có)
             val txSize = inputSize + outputSize + 11
             val feeSat = txSize * feeRateSatVb
             feeSat.toDouble() / 1e8
         } catch (e: Exception) {
             Log.e("WalletManager", "estimateFee error: ${e.message}")
+            // Fallback an toàn: 1 input, 2 outputs
             (68 + 62 + 11) * feeRateSatVb / 1e8
         }
     }
@@ -303,7 +313,8 @@ class WalletManager(private val ctx: Context) {
         if (needSat < DUST_THRESHOLD) throw Exception("Số tiền quá nhỏ (dưới 546 satoshi - dust)")
 
         val utxos = getUtxos(myAddressStr)
-        if (utxos.isEmpty()) throw Exception("Ví không có UTXO nào (có thể chưa nhận được tiền)")
+        Log.d("WalletManager", "UTXOs found: ${utxos.size}")
+        if (utxos.isEmpty()) throw Exception("Ví không có UTXO nào (có thể chưa nhận được tiền hoặc API lỗi)")
 
         val (selectedUtxos, totalInputSat) = selectUtxos(utxos, needSat, feeRateSatVb)
         if (selectedUtxos.isEmpty()) throw Exception("Không đủ số dư (cần ${needSat/1e8} BTC, có ${totalInputSat/1e8} BTC)")
@@ -312,7 +323,7 @@ class WalletManager(private val ctx: Context) {
         val destAddress = Address.fromString(params, to)
         tx.addOutput(Coin.valueOf(needSat), destAddress)
 
-        // Tính toán tạm thời fee và change
+        // Tính toán fee và change
         var txSize = tx.bitcoinSerialize().size + selectedUtxos.size * 68
         var feeSat = (txSize * feeRateSatVb).toLong()
         var changeSat = totalInputSat - needSat - feeSat
@@ -324,7 +335,6 @@ class WalletManager(private val ctx: Context) {
             // Gộp change nhỏ vào fee
             feeSat += changeSat
             changeSat = 0
-            // Tính lại kích thước (không có output change)
             txSize = tx.bitcoinSerialize().size + selectedUtxos.size * 68
             feeSat = (txSize * feeRateSatVb).toLong()
             changeSat = totalInputSat - needSat - feeSat
@@ -344,11 +354,9 @@ class WalletManager(private val ctx: Context) {
             throw Exception("Số dư không đủ để trả phí")
         }
 
-        // Lấy private key
         val key = getPrivateKeyForAddress(seedPhrase, myAddressStr)
         val myScript = ScriptBuilder.createOutputScript(Address.fromString(params, myAddressStr))
 
-        // Thêm inputs
         for (utxo in selectedUtxos) {
             val outPoint = Sha256Hash.wrap(utxo.txid)
             val txOutPoint = TransactionOutPoint(params, utxo.vout.toLong(), outPoint)
@@ -356,7 +364,6 @@ class WalletManager(private val ctx: Context) {
             tx.addInput(input)
         }
 
-        // Ký các input
         for (i in 0 until tx.inputs.size) {
             val input = tx.inputs[i]
             val sighash = tx.hashForSignature(i, myScript.program, Transaction.SigHash.ALL, false)
@@ -368,7 +375,6 @@ class WalletManager(private val ctx: Context) {
             input.setWitness(witness)
         }
 
-        // Verify trước khi broadcast
         tx.verify()
         val txHex = Utils.HEX.encode(tx.bitcoinSerialize())
         Log.d("WalletManager", "TX hex: $txHex")
@@ -387,7 +393,9 @@ class WalletManager(private val ctx: Context) {
     private data class Utxo(val txid: String, val vout: Int, val valueSat: Long, val scriptPubKey: String)
 
     private fun getUtxos(address: String): List<Utxo> {
-        val json = httpGet("https://blockstream.info/api/address/$address/utxo")
+        val url = "https://blockstream.info/api/address/$address/utxo"
+        val json = httpGet(url)
+        Log.d("WalletManager", "getUtxos response: ${json.take(200)}")
         if (json.isBlank()) return emptyList()
         val arr = JSONArray(json)
         val list = mutableListOf<Utxo>()
@@ -395,7 +403,8 @@ class WalletManager(private val ctx: Context) {
             val obj = arr.getJSONObject(i)
             val status = obj.optJSONObject("status")
             val confirmed = status?.optBoolean("confirmed", false) ?: false
-            if (!confirmed) continue
+            // Tạm thời lấy cả UTXO chưa confirm để test (nếu cần)
+            // if (!confirmed) continue
             list.add(Utxo(
                 obj.getString("txid"),
                 obj.getInt("vout"),
@@ -403,6 +412,7 @@ class WalletManager(private val ctx: Context) {
                 obj.optString("scriptpubkey", "")
             ))
         }
+        Log.d("WalletManager", "UTXOs count: ${list.size}")
         return list
     }
 
@@ -490,7 +500,10 @@ class WalletManager(private val ctx: Context) {
             conn.readTimeout = 10000
             conn.setRequestProperty("User-Agent", "Mozilla/5.0")
             conn.inputStream.bufferedReader().use { it.readText() }
-        } catch (e: Exception) { "" }
+        } catch (e: Exception) {
+            Log.e("WalletManager", "httpGet error: ${e.message}")
+            ""
+        }
     }
 
     fun init() {}
