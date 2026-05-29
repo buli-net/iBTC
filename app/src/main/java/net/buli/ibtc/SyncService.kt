@@ -17,6 +17,7 @@ import org.bitcoinj.script.ScriptType
 import org.bitcoinj.wallet.DeterministicSeed
 import org.bitcoinj.wallet.Wallet
 import java.io.File
+import java.util.Date
 import java.util.concurrent.TimeUnit
 
 class SyncService : Service() {
@@ -130,7 +131,7 @@ class SyncService : Service() {
                 kit = WalletAppKit(params, dir, walletId).apply {
                     setBlockingStartup(false)
                     setDownloadListener(object : DownloadProgressTracker() {
-                        override fun progress(pct: Double, blocksSoFar: Int, date: java.util.Date?) {
+                        override fun progress(pct: Double, blocksSoFar: Int, date: Date?) {
                             var p = pct.toInt()
                             if (p < 0) p = 0
                             if (p > 100) p = 100
@@ -141,7 +142,6 @@ class SyncService : Service() {
                         }
 
                         override fun doneDownload() {
-                            // Đợi peer group có kết nối
                             Thread.sleep(3000)
                             isSynced = true
                             lastProgress = 100
@@ -152,7 +152,6 @@ class SyncService : Service() {
                     })
                     startAsync()
                     awaitRunning()
-                    // Bật auto-save: file, interval 1 giây, listener null
                     wallet().autosaveToFile(File(dir, "$walletId.wallet"), 1, TimeUnit.SECONDS, null)
                 }
             } catch (e: Exception) {
