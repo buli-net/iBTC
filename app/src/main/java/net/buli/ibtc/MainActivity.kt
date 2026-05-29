@@ -70,14 +70,14 @@ class MainActivity : AppCompatActivity() {
         walletManager = WalletManager(this)
         setupRootLayout()
         setContentView(scrollView)
-        
+
         screenReceiver = object : BroadcastReceiver() {
             override fun onReceive(c: Context?, intent: Intent?) {
                 if (intent?.action == Intent.ACTION_SCREEN_OFF) { }
             }
         }
         registerReceiver(screenReceiver, IntentFilter(Intent.ACTION_SCREEN_OFF))
-        
+
         try {
             if (walletManager.getActiveId() != null || walletManager.hasWallets()) {
                 showUnlockDialog()
@@ -700,7 +700,7 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this).setTitle("Nhận Bitcoin").setView(layout).setPositiveButton("Đóng", null).show()
     }
 
-    // ================== CÁC HÀM GỬI BTC ĐÃ FIX ==================
+    // ================== GỬI BTC ĐÃ SỬA LỖI ==================
     private fun showSendDialog() {
         if (isSyncing) {
             toast("Đang sync, vui lòng đợi")
@@ -734,9 +734,8 @@ class MainActivity : AppCompatActivity() {
             inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
         }
 
-        val balance = walletManager.getBalance()
         val balanceTv = TextView(this).apply {
-            text = "Số dư: ${"%.8f".format(balance)} BTC"
+            text = "Đang tải số dư..."
             setTextColor(0xFF888888.toInt())
             setPadding(0,10,0,10)
         }
@@ -786,9 +785,12 @@ class MainActivity : AppCompatActivity() {
             val btn = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
             btn.isEnabled = false
 
+            // Lấy fee rates và balance ban đầu
             Thread {
                 val feeRates = try { walletManager.getFeeRates() } catch (e: Exception) { FeeRates(5, 10, 20) }
+                var currentBalance = walletManager.getBalance()
                 runOnUiThread {
+                    balanceTv.text = "Số dư: ${"%.8f".format(currentBalance)} BTC"
                     feeProgress.visibility = View.GONE
                     feeGroup.visibility = View.VISIBLE
                     rSlow.id = 1; rSlow.text = "Chậm ~60' (${feeRates.slow} sat/vB)"
@@ -816,8 +818,16 @@ class MainActivity : AppCompatActivity() {
                                 rNormal.text = "Thường ~30' (${feeRates.normal} sat/vB) ~ $${"%.2f".format(walletManager.estimateFee(to, amt, feeRates.normal) * priceUsd)}"
                                 rFast.text = "Nhanh ~10' (${feeRates.fast} sat/vB) ~ $${"%.2f".format(walletManager.estimateFee(to, amt, feeRates.fast) * priceUsd)}"
                                 rCustom.text = "Tùy chỉnh (${feeRate} sat/vB) ~ $${"%.2f".format(estFee * priceUsd)}"
-                                btn.isEnabled = total <= balance
-                                btn.alpha = if (btn.isEnabled) 1f else 0.5f
+                                // Quan trọng: cập nhật lại balance mỗi lần ước tính
+                                Thread {
+                                    val newBalance = walletManager.getBalance()
+                                    runOnUiThread {
+                                        currentBalance = newBalance
+                                        balanceTv.text = "Số dư: ${"%.8f".format(currentBalance)} BTC"
+                                        btn.isEnabled = total <= currentBalance
+                                        btn.alpha = if (btn.isEnabled) 1f else 0.5f
+                                    }
+                                }.start()
                             } catch (e: Exception) {
                                 btn.isEnabled = false
                                 feeEstimateTv.text = "Lỗi: ${e.message}"
