@@ -232,7 +232,7 @@ class WalletManager(private val ctx: Context) {
         }
     }
 
-    // ========== SEND (fix missing money) ==========
+    // ========== SEND ==========
     fun send(to: String, amountBTC: Double, feeRateSatVb: Int): String {
         if (feeRateSatVb < 1 || feeRateSatVb > 500) {
             throw Exception("Fee rate không hợp lệ (1-500 sat/vB)")
@@ -265,30 +265,24 @@ class WalletManager(private val ctx: Context) {
         req.shuffleOutputs = true
         req.changeAddress = wallet.currentReceiveAddress()
 
-        // Cho phép chi tiêu UTXO chưa confirm (tránh missing money)
         wallet.allowSpendingUnconfirmedTransactions()
 
-        // Tạo và ký giao dịch
         try {
             wallet.completeTx(req)
         } catch (e: Exception) {
             throw Exception("Không tạo được transaction: ${e.message}")
         }
 
-        // Broadcast trước, sau đó commit vào wallet để tránh race condition
         try {
             val broadcastFuture = peerGroup.broadcastTransaction(req.tx)
-            broadcastFuture.future().get()  // chờ broadcast thành công
+            broadcastFuture.future().get()
         } catch (e: Exception) {
             throw Exception("Broadcast lỗi: ${e.message}")
         }
 
-        // Commit vào wallet sau khi broadcast thành công
         try {
             wallet.commitTx(req.tx)
         } catch (e: Exception) {
-            // Commit có thể thất bại nếu tx đã có, nhưng broadcast đã thành công
-            // Ném exception để báo nhưng thực tế giao dịch đã gửi
             throw Exception("Commit tx lỗi (nhưng giao dịch đã broadcast): ${e.message}")
         }
 
