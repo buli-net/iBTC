@@ -243,9 +243,24 @@ class WalletManager(private val ctx: Context) {
         return (68 + 62 + 11) * feeRateSatVb / 1e8
     }
 
-    // ================== SEND (có cập nhật trạng thái) ==================
+    fun isWalletSynced(): Boolean {
+        return WalletKitService.wallet()?.isSynced() ?: false
+    }
+
+    fun isValidAddress(address: String): Boolean {
+        return try {
+            Address.fromString(params, address)
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    // ================== SEND ==================
     fun send(to: String, amountBTC: Double, feeRateSatVb: Int): String {
-        syncCallback?.invoke(10, "Kiểm tra wallet...")
+        if (feeRateSatVb < 1 || feeRateSatVb > 500) {
+            throw Exception("Fee rate không hợp lệ (1-500 sat/vB)")
+        }
         val wallet = WalletKitService.wallet()
             ?: throw Exception("Wallet chưa sẵn sàng, vui lòng đợi đồng bộ")
 
@@ -261,11 +276,9 @@ class WalletManager(private val ctx: Context) {
         req.changeAddress = wallet.currentReceiveAddress()
         req.ensureMinRequiredFee = true
 
-        syncCallback?.invoke(40, "Đang tạo và ký giao dịch...")
         val result = wallet.sendCoins(req)
             ?: throw Exception("Send failed, không tạo được transaction")
 
-        syncCallback?.invoke(70, "Đang broadcast giao dịch...")
         val peerGroup = WalletKitService.peerGroup()
         if (peerGroup != null && peerGroup.connectedPeers.isNotEmpty()) {
             peerGroup.broadcastTransaction(result.tx).future()
@@ -274,7 +287,6 @@ class WalletManager(private val ctx: Context) {
             broadcastViaApi(txHex)
         }
 
-        syncCallback?.invoke(100, "Đã gửi thành công! TXID: ${result.tx.hashAsString.take(8)}...")
         return result.tx.hashAsString
     }
 
@@ -301,15 +313,6 @@ class WalletManager(private val ctx: Context) {
             throw Exception("Broadcast failed: ${e.message}")
         } finally {
             conn?.disconnect()
-        }
-    }
-
-    fun isValidAddress(address: String): Boolean {
-        return try {
-            Address.fromString(params, address)
-            true
-        } catch (e: Exception) {
-            false
         }
     }
 
