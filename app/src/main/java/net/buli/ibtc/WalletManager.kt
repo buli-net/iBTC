@@ -270,11 +270,11 @@ class WalletManager(private val ctx: Context) {
     }
 
     fun estimateFee(to: String, amountBTC: Double, feeRateSatVb: Int): Double {
-        // Fallback an toàn với giả định 1 input, 2 outputs (size ~140 bytes)
+        // fallback an toàn: 1 input segwit (68 bytes) + 2 outputs (31 bytes each) + overhead
         return (68 + 62 + 11) * feeRateSatVb / 1e8
     }
 
-    // ================== GỬI BTC (FIX LỖI DUST VÀ FEE) ==================
+    // ================== GỬI BTC (FIX LỖI -26) ==================
     fun send(to: String, amountBTC: Double, feeRateSatVb: Int): String {
         if (feeRateSatVb < 1 || feeRateSatVb > 500) {
             throw Exception("Fee rate không hợp lệ (1-500 sat/vB)")
@@ -313,11 +313,11 @@ class WalletManager(private val ctx: Context) {
         var feeSat = (txSize * feeRateSatVb).toLong()
         var changeSat = total - needSat - feeSat
 
-        // Xử lý change nhỏ hơn dust (cộng vào fee)
+        // Xử lý change nhỏ hơn dust
         if (changeSat > 0 && changeSat < DUST_THRESHOLD) {
+            // Cộng change vào fee
             feeSat += changeSat
             changeSat = 0
-            // Tính lại kích thước (không có output change)
             txSize = tx.bitcoinSerialize().size + selected.size * 68 + 10
             feeSat = (txSize * feeRateSatVb).toLong()
             changeSat = total - needSat - feeSat
@@ -341,7 +341,7 @@ class WalletManager(private val ctx: Context) {
         val key = getPrivateKeyForAddress(seedPhrase, myAddressStr)
         val myScript = ScriptBuilder.createOutputScript(Address.fromString(params, myAddressStr))
 
-        // Thêm inputs và ký
+        // Thêm inputs và ký (quan trọng: phải ký sau khi đã có đầy đủ outputs)
         for (utxo in selected) {
             val outPoint = Sha256Hash.wrap(utxo.txid)
             val txOutPoint = TransactionOutPoint(params, utxo.vout.toLong(), outPoint)
@@ -349,6 +349,7 @@ class WalletManager(private val ctx: Context) {
             tx.addInput(input)
         }
 
+        // Ký
         for (i in 0 until tx.inputs.size) {
             val input = tx.inputs[i]
             val sighash = tx.hashForSignature(i, myScript.program, Transaction.SigHash.ALL, false)
@@ -362,7 +363,7 @@ class WalletManager(private val ctx: Context) {
 
         tx.verify()
         val txHex = Utils.HEX.encode(tx.bitcoinSerialize())
-        Log.d("WalletManager", "TX size: ${tx.bitcoinSerialize().size} bytes")
+        Log.d("WalletManager", "TX size: ${tx.bitcoinSerialize().size} bytes, hex: $txHex")
         return broadcastTx(txHex)
     }
 
