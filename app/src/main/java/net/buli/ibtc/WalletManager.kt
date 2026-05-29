@@ -26,7 +26,7 @@ class WalletManager(private val ctx: Context) {
     private var cachedSeed: String? = null
     private var cachedPassword: CharArray? = null
     private val prefs = ctx.getSharedPreferences("wallets", Context.MODE_PRIVATE)
-    private var lastPrice = 60000.0   // fallback price
+    private var lastPrice = 60000.0
 
     private val DUST_THRESHOLD = 546L
     private var syncCallback: ((Int, String) -> Unit)? = null
@@ -181,12 +181,14 @@ class WalletManager(private val ctx: Context) {
 
     fun getBalance(): Double {
         val wallet = getWallet() ?: return 0.0
+        // Coin.toBigDecimal() trả về BigDecimal
         return wallet.getBalance().toBigDecimal().toDouble()
     }
 
     fun getTransactions(): List<TransactionInfo> {
         val wallet = getWallet() ?: return emptyList()
         val list = mutableListOf<TransactionInfo>()
+        // Confirmed transactions
         for (tx in wallet.getTransactionsByTime()) {
             val value = tx.getValue(wallet)
             val amount = value.toBigDecimal().toDouble()
@@ -198,7 +200,9 @@ class WalletManager(private val ctx: Context) {
                 Date(tx.updateTime.time)
             ))
         }
-        for (tx in wallet.getTransactionPool().pending) {
+        // Pending transactions (chưa confirm)
+        val pending = wallet.getTransactionPool().getPendingTransactions()
+        for (tx in pending) {
             val value = tx.getValue(wallet)
             val amount = value.toBigDecimal().toDouble()
             val type = if (amount > 0) "RECEIVE" else "SEND"
@@ -213,20 +217,13 @@ class WalletManager(private val ctx: Context) {
         return list
     }
 
-    // ================== PRICE & FEE (chỉ lấy giá từ API, có thể bỏ) ==================
-    fun price(): Double {
-        // Giá mặc định, có thể cập nhật thủ công từ nguồn khác
-        return lastPrice
-    }
+    // ================== PRICE & FEE (giá có thể lấy từ API hoặc giữ mặc định) ==================
+    fun price(): Double = lastPrice
 
-    fun getFeeRates(): FeeRates {
-        // Giả sử phí mặc định, có thể lấy từ API nếu muốn
-        return FeeRates(5, 10, 20)
-    }
+    fun getFeeRates(): FeeRates = FeeRates(5, 10, 20)
 
     fun estimateFee(to: String, amountBTC: Double, feeRateSatVb: Int): Double {
-        val wallet = getWallet()
-        if (wallet == null) return (68 + 62 + 11) * feeRateSatVb / 1e8
+        val wallet = getWallet() ?: return (68 + 62 + 11) * feeRateSatVb / 1e8
         val utxos = wallet.getUTXOs()
         if (utxos.isEmpty()) return (68 + 62 + 11) * feeRateSatVb / 1e8
         val needSat = (amountBTC * 1e8).toLong()
@@ -253,7 +250,7 @@ class WalletManager(private val ctx: Context) {
         }
     }
 
-    // ================== SEND (SPV only) ==================
+    // ================== SEND ==================
     fun send(to: String, amountBTC: Double, feeRateSatVb: Int): String {
         if (feeRateSatVb < 1 || feeRateSatVb > 500) {
             throw Exception("Fee rate không hợp lệ (1-500 sat/vB)")
