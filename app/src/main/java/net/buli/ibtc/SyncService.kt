@@ -9,6 +9,7 @@ import android.content.Intent
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import org.bitcoinj.core.Context as BtcContext
 import org.bitcoinj.core.listeners.DownloadProgressTracker
 import org.bitcoinj.kits.WalletAppKit
 import org.bitcoinj.params.MainNetParams
@@ -28,7 +29,7 @@ class SyncService : Service() {
     @Volatile private var syncing = false
     private var lastProgress = 0
     private var lastMessage = "Đang khởi động..."
-    private lateinit var kit: WalletAppKit
+    private var kit: WalletAppKit? = null
 
     companion object {
         private var instance: SyncService? = null
@@ -105,11 +106,14 @@ class SyncService : Service() {
         Thread {
             try {
                 val params = MainNetParams.get()
+                BtcContext.propagate(BtcContext(params))
+
                 val dir = File(filesDir, "spv_wallets")
                 if (!dir.exists()) dir.mkdirs()
 
                 val walletFile = File(dir, "$walletId.wallet")
 
+                // Tạo wallet từ seed nếu chưa có
                 if (!walletFile.exists()) {
                     val words = seedPhrase.trim().lowercase().split(" ")
                     if (words.size == 12 || words.size == 24) {
@@ -119,12 +123,14 @@ class SyncService : Service() {
                     }
                 }
 
+                // Dừng kit cũ nếu có
                 try {
                     kit?.stopAsync()
                     kit?.awaitTerminated()
                 } catch (_: Exception) {}
 
-                kit = WalletAppKit(params, dir, walletId).apply {
+                // Tạo kit mới
+                val newKit = WalletAppKit(params, dir, walletId).apply {
                     setBlockingStartup(false)
                     setDownloadListener(object : DownloadProgressTracker() {
                         override fun progress(pct: Double, blocksSoFar: Int, date: java.util.Date?) {
@@ -138,6 +144,7 @@ class SyncService : Service() {
                         }
 
                         override fun doneDownload() {
+                            // Đợi một chút để peer group ổn định
                             Thread.sleep(3000)
                             isSynced = true
                             lastProgress = 100
@@ -147,14 +154,25 @@ class SyncService : Service() {
                         }
                     })
                     startAsync()
-                    awaitRunning()
+                    // Đợi đến khi running (có thể block nhưng trong thread riêng)
+                    try {
+                        awaitRunning()
+                    } catch (e: Exception) {
+                        // Nếu fail, thử lại với awaitRunning có timeout
+                        awaitRunning(30, TimeUnit.SECONDS)
+                    }
                     wallet().autosaveToFile(File(dir, "$walletId.wallet"), 1, TimeUnit.SECONDS, null)
                 }
+                kit = newKit
+
             } catch (e: Exception) {
                 syncing = false
                 lastMessage = "Lỗi sync: ${e.message}"
                 updateNotification(lastMessage)
                 progressCallback?.invoke(lastProgress, lastMessage)
+                // Nếu lỗi, cho phép thử lại lần sau
+                Thread.sleep(5000)
+                syncing = false // cho phép start lại
             }
         }.start()
     }
@@ -170,8 +188,8 @@ class SyncService : Service() {
         callback?.invoke(displayProgress, displayMessage)
     }
 
-    fun getWallet(): Wallet? = try { kit.wallet() } catch (_: Exception) { null }
-    fun getPeerGroup() = try { kit.peerGroup() } catch (_: Exception) { null }
+    fun getWallet(): Wallet? = try { kit?.wallet() } catch (_: Exception) { null }
+    fun getPeerGroup() = try { kit?.peerGroup() } catch (_: Exception) { null }
     fun getWalletId(): String = currentWalletId
     fun isWalletSynced(): Boolean = isSynced
 
@@ -179,8 +197,8 @@ class SyncService : Service() {
         super.onDestroy()
         instance = null
         try {
-            kit.stopAsync()
-            kit.awaitTerminated()
+            kit?.stopAsync()
+            kit?.awaitTerminated()
         } catch (_: Exception) {}
     }
 
