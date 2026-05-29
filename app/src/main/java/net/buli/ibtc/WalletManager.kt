@@ -181,8 +181,7 @@ class WalletManager(private val ctx: Context) {
 
     fun getBalance(): Double {
         val wallet = getWallet() ?: return 0.0
-        // Coin.toBigDecimal() trả về BigDecimal
-        return wallet.getBalance().toBigDecimal().toDouble()
+        return wallet.getBalance().value / 1e8
     }
 
     fun getTransactions(): List<TransactionInfo> {
@@ -191,7 +190,7 @@ class WalletManager(private val ctx: Context) {
         // Confirmed transactions
         for (tx in wallet.getTransactionsByTime()) {
             val value = tx.getValue(wallet)
-            val amount = value.toBigDecimal().toDouble()
+            val amount = value.value / 1e8
             val type = if (amount > 0) "RECEIVE" else "SEND"
             list.add(TransactionInfo(
                 tx.hashAsString,
@@ -202,9 +201,9 @@ class WalletManager(private val ctx: Context) {
         }
         // Pending transactions (chưa confirm)
         val pending = wallet.getTransactionPool().getPendingTransactions()
-        for (tx in pending) {
+        for ((_, tx) in pending) {
             val value = tx.getValue(wallet)
-            val amount = value.toBigDecimal().toDouble()
+            val amount = value.value / 1e8
             val type = if (amount > 0) "RECEIVE" else "SEND"
             list.add(TransactionInfo(
                 tx.hashAsString,
@@ -217,7 +216,7 @@ class WalletManager(private val ctx: Context) {
         return list
     }
 
-    // ================== PRICE & FEE (giá có thể lấy từ API hoặc giữ mặc định) ==================
+    // ================== PRICE & FEE ==================
     fun price(): Double = lastPrice
 
     fun getFeeRates(): FeeRates = FeeRates(5, 10, 20)
@@ -257,20 +256,9 @@ class WalletManager(private val ctx: Context) {
         }
         val wallet = getWallet() ?: throw Exception("Wallet chưa sẵn sàng, vui lòng đợi đồng bộ")
 
-        val spendable = wallet.getBalance(Wallet.BalanceType.AVAILABLE_SPENDABLE)
         val coin = Coin.valueOf((amountBTC * 1e8).toLong())
-
         if (coin.isLessThan(Coin.valueOf(DUST_THRESHOLD))) {
             throw Exception("Số tiền quá nhỏ (dưới 546 satoshi)")
-        }
-
-        if (spendable.isLessThan(coin)) {
-            throw Exception("Số dư khả dụng không đủ")
-        }
-
-        val peerGroup = SyncService.getInstance()?.getPeerGroup()
-        if (peerGroup == null || peerGroup.connectedPeers.isEmpty()) {
-            throw Exception("Chưa kết nối peer network")
         }
 
         val address = Address.fromString(params, to)
@@ -279,13 +267,17 @@ class WalletManager(private val ctx: Context) {
         req.feePerKb = Coin.valueOf(feeRateSatVb * 1000L)
         req.changeAddress = wallet.currentReceiveAddress()
         req.ensureMinRequiredFee = true
-        req.signInputs = true
 
-        wallet.completeTx(req)
-        wallet.commitTx(req.tx)
-        peerGroup.broadcastTransaction(req.tx)
+        val result = wallet.sendCoins(req)
+            ?: throw Exception("Send failed, không tạo được transaction")
 
-        return req.tx.hashAsString
+        val peerGroup = SyncService.getInstance()?.getPeerGroup()
+        if (peerGroup == null || peerGroup.connectedPeers.isEmpty()) {
+            throw Exception("Không có kết nối peer nào, không thể broadcast giao dịch. Vui lòng thử lại sau.")
+        }
+        peerGroup.broadcastTransaction(result.tx).future()
+
+        return result.tx.hashAsString
     }
 
     private fun getAddressAtIndex(seedPhrase: String, index: Int): String {
