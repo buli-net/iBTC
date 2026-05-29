@@ -5,16 +5,15 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
-import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
-import org.bitcoinj.core.Context
+import org.bitcoinj.core.Context as BtcContext
 import org.bitcoinj.core.listeners.DownloadProgressTracker
 import org.bitcoinj.kits.WalletAppKit
 import org.bitcoinj.params.MainNetParams
-import org.bitcoinj.script.Script
+import org.bitcoinj.script.ScriptType
 import org.bitcoinj.wallet.DeterministicSeed
 import org.bitcoinj.wallet.Wallet
 import java.io.File
@@ -107,24 +106,22 @@ class SyncService : Service() {
         Thread {
             try {
                 val params = MainNetParams.get()
-                Context.propagate(org.bitcoinj.core.Context(params))
+                BtcContext.propagate(BtcContext(params))
 
                 val dir = File(filesDir, "spv_wallets")
                 if (!dir.exists()) dir.mkdirs()
 
                 val walletFile = File(dir, "$walletId.wallet")
 
-                // Tạo wallet từ seed nếu chưa có
                 if (!walletFile.exists()) {
                     val words = seedPhrase.trim().lowercase().split(" ")
                     if (words.size == 12 || words.size == 24) {
                         val seed = DeterministicSeed(words, null, "", 0L)
-                        val wallet = Wallet.fromSeed(params, seed, Script.ScriptType.P2WPKH)
+                        val wallet = Wallet.fromSeed(params, seed, ScriptType.P2WPKH)
                         wallet.saveToFile(walletFile)
                     }
                 }
 
-                // Dừng kit cũ nếu có
                 try {
                     kit?.stopAsync()
                     kit?.awaitTerminated()
@@ -154,8 +151,8 @@ class SyncService : Service() {
                         }
                     })
                     startAsync()
-                    awaitRunning()  // Đảm bảo kit đã sẵn sàng
-                    // Bật auto-save
+                    awaitRunning()
+                    // Bật auto-save: file, interval 1 giây, listener null
                     wallet().autosaveToFile(File(dir, "$walletId.wallet"), 1, TimeUnit.SECONDS, null)
                 }
             } catch (e: Exception) {
@@ -169,7 +166,6 @@ class SyncService : Service() {
 
     fun setProgressCallback(callback: ((Int, String) -> Unit)?) {
         progressCallback = callback
-        // Gửi trạng thái hiện tại, đảm bảo không bị treo
         val displayProgress = if (lastProgress > 100) 100 else lastProgress
         val displayMessage = when {
             isSynced -> "Đã đồng bộ blockchain"
