@@ -700,7 +700,7 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this).setTitle("Nhận Bitcoin").setView(layout).setPositiveButton("Đóng", null).show()
     }
 
-    // ================== GỬI BTC ĐÃ SỬA LỖI ==================
+    // ================== GỬI BTC - BẢN CẬP NHẬT LẤY SỐ DƯ ĐÚNG ==================
     private fun showSendDialog() {
         if (isSyncing) {
             toast("Đang sync, vui lòng đợi")
@@ -785,10 +785,10 @@ class MainActivity : AppCompatActivity() {
             val btn = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
             btn.isEnabled = false
 
-            // Lấy fee rates và balance ban đầu
+            // Lấy balance và fee rates trong luồng nền
             Thread {
+                val currentBalance = walletManager.getBalance()
                 val feeRates = try { walletManager.getFeeRates() } catch (e: Exception) { FeeRates(5, 10, 20) }
-                var currentBalance = walletManager.getBalance()
                 runOnUiThread {
                     balanceTv.text = "Số dư: ${"%.8f".format(currentBalance)} BTC"
                     feeProgress.visibility = View.GONE
@@ -806,7 +806,12 @@ class MainActivity : AppCompatActivity() {
                             4 -> customFeeInput.text.toString().toIntOrNull()?.coerceIn(1, 100) ?: 10
                             else -> feeRates.normal
                         }
-                        if (to.length >= 26 && amt > 0 && priceUsd > 0) {
+                        // Chỉ tính khi đã có địa chỉ và số tiền >0
+                        if (to.isNotEmpty() && to.length >= 26 && amt > 0) {
+                            if (priceUsd <= 0.0) {
+                                feeEstimateTv.text = "Đang tải giá..."
+                                return
+                            }
                             try {
                                 val estFee = walletManager.estimateFee(to, amt, feeRate)
                                 val total = amt + estFee
@@ -814,28 +819,21 @@ class MainActivity : AppCompatActivity() {
                                 val totalUsd = total * priceUsd
                                 feeEstimateTv.text = "Ước tính phí: ${"%.8f".format(estFee)} BTC (~$${"%.2f".format(feeUsd)})"
                                 totalEstimateTv.text = "Tổng: ${"%.8f".format(total)} BTC (~$${"%.2f".format(totalUsd)})"
+                                // Cập nhật text cho các radio
                                 rSlow.text = "Chậm ~60' (${feeRates.slow} sat/vB) ~ $${"%.2f".format(walletManager.estimateFee(to, amt, feeRates.slow) * priceUsd)}"
                                 rNormal.text = "Thường ~30' (${feeRates.normal} sat/vB) ~ $${"%.2f".format(walletManager.estimateFee(to, amt, feeRates.normal) * priceUsd)}"
                                 rFast.text = "Nhanh ~10' (${feeRates.fast} sat/vB) ~ $${"%.2f".format(walletManager.estimateFee(to, amt, feeRates.fast) * priceUsd)}"
                                 rCustom.text = "Tùy chỉnh (${feeRate} sat/vB) ~ $${"%.2f".format(estFee * priceUsd)}"
-                                // Quan trọng: cập nhật lại balance mỗi lần ước tính
-                                Thread {
-                                    val newBalance = walletManager.getBalance()
-                                    runOnUiThread {
-                                        currentBalance = newBalance
-                                        balanceTv.text = "Số dư: ${"%.8f".format(currentBalance)} BTC"
-                                        btn.isEnabled = total <= currentBalance
-                                        btn.alpha = if (btn.isEnabled) 1f else 0.5f
-                                    }
-                                }.start()
+                                // Quyết định enable nút dựa trên số dư hiện tại
+                                btn.isEnabled = total <= currentBalance
+                                btn.alpha = if (btn.isEnabled) 1f else 0.5f
                             } catch (e: Exception) {
                                 btn.isEnabled = false
                                 feeEstimateTv.text = "Lỗi: ${e.message}"
                             }
                         } else {
                             btn.isEnabled = false
-                            if (priceUsd == 0.0) feeEstimateTv.text = "Đang tải giá..."
-                            else feeEstimateTv.text = "Nhập địa chỉ và số tiền hợp lệ"
+                            feeEstimateTv.text = "Nhập địa chỉ và số tiền hợp lệ"
                             totalEstimateTv.text = ""
                         }
                     }
