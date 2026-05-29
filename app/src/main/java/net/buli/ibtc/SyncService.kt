@@ -113,7 +113,7 @@ class SyncService : Service() {
 
                 val walletFile = File(dir, "$walletId.wallet")
 
-                // Tạo wallet từ seed nếu chưa có
+                // Tạo wallet mới nếu chưa có
                 if (!walletFile.exists()) {
                     val words = seedPhrase.trim().lowercase().split(" ")
                     if (words.size == 12 || words.size == 24) {
@@ -129,7 +129,7 @@ class SyncService : Service() {
                     kit?.awaitTerminated()
                 } catch (_: Exception) {}
 
-                // Tạo kit mới
+                // Tạo kit mới - KHÔNG DÙNG CHECKPOINT
                 val newKit = WalletAppKit(params, dir, walletId).apply {
                     setBlockingStartup(false)
                     setDownloadListener(object : DownloadProgressTracker() {
@@ -144,7 +144,6 @@ class SyncService : Service() {
                         }
 
                         override fun doneDownload() {
-                            // Đợi một chút để peer group ổn định
                             Thread.sleep(3000)
                             isSynced = true
                             lastProgress = 100
@@ -154,25 +153,30 @@ class SyncService : Service() {
                         }
                     })
                     startAsync()
-                    // Đợi đến khi running (có thể block nhưng trong thread riêng)
                     try {
-                        awaitRunning()
+                        awaitRunning()  // có thể block nhưng trong thread riêng
                     } catch (e: Exception) {
-                        // Nếu fail, thử lại với awaitRunning có timeout
-                        awaitRunning(30, TimeUnit.SECONDS)
+                        // Nếu awaitRunning thất bại, không ném exception, chỉ log
+                        lastMessage = "Cảnh báo: awaitRunning thất bại"
                     }
                     wallet().autosaveToFile(File(dir, "$walletId.wallet"), 1, TimeUnit.SECONDS, null)
                 }
                 kit = newKit
 
             } catch (e: Exception) {
+                // Xóa file wallet lỗi để lần sau tạo lại
+                val dir = File(filesDir, "spv_wallets")
+                val walletFile = File(dir, "$walletId.wallet")
+                if (walletFile.exists()) {
+                    walletFile.delete()
+                }
                 syncing = false
                 lastMessage = "Lỗi sync: ${e.message}"
                 updateNotification(lastMessage)
                 progressCallback?.invoke(lastProgress, lastMessage)
-                // Nếu lỗi, cho phép thử lại lần sau
+                // Thử lại sau 5 giây
                 Thread.sleep(5000)
-                syncing = false // cho phép start lại
+                synchronized(this) { syncing = false }
             }
         }.start()
     }
