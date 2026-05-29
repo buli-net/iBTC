@@ -235,11 +235,10 @@ class WalletManager(private val ctx: Context) {
     }
 
     fun estimateFee(to: String, amountBTC: Double, feeRateSatVb: Int): Double {
-        // fallback an toàn
         return (68 + 62 + 11) * feeRateSatVb / 1e8
     }
 
-    // ================== SEND ĐÃ FIX HOÀN TOÀN ==================
+    // ================== SEND ĐÃ SỬA (BỎ useSegwit) ==================
     fun send(to: String, amountBTC: Double, feeRateSatVb: Int): String {
         if (feeRateSatVb < 1 || feeRateSatVb > 500) {
             throw Exception("Fee rate không hợp lệ (1-500 sat/vB)")
@@ -255,13 +254,10 @@ class WalletManager(private val ctx: Context) {
         val address = Address.fromString(params, to)
         val req = SendRequest.to(address, coin)
 
-        // FIX 1: fee đúng đơn vị sat/kB (bitcoinj yêu cầu)
+        // FIX: fee đúng đơn vị sat/kB
         req.feePerKb = Coin.valueOf(feeRateSatVb * 1000L)
 
-        // FIX 2: bật segwit
-        req.useSegwit = true
-
-        // FIX 3: set change address từ wallet (tránh lỗi key mismatch)
+        // FIX: set change address (bitcoinj sẽ tự chọn nếu không set, nhưng set để chắc chắn)
         req.changeAddress = wallet.currentReceiveAddress()
 
         req.ensureMinRequiredFee = true
@@ -270,7 +266,6 @@ class WalletManager(private val ctx: Context) {
             ?: throw Exception("Send failed, không tạo được transaction")
 
         val peerGroup = WalletKitService.peerGroup()
-        // FIX 4: broadcast an toàn, chỉ dùng peerGroup nếu có peer kết nối
         if (peerGroup != null && peerGroup.connectedPeers > 0) {
             peerGroup.broadcastTransaction(result.tx).future()
         } else {
