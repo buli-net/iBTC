@@ -54,7 +54,7 @@ class MainActivity : AppCompatActivity() {
     private val statBars = mutableMapOf<String, ProgressBar>()
     private val statTexts = mutableMapOf<String, TextView>()
     private var isSyncing = false
-    private var autoSyncStarted = false
+    private var autoRefreshStarted = false
     private var pendingAddressInput: EditText? = null
     private var lastPrice: Double = 0.0
     private var lastBalanceUsd: Double = 0.0
@@ -92,6 +92,13 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        // Gắn lại callback cho SyncService khi app mở lại
+        SyncService.getInstance()?.setProgressCallback { pct, txt ->
+            runOnUiThread {
+                spvStatusText.text = "SPV: $txt"
+                spvProgressBar.progress = pct
+            }
+        }
         try {
             if (walletManager.getActiveId() != null || walletManager.hasWallets()) {
                 showUnlockDialog()
@@ -123,7 +130,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // Hàm refresh chỉ dùng SPV (không API)
+    // ================== SPV refresh (không dùng API) ==================
     private fun refreshWalletFromSPV() {
         if (isSyncing) return
         isSyncing = true
@@ -140,7 +147,7 @@ class MainActivity : AppCompatActivity() {
                     syncProgressBar.progress = 60
                 }
                 val txs = walletManager.getTransactions()
-                val price = walletManager.price()
+                val price = walletManager.price() // giá mặc định hoặc có thể lấy từ API riêng nếu muốn
                 runOnUiThread {
                     balanceText.text = String.format(Locale.US, "%.8f BTC", bal)
                     val balanceUsd = bal * price
@@ -159,20 +166,8 @@ class MainActivity : AppCompatActivity() {
                     balanceUsdText.setTextColor(balColor)
                     balanceUsdText.text = String.format(Locale.US, "≈ $%,.2f %s %+.2f%% (%+.2f$)", balanceUsd, balArrow, balPct, balChange)
 
-                    val priceChange = price - lastPrice
-                    val pricePct = if (lastPrice > 0) priceChange / lastPrice * 100 else 0.0
-                    val priceArrow = when {
-                        priceChange > 0.01 -> "▲"
-                        priceChange < -0.01 -> "▼"
-                        else -> "●"
-                    }
-                    val priceColor = when {
-                        priceChange > 0.01 -> Color.parseColor("#00C853")
-                        priceChange < -0.01 -> Color.parseColor("#D50000")
-                        else -> Color.GRAY
-                    }
-                    rateText.setTextColor(priceColor)
-                    rateText.text = String.format(Locale.US, "BTC $%,.2f %s %+.2f%% (%+.2f$)", price, priceArrow, pricePct, priceChange)
+                    // Giá có thể cập nhật thủ công hoặc từ API; tạm thời giữ nguyên
+                    rateText.text = String.format(Locale.US, "BTC $%,.2f", price)
 
                     lastBalanceUsd = balanceUsd
                     lastPrice = price
@@ -210,8 +205,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startAutoRefresh() {
-        if (autoSyncStarted) return
-        autoSyncStarted = true
+        if (autoRefreshStarted) return
+        autoRefreshStarted = true
         handler.postDelayed(object : Runnable {
             override fun run() {
                 if (walletManager.getActive() != null && !isSyncing && !isFinishing && !isDestroyed) {
@@ -224,8 +219,8 @@ class MainActivity : AppCompatActivity() {
         }, 45000)
     }
 
+    // ================== Thống kê mạng (chỉ hiển thị, không ảnh hưởng đến ví) ==================
     private fun fetchBlockUpdate() {
-        // giữ nguyên hàm fetch block (dùng API mempool để lấy thông tin mining, không ảnh hưởng đến ví)
         Thread {
             try {
                 val json = java.net.URL("https://mempool.space/api/v1/blocks").openStream().bufferedReader().readText()
@@ -333,6 +328,7 @@ class MainActivity : AppCompatActivity() {
         statBars[key] = pb
     }
 
+    // ================== CÁC DIALOG (welcome, create, import, unlock) ==================
     private fun showWelcome() {
         rootLayout.removeAllViews()
         val isDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
@@ -517,7 +513,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showMainWallet() {
-        val id = walletManager.getActiveId()
         rootLayout.removeAllViews()
         val isDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
         val mainColor = if (isDark) Color.WHITE else Color.BLACK
@@ -670,12 +665,14 @@ class MainActivity : AppCompatActivity() {
         }
         btnSettings.setOnClickListener { showSettings() }
 
+        // Đăng ký callback từ WalletManager (chuyển đến SyncService)
         walletManager.onProgress { pct, txt ->
             runOnUiThread {
                 spvStatusText.text = "SPV: $txt"
                 spvProgressBar.progress = pct
             }
         }
+        // Đồng bộ trạng thái hiện tại từ service
         SyncService.getInstance()?.setProgressCallback { pct, txt ->
             runOnUiThread {
                 spvStatusText.text = "SPV: $txt"
@@ -722,7 +719,7 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this).setTitle("Nhận Bitcoin").setView(layout).setPositiveButton("Đóng", null).show()
     }
 
-    // ================== DIALOG GỬI BTC ==================
+    // ================== DIALOG GỬI BTC (kiểm tra sync, số dư) ==================
     private fun showSendDialog() {
         if (isSyncing) {
             toast("Đang cập nhật SPV, vui lòng đợi")
@@ -798,7 +795,7 @@ class MainActivity : AppCompatActivity() {
         layout.addView(feeEstimateTv)
         layout.addView(totalEstimateTv)
 
-        var priceUsd = walletManager.price()
+        var priceUsd = 60000.0 // giá mặc định, có thể cập nhật từ nguồn khác
         var currentBalance = 0.0
         var isSpvSynced = false
 
@@ -1161,7 +1158,7 @@ class MainActivity : AppCompatActivity() {
     private fun showInfo() {
         AlertDialog.Builder(this)
             .setTitle("iBTC v4.7")
-            .setMessage("Build: 2026-05-25\n• Block update 2s\n• SPV 100%")
+            .setMessage("Build: 2026-05-29\n• SPV 100%\n• Foreground service\n• Không API")
             .setPositiveButton("OK", null)
             .show()
     }
