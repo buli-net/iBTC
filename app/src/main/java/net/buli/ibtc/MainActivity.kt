@@ -26,6 +26,7 @@ import androidx.core.view.setPadding
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
 import com.journeyapps.barcodescanner.ScanContract
+import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -42,8 +43,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var balanceUsdText: TextView
     private lateinit var rateText: TextView
     private lateinit var addressText: TextView
-    private lateinit var syncText: TextView
-    private lateinit var syncProgressBar: ProgressBar
     private lateinit var blockText: TextView
     private lateinit var blockProgressBar: ProgressBar
     private lateinit var txListView: ListView
@@ -56,7 +55,7 @@ class MainActivity : AppCompatActivity() {
     private var isSyncing = false
     private var autoRefreshStarted = false
     private var pendingAddressInput: EditText? = null
-    private var lastPrice: Double = 0.0
+    private var lastPrice: Double? = null
     private var lastBalanceUsd: Double = 0.0
     private val qrScanLauncher = registerForActivityResult(ScanContract()) { result ->
         result.contents?.let { addr ->
@@ -92,7 +91,6 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        // Gắn lại callback cho SyncService khi app mở lại
         SyncService.getInstance()?.setProgressCallback { pct, txt ->
             runOnUiThread {
                 spvStatusText.text = "SPV: $txt"
@@ -135,47 +133,61 @@ class MainActivity : AppCompatActivity() {
         if (isSyncing) return
         isSyncing = true
         runOnUiThread {
-            syncText.text = "Đang cập nhật từ SPV..."
-            syncProgressBar.progress = 10
+            spvStatusText.text = "SPV: Đang cập nhật số dư..."
         }
         Thread {
             try {
-                runOnUiThread { syncProgressBar.progress = 30 }
                 val bal = walletManager.getBalance()
-                runOnUiThread {
-                    syncText.text = "Đang tải giao dịch..."
-                    syncProgressBar.progress = 60
-                }
                 val txs = walletManager.getTransactions()
-                val price = walletManager.price() // giá mặc định hoặc có thể lấy từ API riêng nếu muốn
+                val price = walletManager.price() // có thể là 0.0 nếu chưa lấy được
                 runOnUiThread {
                     balanceText.text = String.format(Locale.US, "%.8f BTC", bal)
-                    val balanceUsd = bal * price
-                    val balChange = balanceUsd - lastBalanceUsd
-                    val balPct = if (lastBalanceUsd > 0) balChange / lastBalanceUsd * 100 else 0.0
-                    val balArrow = when {
-                        balChange > 0.01 -> "▲"
-                        balChange < -0.01 -> "▼"
-                        else -> "●"
-                    }
-                    val balColor = when {
-                        balChange > 0.01 -> Color.parseColor("#00C853")
-                        balChange < -0.01 -> Color.parseColor("#D50000")
-                        else -> Color.GRAY
-                    }
-                    balanceUsdText.setTextColor(balColor)
-                    balanceUsdText.text = String.format(Locale.US, "≈ $%,.2f %s %+.2f%% (%+.2f$)", balanceUsd, balArrow, balPct, balChange)
+                    val balanceUsd = if (price > 0) bal * price else 0.0
+                    val priceDisplay = if (price > 0) String.format(Locale.US, "BTC $%,.2f", price) else "BTC ---"
 
-                    // Giá có thể cập nhật thủ công hoặc từ API; tạm thời giữ nguyên
-                    rateText.text = String.format(Locale.US, "BTC $%,.2f", price)
+                    // Tính biến động số dư USD (nếu có giá)
+                    if (price > 0 && lastPrice != null && lastPrice!! > 0) {
+                        val balChange = balanceUsd - lastBalanceUsd
+                        val balPct = if (lastBalanceUsd > 0) balChange / lastBalanceUsd * 100 else 0.0
+                        val balArrow = when {
+                            balChange > 0.01 -> "▲"
+                            balChange < -0.01 -> "▼"
+                            else -> "●"
+                        }
+                        val balColor = when {
+                            balChange > 0.01 -> Color.parseColor("#00C853")
+                            balChange < -0.01 -> Color.parseColor("#D50000")
+                            else -> Color.GRAY
+                        }
+                        balanceUsdText.setTextColor(balColor)
+                        balanceUsdText.text = String.format(Locale.US, "≈ $%,.2f %s %+.2f%% (%+.2f$)", balanceUsd, balArrow, balPct, balChange)
+
+                        // Tính biến động tỷ giá
+                        val priceChange = price - lastPrice!!
+                        val pricePct = if (lastPrice!! > 0) priceChange / lastPrice!! * 100 else 0.0
+                        val priceArrow = when {
+                            priceChange > 0.01 -> "▲"
+                            priceChange < -0.01 -> "▼"
+                            else -> "●"
+                        }
+                        val priceColor = when {
+                            priceChange > 0.01 -> Color.parseColor("#00C853")
+                            priceChange < -0.01 -> Color.parseColor("#D50000")
+                            else -> Color.GRAY
+                        }
+                        rateText.setTextColor(priceColor)
+                        rateText.text = String.format(Locale.US, "BTC $%,.2f %s %+.2f%% (%+.2f$)", price, priceArrow, pricePct, priceChange)
+                    } else {
+                        // Không có giá hoặc lần đầu
+                        balanceUsdText.text = if (price > 0) String.format(Locale.US, "≈ $%,.2f", balanceUsd) else "≈ $---"
+                        rateText.text = priceDisplay
+                    }
 
                     lastBalanceUsd = balanceUsd
-                    lastPrice = price
+                    lastPrice = if (price > 0) price else null
 
                     val addr = walletManager.getAddress()
                     addressText.text = "Địa chỉ: $addr"
-                    syncText.text = "Đã cập nhật SPV • " + SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
-                    syncProgressBar.progress = 100
                     val adapter = object : ArrayAdapter<String>(this, android.R.layout.simple_list_item_2, android.R.id.text1, txs.map { "" }) {
                         override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
                             val view = super.getView(position, convertView, parent)
@@ -196,8 +208,7 @@ class MainActivity : AppCompatActivity() {
                 }
             } catch (e: Exception) {
                 runOnUiThread {
-                    syncText.text = "Lỗi cập nhật SPV"
-                    syncProgressBar.progress = 0
+                    spvStatusText.text = "SPV: Lỗi cập nhật"
                     isSyncing = false
                 }
             }
@@ -219,11 +230,11 @@ class MainActivity : AppCompatActivity() {
         }, 45000)
     }
 
-    // ================== Thống kê mạng (chỉ hiển thị, không ảnh hưởng đến ví) ==================
+    // ================== Thống kê mạng (chỉ hiển thị) ==================
     private fun fetchBlockUpdate() {
         Thread {
             try {
-                val json = java.net.URL("https://mempool.space/api/v1/blocks").openStream().bufferedReader().readText()
+                val json = URL("https://mempool.space/api/v1/blocks").openStream().bufferedReader().readText()
                 val height = Regex("\"height\":(\\d+)").find(json)?.groupValues?.get(1)?.toInt() ?: 0
                 val lastTime = Regex("\"timestamp\":(\\d+)").find(json)?.groupValues?.get(1)?.toLong() ?: 0L
                 val nextHeight = height + 1
@@ -252,20 +263,20 @@ class MainActivity : AppCompatActivity() {
     private fun fetchBtcStats() {
         Thread {
             try {
-                val height = java.net.URL("https://mempool.space/api/blocks/tip/height").readText().trim().toInt()
+                val height = URL("https://mempool.space/api/blocks/tip/height").readText().trim().toInt()
                 val halvings = height / 210000
                 val reward = 50.0 / Math.pow(2.0, halvings.toDouble())
                 val nextHalving = (halvings + 1) * 210000
                 val blocksToHalving = nextHalving - height
-                val totalSats = java.net.URL("https://blockchain.info/q/totalbc").readText().trim().toLong()
+                val totalSats = URL("https://blockchain.info/q/totalbc").readText().trim().toLong()
                 val totalMined = totalSats / 100000000.0
-                val diffJson = java.net.URL("https://mempool.space/api/v1/difficulty-adjustment").readText()
+                val diffJson = URL("https://mempool.space/api/v1/difficulty-adjustment").readText()
                 val diffProgress = Regex("\"progressPercent\":([\\d.]+)").find(diffJson)?.groupValues?.get(1)?.toFloat() ?: 0f
-                val mempoolJson = java.net.URL("https://mempool.space/api/mempool").readText()
+                val mempoolJson = URL("https://mempool.space/api/mempool").readText()
                 val mempoolCount = Regex("\"count\":(\\d+)").find(mempoolJson)?.groupValues?.get(1)?.toInt() ?: 0
-                val feesJson = java.net.URL("https://mempool.space/api/v1/fees/recommended").readText()
+                val feesJson = URL("https://mempool.space/api/v1/fees/recommended").readText()
                 val feeFast = Regex("\"fastestFee\":(\\d+)").find(feesJson)?.groupValues?.get(1)?.toInt() ?: 0
-                val hashJson = java.net.URL("https://mempool.space/api/v1/mining/hashrate/1w").readText()
+                val hashJson = URL("https://mempool.space/api/v1/mining/hashrate/1w").readText()
                 val currentHash = Regex("\"currentHashrate\":([\\d.]+)").find(hashJson)?.groupValues?.get(1)?.toDouble() ?: 0.0
                 runOnUiThread {
                     val minedPct = ((totalMined / 21000000.0) * 100).toInt()
@@ -328,7 +339,7 @@ class MainActivity : AppCompatActivity() {
         statBars[key] = pb
     }
 
-    // ================== CÁC DIALOG (welcome, create, import, unlock) ==================
+    // ================== CÁC DIALOG ==================
     private fun showWelcome() {
         rootLayout.removeAllViews()
         val isDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
@@ -532,23 +543,14 @@ class MainActivity : AppCompatActivity() {
             setPadding(0, 10, 0, 0)
         }
         balanceUsdText = TextView(this).apply {
-            text = "≈ $0.00"
+            text = "≈ $---"
             textSize = 16f
             setTextColor(subColor)
         }
         rateText = TextView(this).apply {
-            text = "BTC $0.00"
+            text = "BTC ---"
             textSize = 14f
             setTextColor(Color.GRAY)
-        }
-        syncText = TextView(this).apply {
-            text = "Chưa cập nhật"
-            textSize = 13f
-            setTextColor(subColor)
-        }
-        syncProgressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-            max = 100
-            progress = 0
         }
         spvStatusText = TextView(this).apply {
             text = "SPV: Đang khởi động..."
@@ -629,8 +631,6 @@ class MainActivity : AppCompatActivity() {
         rootLayout.addView(balanceText)
         rootLayout.addView(balanceUsdText)
         rootLayout.addView(rateText)
-        rootLayout.addView(syncText)
-        rootLayout.addView(syncProgressBar)
         rootLayout.addView(spvStatusText)
         rootLayout.addView(spvProgressBar)
         rootLayout.addView(addressText)
@@ -665,14 +665,12 @@ class MainActivity : AppCompatActivity() {
         }
         btnSettings.setOnClickListener { showSettings() }
 
-        // Đăng ký callback từ WalletManager (chuyển đến SyncService)
         walletManager.onProgress { pct, txt ->
             runOnUiThread {
                 spvStatusText.text = "SPV: $txt"
                 spvProgressBar.progress = pct
             }
         }
-        // Đồng bộ trạng thái hiện tại từ service
         SyncService.getInstance()?.setProgressCallback { pct, txt ->
             runOnUiThread {
                 spvStatusText.text = "SPV: $txt"
@@ -719,7 +717,7 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this).setTitle("Nhận Bitcoin").setView(layout).setPositiveButton("Đóng", null).show()
     }
 
-    // ================== DIALOG GỬI BTC (kiểm tra sync, số dư) ==================
+    // ================== DIALOG GỬI BTC ==================
     private fun showSendDialog() {
         if (isSyncing) {
             toast("Đang cập nhật SPV, vui lòng đợi")
@@ -795,7 +793,7 @@ class MainActivity : AppCompatActivity() {
         layout.addView(feeEstimateTv)
         layout.addView(totalEstimateTv)
 
-        var priceUsd = 60000.0 // giá mặc định, có thể cập nhật từ nguồn khác
+        var priceUsd = 60000.0
         var currentBalance = 0.0
         var isSpvSynced = false
 
