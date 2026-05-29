@@ -9,15 +9,13 @@ import android.content.Intent
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
-import org.bitcoinj.core.Context as BtcContext
 import org.bitcoinj.core.listeners.DownloadProgressTracker
 import org.bitcoinj.kits.WalletAppKit
 import org.bitcoinj.params.MainNetParams
-import org.bitcoinj.script.ScriptType
+import org.bitcoinj.script.Script
 import org.bitcoinj.wallet.DeterministicSeed
 import org.bitcoinj.wallet.Wallet
 import java.io.File
-import java.util.Date
 import java.util.concurrent.TimeUnit
 
 class SyncService : Service() {
@@ -107,8 +105,6 @@ class SyncService : Service() {
         Thread {
             try {
                 val params = MainNetParams.get()
-                BtcContext.propagate(BtcContext(params))
-
                 val dir = File(filesDir, "spv_wallets")
                 if (!dir.exists()) dir.mkdirs()
 
@@ -118,7 +114,7 @@ class SyncService : Service() {
                     val words = seedPhrase.trim().lowercase().split(" ")
                     if (words.size == 12 || words.size == 24) {
                         val seed = DeterministicSeed(words, null, "", 0L)
-                        val wallet = Wallet.fromSeed(params, seed, ScriptType.P2WPKH)
+                        val wallet = Wallet.fromSeed(params, seed, Script.ScriptType.P2WPKH)
                         wallet.saveToFile(walletFile)
                     }
                 }
@@ -131,7 +127,7 @@ class SyncService : Service() {
                 kit = WalletAppKit(params, dir, walletId).apply {
                     setBlockingStartup(false)
                     setDownloadListener(object : DownloadProgressTracker() {
-                        override fun progress(pct: Double, blocksSoFar: Int, date: Date?) {
+                        override fun progress(pct: Double, blocksSoFar: Int, date: java.util.Date?) {
                             var p = pct.toInt()
                             if (p < 0) p = 0
                             if (p > 100) p = 100
