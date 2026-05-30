@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="bitcoin_orange">#F7931A</color>
+    <color name="bitcoin_orange_dark">#E67E22</color>
+    <color name="bitcoin_orange_light">#FFB347</color>
+    <color name="background_dark">#121212</color>
+    <color name="background_light">#FFFFFF</color>
+    <color name="card_dark">#1E1E1E</color>
+    <color name="card_light">#F5F5F5</color>
+    <color name="text_primary_dark">#FFFFFF</color>
+    <color name="text_primary_light">#000000</color>
+    <color name="text_secondary">#888888</color>
+    <color name="accent_green">#00C853</color>
+    <color name="accent_red">#D50000</color>
+</resources>
