@@ -23,11 +23,8 @@ import android.view.WindowManager
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.setPadding
-import com.github.mikephil.charting.charts.CandleStickChart
 import com.github.mikephil.charting.charts.LineChart
-import com.github.mikephil.charting.components.XAxis
 import com.github.mikephil.charting.data.*
-import com.github.mikephil.charting.formatter.ValueFormatter
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
 import com.journeyapps.barcodescanner.ScanContract
@@ -146,10 +143,10 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             setPadding(16, 16, 16, 16)
             setBackgroundColor(Color.parseColor("#2C2C2C"))
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                topMargin = 16
-                bottomMargin = 8
-            }
+            val params = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            params.topMargin = 16
+            params.bottomMargin = 8
+            layoutParams = params
         }
         spvSummaryText = TextView(this).apply {
             text = "🔽 SPV: Đang đồng bộ..."
@@ -195,7 +192,7 @@ class MainActivity : AppCompatActivity() {
     private fun addStatsGrid(container: LinearLayout, mainColor: Int) {
         val gridContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
         val row1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; weightSum = 2f }
         val row2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; weightSum = 2f }
@@ -206,7 +203,7 @@ class MainActivity : AppCompatActivity() {
         fun addStatToRow(row: LinearLayout, label: String, key: String) {
             val item = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.VERTICAL
-                layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
                 setPadding(8, 4, 8, 4)
             }
             val title = TextView(this@MainActivity).apply {
@@ -688,7 +685,9 @@ class MainActivity : AppCompatActivity() {
         }
         val unlockBtn = Button(this).apply {
             text = "Mở khóa"
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = 20 }
+            val params = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            params.topMargin = 20
+            layoutParams = params
         }
         unlockBtn.setOnClickListener {
             val pass = passInput.text.toString()
@@ -721,7 +720,7 @@ class MainActivity : AppCompatActivity() {
 
         val balanceRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
             gravity = Gravity.CENTER_VERTICAL
         }
         balanceText = TextView(this).apply {
@@ -729,7 +728,8 @@ class MainActivity : AppCompatActivity() {
             textSize = 32f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(mainColor)
-            layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
+            val params = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            layoutParams = params
         }
         balanceRow.addView(balanceText)
         setupSparkline()
@@ -756,7 +756,10 @@ class MainActivity : AppCompatActivity() {
             progress = 0
             progressTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#F7931A"))
             scaleY = 2f
-            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = 4; bottomMargin = 8 }
+            val params = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            params.topMargin = 4
+            params.bottomMargin = 8
+            layoutParams = params
         }
         addressText = TextView(this).apply {
             textSize = 12f
@@ -779,11 +782,31 @@ class MainActivity : AppCompatActivity() {
         }
 
         val btnRow1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; weightSum = 2f }
-        val btnReceive = Button(this).apply { text = "⬇ Nhận"; layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = 8 } }
-        val btnSend = Button(this).apply { text = "⬆ Gửi"; layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginStart = 8 } }
+        val btnReceive = Button(this).apply {
+            text = "⬇ Nhận"
+            val params = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            params.marginEnd = 8
+            layoutParams = params
+        }
+        val btnSend = Button(this).apply {
+            text = "⬆ Gửi"
+            val params = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            params.marginStart = 8
+            layoutParams = params
+        }
         val btnRow2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; weightSum = 2f }
-        val btnRefresh = Button(this).apply { text = "⟳ Làm mới"; layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = 8 } }
-        val btnSettings = Button(this).apply { text = "⚙ Cài đặt"; layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginStart = 8 } }
+        val btnRefresh = Button(this).apply {
+            text = "⟳ Làm mới"
+            val params = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            params.marginEnd = 8
+            layoutParams = params
+        }
+        val btnSettings = Button(this).apply {
+            text = "⚙ Cài đặt"
+            val params = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            params.marginStart = 8
+            layoutParams = params
+        }
         btnRow1.addView(btnReceive); btnRow1.addView(btnSend)
         btnRow2.addView(btnRefresh); btnRow2.addView(btnSettings)
 
@@ -802,7 +825,7 @@ class MainActivity : AppCompatActivity() {
             setTextColor(mainColor)
         }
         txListView = ListView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, 600)
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 600)
         }
 
         // Add views
