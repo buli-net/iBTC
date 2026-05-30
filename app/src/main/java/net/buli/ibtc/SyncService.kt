@@ -62,7 +62,6 @@ class SyncService : Service() {
         val walletId = intent.getStringExtra("wallet_id") ?: "default_wallet"
         currentWalletId = walletId
 
-        // Nếu kit đã chạy và đúng walletId -> chỉ cập nhật callback, không tạo lại
         if (kit != null && kit?.isRunning == true && kit?.wallet() != null) {
             setProgressCallback(progressCallback)
             return START_STICKY
@@ -121,10 +120,6 @@ class SyncService : Service() {
                 val dir = File(filesDir, "spv_wallets")
                 if (!dir.exists()) dir.mkdirs()
 
-                // QUAN TRỌNG: Không tự tạo wallet file, để WalletAppKit tự quản lý
-                // Chỉ cần tạo kit với đúng walletId
-
-                // Dừng kit cũ nếu có
                 try {
                     kit?.stopAsync()
                     kit?.awaitTerminated()
@@ -154,19 +149,7 @@ class SyncService : Service() {
                 }
                 kit = newKit
 
-                // Nếu có seed và wallet chưa có seed, import seed (chỉ sau khi kit đã khởi tạo)
-                Thread.sleep(2000)
-                val wallet = kit?.wallet()
-                if (wallet != null && wallet.keyChainSeed.mnemonicCode == null && seedPhrase.isNotEmpty()) {
-                    val words = seedPhrase.trim().lowercase().split(" ")
-                    if (words.size == 12 || words.size == 24) {
-                        val seed = DeterministicSeed(words, null, "", 0L)
-                        wallet.importSeed(seed)
-                    }
-                }
-
             } catch (e: Exception) {
-                // KHÔNG XÓA FILE WALLET, chỉ log lỗi
                 saveProgress(lastProgress, "Lỗi sync: ${e.message}")
                 updateNotification(lastMessage)
                 progressCallback?.invoke(lastProgress, lastMessage)
@@ -176,7 +159,6 @@ class SyncService : Service() {
     }
 
     fun refreshProgress() {
-        // Gửi lại tiến độ hiện tại (callback sẽ cập nhật UI)
         progressCallback?.invoke(lastProgress, lastMessage)
     }
 
@@ -193,7 +175,6 @@ class SyncService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         instance = null
-        // KHÔNG stopAsync để giữ trạng thái cho lần sau
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
