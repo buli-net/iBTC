@@ -5,7 +5,9 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
@@ -29,6 +31,7 @@ class SyncService : Service() {
     private var lastProgress = 0
     private var lastMessage = "Đang khởi động..."
     private var kit: WalletAppKit? = null
+    private lateinit var prefs: SharedPreferences
 
     companion object {
         private var instance: SyncService? = null
@@ -38,7 +41,15 @@ class SyncService : Service() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        prefs = getSharedPreferences("sync_state", Context.MODE_PRIVATE)
         createNotificationChannel()
+
+        // Đọc tiến trình đã lưu
+        lastProgress = prefs.getInt("last_progress", 0)
+        lastMessage = prefs.getString("last_message", "Đang khởi động...") ?: "Đang khởi động..."
+        updateNotification(lastMessage)
+        progressCallback?.invoke(lastProgress, lastMessage)
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(NOTIFICATION_ID, buildNotification(lastMessage),
                 android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
@@ -51,6 +62,7 @@ class SyncService : Service() {
         val seedPhrase = intent?.getStringExtra("seed_phrase") ?: return START_STICKY
         val walletId = intent.getStringExtra("wallet_id") ?: "default_wallet"
         currentWalletId = walletId
+
         // Nếu kit đã chạy và đúng walletId thì không làm gì
         if (kit != null && kit?.isRunning == true && kit?.wallet() != null) {
             setProgressCallback(progressCallback)
@@ -95,6 +107,12 @@ class SyncService : Service() {
         manager.notify(NOTIFICATION_ID, buildNotification(message))
     }
 
+    private fun saveProgress(progress: Int, message: String) {
+        lastProgress = progress
+        lastMessage = message
+        prefs.edit().putInt("last_progress", progress).putString("last_message", message).apply()
+    }
+
     private fun startBitcoinSync(walletId: String, seedPhrase: String) {
         Thread {
             try {
@@ -106,7 +124,7 @@ class SyncService : Service() {
 
                 val walletFile = File(dir, "$walletId.wallet")
 
-                // Nếu file wallet chưa tồn tại và có seed, tạo wallet từ seed và lưu
+                // Tạo wallet nếu chưa có
                 if (!walletFile.exists() && seedPhrase.isNotEmpty()) {
                     val words = seedPhrase.trim().lowercase().split(" ")
                     if (words.size == 12 || words.size == 24) {
@@ -114,7 +132,7 @@ class SyncService : Service() {
                         val wallet = Wallet.fromSeed(params, seed, Script.ScriptType.P2WPKH)
                         wallet.saveToFile(walletFile)
                     } else {
-                        // Nếu seed không hợp lệ, tạo wallet mới ngẫu nhiên
+                        // Seed không hợp lệ, tạo wallet ngẫu nhiên (chỉ dùng cho test)
                         val randomSeed = DeterministicSeed(SecureRandom(), 128, "")
                         val wallet = Wallet.fromSeed(params, randomSeed, Script.ScriptType.P2WPKH)
                         wallet.saveToFile(walletFile)
@@ -135,26 +153,28 @@ class SyncService : Service() {
                             var p = pct.toInt()
                             if (p < 0) p = 0
                             if (p > 100) p = 100
-                            lastProgress = p
-                            lastMessage = if (p < 100) "Đồng bộ blockchain: $p%" else "Đã đồng bộ blockchain (xử lý...)"
+                            val msg = if (p < 100) "Đồng bộ blockchain: $p%" else "Đã đồng bộ blockchain (xử lý...)"
+                            saveProgress(p, msg)
                             updateNotification(lastMessage)
                             progressCallback?.invoke(lastProgress, lastMessage)
                         }
 
                         override fun doneDownload() {
                             isSynced = true
-                            lastProgress = 100
-                            lastMessage = "Đã đồng bộ blockchain"
+                            saveProgress(100, "Đã đồng bộ blockchain")
                             updateNotification(lastMessage)
                             progressCallback?.invoke(lastProgress, lastMessage)
                         }
                     })
                     startAsync()
-                    // Không gọi awaitRunning() để tránh lỗi
                 }
                 kit = newKit
+
+                // Gửi lại tiến trình đã lưu ngay sau khi start (để UI hiển thị nhanh)
+                progressCallback?.invoke(lastProgress, lastMessage)
+
             } catch (e: Exception) {
-                lastMessage = "Lỗi sync: ${e.message}"
+                saveProgress(lastProgress, "Lỗi sync: ${e.message}")
                 updateNotification(lastMessage)
                 progressCallback?.invoke(lastProgress, lastMessage)
                 kit = null
@@ -164,13 +184,8 @@ class SyncService : Service() {
 
     fun setProgressCallback(callback: ((Int, String) -> Unit)?) {
         progressCallback = callback
-        val displayProgress = if (lastProgress > 100) 100 else lastProgress
-        val displayMessage = when {
-            isSynced -> "Đã đồng bộ blockchain"
-            lastProgress >= 100 -> "Đã đồng bộ blockchain"
-            else -> lastMessage
-        }
-        callback?.invoke(displayProgress, displayMessage)
+        // Gửi trạng thái hiện tại ngay lập tức
+        callback?.invoke(lastProgress, lastMessage)
     }
 
     fun getWallet(): Wallet? = try { kit?.wallet() } catch (_: Exception) { null }
@@ -181,7 +196,7 @@ class SyncService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         instance = null
-        // Không stopAsync để giữ state cho lần sau
+        // Không stopAsync để giữ trạng thái cho lần sau
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
