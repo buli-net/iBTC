@@ -20,7 +20,7 @@
         android:roundIcon="@android:mipmap/sym_def_app_icon"
         android:label="iBTC"
         android:supportsRtl="true"
-        android:theme="@style/Theme.iBTC"   <!-- Theme Bitcoin -->
+        android:theme="@style/Theme.iBTC"
         tools:targetApi="31">
 
         <activity
@@ -39,7 +39,7 @@
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="dataSync"
-            android:stopWithTask="false" />   <!-- Không dừng khi đóng app -->
+            android:stopWithTask="false" />
 
     </application>
 
