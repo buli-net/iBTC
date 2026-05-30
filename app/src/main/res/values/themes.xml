@@ -1,5 +1,11 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- Kế thừa trực tiếp theme Material3 từ thư viện -->
-    <style name="Theme.iBTC" parent="Theme.Material3.DayNight.NoActionBar" />
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <style name="Theme.iBTC" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/bitcoin_orange</item>
+        <item name="colorPrimaryVariant">@color/bitcoin_orange_dark</item>
+        <item name="colorOnPrimary">@android:color/white</item>
+        <item name="android:windowBackground">@color/background_light</item>
+        <item name="android:statusBarColor">@color/bitcoin_orange_dark</item>
+        <item name="android:navigationBarColor">@color/background_light</item>
+        <item name="android:colorAccent">@color/bitcoin_orange</item>
+    </style>
 </resources>
