@@ -23,6 +23,8 @@ import android.view.WindowManager
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.setPadding
+import com.github.mikephil.charting.charts.LineChart
+import com.github.mikephil.charting.data.*
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
 import com.journeyapps.barcodescanner.ScanContract
@@ -56,6 +58,9 @@ class MainActivity : AppCompatActivity() {
     private var autoRefreshStarted = false
     private var pendingAddressInput: EditText? = null
     private var viewsReady = false
+
+    // Sparkline nhỏ
+    private lateinit var sparkline: LineChart
 
     private val qrScanLauncher = registerForActivityResult(ScanContract()) { result ->
         result.contents?.let { addr ->
@@ -202,7 +207,6 @@ class MainActivity : AppCompatActivity() {
                     if (!viewsReady) return@runOnUiThread
                     balanceText.text = String.format(Locale.US, "%.8f BTC", bal)
 
-                    // Chỉ hiển thị 2 số thập phân cho % và $ thay đổi
                     balanceUsdText.setTextColor(usdColor)
                     balanceUsdText.text = String.format(
                         Locale.US,
@@ -380,6 +384,67 @@ class MainActivity : AppCompatActivity() {
         statTexts[key] = tv
         statBars[key] = pb
     }
+
+    // ================= SPARKLINE NHỎ =================
+    private fun setupSparkline() {
+        sparkline = LineChart(this).apply {
+            layoutParams = LinearLayout.LayoutParams(dpToPx(120), dpToPx(40))
+            setTouchEnabled(false)
+            setDragEnabled(false)
+            setScaleEnabled(false)
+            description.isEnabled = false
+            legend.isEnabled = false
+            setDrawGridBackground(false)
+            axisLeft.isEnabled = false
+            axisRight.isEnabled = false
+            xAxis.isEnabled = false
+            setBackgroundColor(Color.TRANSPARENT)
+        }
+    }
+
+    private fun updateSparkline(closePrices: List<Float>) {
+        if (!viewsReady) return
+        if (closePrices.isEmpty()) return
+
+        val entries = closePrices.mapIndexed { index, price -> Entry(index.toFloat(), price) }
+        val dataSet = LineDataSet(entries, "")
+
+        // Xác định màu dựa trên xu hướng (giá cuối so với giá đầu)
+        val firstPrice = closePrices.first()
+        val lastPrice = closePrices.last()
+        val trendColor = when {
+            lastPrice > firstPrice -> Color.parseColor("#00C853")   // xanh
+            lastPrice < firstPrice -> Color.parseColor("#D50000")   // đỏ
+            else -> Color.parseColor("#F7931A")                    // cam (bằng giá)
+        }
+
+        dataSet.apply {
+            color = trendColor
+            setCircleColor(Color.TRANSPARENT)
+            lineWidth = 2f
+            setDrawValues(false)
+            setDrawCircles(false)
+            setDrawFilled(true)
+            fillColor = trendColor
+            fillAlpha = 50
+            mode = LineDataSet.Mode.CUBIC_BEZIER
+        }
+
+        sparkline.data = LineData(dataSet)
+        sparkline.invalidate()
+    }
+
+    private fun fetchSparkline() {
+        BitcoinChartService.fetchKlines("1h", 30) { klines ->
+            if (klines != null && klines.isNotEmpty()) {
+                val closePrices = klines.map { it.close.toFloat() }
+                runOnUiThread { updateSparkline(closePrices) }
+            }
+        }
+    }
+
+    private fun dpToPx(dp: Int): Int = (dp * resources.displayMetrics.density).toInt()
+    // =============================================
 
     private fun showWelcome() {
         rootLayout.removeAllViews()
@@ -576,13 +641,24 @@ class MainActivity : AppCompatActivity() {
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(mainColor)
         }
+
+        // Hàng chứa số dư BTC và sparkline
+        val balanceRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            gravity = Gravity.CENTER_VERTICAL
+        }
         balanceText = TextView(this).apply {
             text = "0.00000000 BTC"
             textSize = 32f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(mainColor)
-            setPadding(0, 10, 0, 0)
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
+        balanceRow.addView(balanceText)
+        setupSparkline()
+        balanceRow.addView(sparkline)
+
         balanceUsdText = TextView(this).apply {
             text = "≈ $---"
             textSize = 16f
@@ -669,7 +745,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         rootLayout.addView(walletNameText)
-        rootLayout.addView(balanceText)
+        rootLayout.addView(balanceRow)
         rootLayout.addView(balanceUsdText)
         rootLayout.addView(rateText)
         rootLayout.addView(spvStatusText)
@@ -703,6 +779,7 @@ class MainActivity : AppCompatActivity() {
             fetchBlockUpdate()
             fetchBtcStats()
             SyncService.getInstance()?.refreshProgress()
+            fetchSparkline()
             toast("Đang làm mới...")
         }
         btnSettings.setOnClickListener { showSettings() }
@@ -728,6 +805,7 @@ class MainActivity : AppCompatActivity() {
         refreshWalletFromSPV()
         startAutoRefresh()
         startBlockProgress()
+        fetchSparkline()
     }
 
     private fun showReceiveDialog() {
@@ -1202,7 +1280,7 @@ class MainActivity : AppCompatActivity() {
     private fun showInfo() {
         AlertDialog.Builder(this)
             .setTitle("iBTC v4.7")
-            .setMessage("Build: 2026-05-30\n• SPV 100%\n• Foreground service\n• Gửi BTC")
+            .setMessage("Build: 2026-05-30\n• SPV 100%\n• Foreground service\n• Gửi BTC\n• Biểu đồ giá nhỏ real-time (xanh/đỏ theo xu hướng)")
             .setPositiveButton("OK", null)
             .show()
     }
