@@ -200,7 +200,7 @@ class MainActivity : AppCompatActivity() {
     private fun addStatsGrid(container: LinearLayout, mainColor: Int) {
         val gridContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
         val row1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; weightSum = 2f }
         val row2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; weightSum = 2f }
@@ -211,7 +211,7 @@ class MainActivity : AppCompatActivity() {
         fun addStatToRow(row: LinearLayout, label: String, key: String) {
             val item = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.VERTICAL
-                layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
                 setPadding(8, 4, 8, 4)
             }
             val title = TextView(this@MainActivity).apply {
@@ -301,7 +301,7 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             setPadding(16, 16, 16, 16)
             setBackgroundColor(Color.parseColor("#2C2C2C"))
-            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = 16 }
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = 16 }
         }
         val title = TextView(this).apply {
             text = "📱 Thông tin thiết bị"
@@ -316,8 +316,8 @@ class MainActivity : AppCompatActivity() {
         val grid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         for ((key, value) in details) {
             val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(4, 2, 4, 2) }
-            val keyTv = TextView(this).apply { text = "$key: "; textSize = 12f; setTextColor(Color.GRAY); layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 0.4f) }
-            val valTv = TextView(this).apply { text = value; textSize = 12f; setTextColor(mainColor); layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 0.6f) }
+            val keyTv = TextView(this).apply { text = "$key: "; textSize = 12f; setTextColor(Color.GRAY); layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.4f) }
+            val valTv = TextView(this).apply { text = value; textSize = 12f; setTextColor(mainColor); layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.6f) }
             row.addView(keyTv)
             row.addView(valTv)
             grid.addView(row)
@@ -326,7 +326,7 @@ class MainActivity : AppCompatActivity() {
         container.addView(card)
     }
 
-    // ===================== CÁC HÀM CŨ (giữ nguyên logic) =====================
+    // ===================== CÁC HÀM CŨ =====================
     private fun getTodayUtcStart(): Long {
         val calendar = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
         calendar.set(Calendar.HOUR_OF_DAY, 0)
@@ -782,7 +782,7 @@ class MainActivity : AppCompatActivity() {
 
         val balanceRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
             gravity = Gravity.CENTER_VERTICAL
         }
         balanceText = TextView(this).apply {
@@ -790,7 +790,7 @@ class MainActivity : AppCompatActivity() {
             textSize = 32f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(mainColor)
-            layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
         balanceRow.addView(balanceText)
         setupSparkline()
@@ -819,7 +819,7 @@ class MainActivity : AppCompatActivity() {
             progress = 0
             progressTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#F7931A"))
             scaleY = 1.5f
-            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
 
         addressText = TextView(this).apply {
@@ -845,11 +845,11 @@ class MainActivity : AppCompatActivity() {
         }
 
         val btnRow1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; weightSum = 2f }
-        val btnReceive = Button(this).apply { text = "⬇ Nhận"; layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = 8 } }
-        val btnSend = Button(this).apply { text = "⬆ Gửi"; layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginStart = 8 } }
+        val btnReceive = Button(this).apply { text = "⬇ Nhận"; layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = 8 } }
+        val btnSend = Button(this).apply { text = "⬆ Gửi"; layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = 8 } }
         val btnRow2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; weightSum = 2f }
-        val btnRefresh = Button(this).apply { text = "⟳ Làm mới"; layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = 8 } }
-        val btnSettings = Button(this).apply { text = "⚙ Cài đặt"; layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginStart = 8 } }
+        val btnRefresh = Button(this).apply { text = "⟳ Làm mới"; layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = 8 } }
+        val btnSettings = Button(this).apply { text = "⚙ Cài đặt"; layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = 8 } }
         btnRow1.addView(btnReceive); btnRow1.addView(btnSend)
         btnRow2.addView(btnRefresh); btnRow2.addView(btnSettings)
 
@@ -869,10 +869,10 @@ class MainActivity : AppCompatActivity() {
             setTextColor(mainColor)
         }
         txListView = ListView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, 600)
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 600)
         }
 
-        // Thêm các view theo thứ tự (SPV và Block xếp chồng)
+        // Thêm các view theo thứ tự
         rootLayout.addView(walletNameText)
         rootLayout.addView(balanceRow)
         rootLayout.addView(balanceUsdText)
@@ -886,7 +886,7 @@ class MainActivity : AppCompatActivity() {
         rootLayout.addView(blockText)
         rootLayout.addView(blockProgressBar)
 
-        addSpvCard(rootLayout, mainColor)      // Card SPV chi tiết
+        addSpvCard(rootLayout, mainColor)
 
         rootLayout.addView(statsTitle)
         addStatsGrid(rootLayout, mainColor)
@@ -939,7 +939,6 @@ class MainActivity : AppCompatActivity() {
         fetchSparkline()
     }
 
-    // ===================== CÁC HÀM DIALOG =====================
     private fun showReceiveDialog() {
         val address = walletManager.getAddress()
         if (address.isEmpty()) { toast("Ví chưa sẵn sàng"); return }
