@@ -11,9 +11,17 @@ import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Typeface
+import android.hardware.Sensor
+import android.hardware.SensorManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.net.wifi.WifiManager
+import android.os.BatteryManager
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.telephony.TelephonyManager
 import android.text.InputType
 import android.text.method.PasswordTransformationMethod
 import android.view.Gravity
@@ -52,7 +60,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var statsContainer: LinearLayout
     private lateinit var spvStatusText: TextView
     private lateinit var spvProgressBar: ProgressBar
-    private val statBars = mutableMapOf<String, ProgressBar>()
     private val statTexts = mutableMapOf<String, TextView>()
     private var isSyncing = false
     private var autoRefreshStarted = false
@@ -61,6 +68,11 @@ class MainActivity : AppCompatActivity() {
 
     // Sparkline nhỏ
     private lateinit var sparkline: LineChart
+
+    // Card SPV mở rộng
+    private lateinit var spvDetailLayout: LinearLayout
+    private lateinit var spvSummaryText: TextView
+    private var spvExpanded = false
 
     private val qrScanLauncher = registerForActivityResult(ScanContract()) { result ->
         result.contents?.let { addr ->
@@ -102,18 +114,10 @@ class MainActivity : AppCompatActivity() {
                     if (viewsReady) {
                         spvStatusText.text = "SPV: $txt"
                         spvProgressBar.progress = pct
+                        updateSpvDetail()
                     }
                 }
             }
-        }
-        try {
-            if (walletManager.getActiveId() != null || walletManager.hasWallets()) {
-                showUnlockDialog()
-            } else {
-                showWelcome()
-            }
-        } catch (_: Exception) {
-            showWelcome()
         }
     }
 
@@ -137,6 +141,207 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // ===================== SPV CARD =====================
+    private fun addSpvCard(container: LinearLayout, mainColor: Int) {
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(16, 16, 16, 16)
+            setBackgroundColor(Color.parseColor("#2C2C2C"))
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = 16
+                bottomMargin = 8
+            }
+        }
+        spvSummaryText = TextView(this).apply {
+            text = "🔽 SPV: Đang đồng bộ..."
+            textSize = 14f
+            setTextColor(mainColor)
+            setPadding(0, 0, 0, 8)
+        }
+        spvDetailLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+        }
+        spvSummaryText.setOnClickListener {
+            spvExpanded = !spvExpanded
+            spvDetailLayout.visibility = if (spvExpanded) View.VISIBLE else View.GONE
+            spvSummaryText.text = if (spvExpanded) "🔼 SPV: Đang đồng bộ..." else "🔽 SPV: Đang đồng bộ..."
+        }
+        card.addView(spvSummaryText)
+        card.addView(spvDetailLayout)
+        container.addView(card)
+    }
+
+    private fun updateSpvDetail() {
+        if (!viewsReady) return
+        val syncService = SyncService.getInstance()
+        if (syncService == null) {
+            spvSummaryText.text = "⚠️ SPV: Dịch vụ chưa sẵn sàng"
+            return
+        }
+        // Lấy thông tin từ SyncService (cần bổ sung trong SyncService.kt)
+        val progress = try { syncService.getLastProgress() } catch (_: Exception) { 0 }
+        val message = try { syncService.getLastMessage() } catch (_: Exception) { "Đang đồng bộ" }
+        val peers = try { syncService.getConnectedPeers() } catch (_: Exception) { 0 }
+        val chainHeight = try { syncService.getChainHeight() } catch (_: Exception) { 0 }
+        val commonHeight = try { syncService.getCommonHeight() } catch (_: Exception) { 0 }
+        val blocksLeft = if (commonHeight > chainHeight) commonHeight - chainHeight else 0
+        val downloadPeer = try { syncService.getDownloadPeer() } catch (_: Exception) { "?" }
+
+        spvSummaryText.text = "📡 SPV: ${message} (${progress}%)"
+        val details = buildString {
+            append("📦 Tiến độ block:\n")
+            append("   Đã tải: $progress%\n")
+            append("   Chiều cao hiện tại: $chainHeight\n")
+            append("   Chiều cao phổ biến: $commonHeight\n")
+            append("   Còn lại: $blocksLeft blocks\n")
+            append("🌐 Kết nối:\n")
+            append("   Peer đang tải: $downloadPeer\n")
+            append("   Số peer: $peers\n")
+            append("💾 Bộ nhớ cache: ...\n")
+            append("⚡ Phí khuyến nghị: đang cập nhật\n")
+        }
+        spvDetailLayout.removeAllViews()
+        val tv = TextView(this@MainActivity).apply {
+            text = details
+            textSize = 12f
+            setTextColor(Color.LTGRAY)
+            setPadding(8, 8, 8, 8)
+        }
+        spvDetailLayout.addView(tv)
+    }
+
+    // ===================== THỐNG KÊ BITCOIN DẠNG LƯỚI =====================
+    private fun addStatsGrid(container: LinearLayout, mainColor: Int) {
+        val gridContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
+        }
+        val row1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; weightSum = 2f }
+        val row2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; weightSum = 2f }
+        val row3 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; weightSum = 2f }
+        val row4 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; weightSum = 2f }
+        val row5 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; weightSum = 2f }
+
+        fun addStatToRow(row: LinearLayout, label: String, key: String) {
+            val item = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
+                setPadding(8, 4, 8, 4)
+            }
+            val title = TextView(this@MainActivity).apply {
+                text = label
+                textSize = 11f
+                setTextColor(Color.GRAY)
+            }
+            val value = TextView(this@MainActivity).apply {
+                id = View.generateViewId()
+                text = "..."
+                textSize = 13f
+                setTextColor(mainColor)
+                typeface = Typeface.DEFAULT_BOLD
+            }
+            item.addView(title)
+            item.addView(value)
+            row.addView(item)
+            statTexts[key] = value
+        }
+
+        addStatToRow(row1, "Đã khai thác", "mined")
+        addStatToRow(row1, "Halving", "halving")
+        addStatToRow(row2, "Thưởng block", "reward")
+        addStatToRow(row2, "Difficulty", "diff")
+        addStatToRow(row3, "Mempool", "mempool")
+        addStatToRow(row3, "Hashrate", "hash")
+        addStatToRow(row4, "Phí nhanh", "fee")
+        addStatToRow(row4, "Block hôm nay", "today")
+        addStatToRow(row5, "Cung lưu thông", "supply")
+        addStatToRow(row5, "Block height", "height")
+
+        gridContainer.addView(row1)
+        gridContainer.addView(row2)
+        gridContainer.addView(row3)
+        gridContainer.addView(row4)
+        gridContainer.addView(row5)
+        container.addView(gridContainer)
+    }
+
+    // ===================== THÔNG TIN THIẾT BỊ =====================
+    private fun getDeviceDetails(): Map<String, String> {
+        val details = mutableMapOf<String, String>()
+        val batteryManager = getSystemService(BATTERY_SERVICE) as BatteryManager
+        val batteryPct = batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
+        val isCharging = batteryManager.isCharging
+        details["Pin"] = "$batteryPct% ${if (isCharging) "🔌 Đang sạc" else ""}"
+
+        val cm = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
+        val activeNetwork = cm.activeNetwork
+        val caps = cm.getNetworkCapabilities(activeNetwork)
+        val networkType = when {
+            caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true -> "WiFi"
+            caps?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true -> "Di động"
+            else -> "Không có mạng"
+        }
+        details["Mạng"] = networkType
+        if (networkType == "WiFi") {
+            val wifiManager = applicationContext.getSystemService(WIFI_SERVICE) as WifiManager
+            val wifiInfo = wifiManager.connectionInfo
+            details["WiFi"] = wifiInfo.ssid ?: "Unknown"
+        }
+        val tm = getSystemService(TELEPHONY_SERVICE) as TelephonyManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val simOperator = tm.simOperatorName
+            details["SIM"] = simOperator ?: "Không SIM"
+        } else {
+            details["SIM"] = tm.simOperatorName ?: "Không SIM"
+        }
+        details["Thiết bị"] = "${Build.MANUFACTURER} ${Build.MODEL}"
+        details["Android"] = Build.VERSION.RELEASE
+        details["RAM"] = "${getTotalRAM() / (1024 * 1024)} MB"
+        details["CPU"] = Build.HARDWARE ?: "Unknown"
+        val sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
+        val sensors = sensorManager.getSensorList(Sensor.TYPE_ALL).size
+        details["Cảm biến"] = "$sensors sensors"
+        return details
+    }
+
+    private fun getTotalRAM(): Long {
+        val memInfo = android.app.ActivityManager.MemoryInfo()
+        (getSystemService(ACTIVITY_SERVICE) as android.app.ActivityManager).getMemoryInfo(memInfo)
+        return memInfo.totalMem
+    }
+
+    private fun addDeviceInfoCard(container: LinearLayout, mainColor: Int) {
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(16, 16, 16, 16)
+            setBackgroundColor(Color.parseColor("#2C2C2C"))
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = 16 }
+        }
+        val title = TextView(this).apply {
+            text = "📱 Thông tin thiết bị"
+            textSize = 14f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(mainColor)
+            setPadding(0, 0, 0, 8)
+        }
+        card.addView(title)
+
+        val details = getDeviceDetails()
+        val grid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        for ((key, value) in details) {
+            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(4, 2, 4, 2) }
+            val keyTv = TextView(this).apply { text = "$key: "; textSize = 12f; setTextColor(Color.GRAY); layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 0.4f) }
+            val valTv = TextView(this).apply { text = value; textSize = 12f; setTextColor(mainColor); layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 0.6f) }
+            row.addView(keyTv)
+            row.addView(valTv)
+            grid.addView(row)
+        }
+        card.addView(grid)
+        container.addView(card)
+    }
+
+    // ===================== CÁC HÀM CŨ =====================
     private fun getTodayUtcStart(): Long {
         val calendar = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
         calendar.set(Calendar.HOUR_OF_DAY, 0)
@@ -150,9 +355,7 @@ class MainActivity : AppCompatActivity() {
         if (isSyncing) return
         isSyncing = true
         runOnUiThread {
-            if (viewsReady) {
-                spvStatusText.text = "SPV: Đang cập nhật số dư..."
-            }
+            if (viewsReady) spvStatusText.text = "SPV: Đang cập nhật số dư..."
         }
         Thread {
             try {
@@ -206,20 +409,10 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread {
                     if (!viewsReady) return@runOnUiThread
                     balanceText.text = String.format(Locale.US, "%.8f BTC", bal)
-
                     balanceUsdText.setTextColor(usdColor)
-                    balanceUsdText.text = String.format(
-                        Locale.US,
-                        "≈ $%,.2f %s %+.2f%% (%+.2f$)",
-                        currentUsd, usdArrow, usdChangePercent, usdChange
-                    )
-
+                    balanceUsdText.text = String.format(Locale.US, "≈ $%,.2f %s %+.2f%% (%+.2f$)", currentUsd, usdArrow, usdChangePercent, usdChange)
                     rateText.setTextColor(priceColor)
-                    rateText.text = String.format(
-                        Locale.US,
-                        "BTC $%,.2f %s %+.2f%% (%+.2f$)",
-                        currentPrice, priceArrow, priceChangePercent, priceChange
-                    )
+                    rateText.text = String.format(Locale.US, "BTC $%,.2f %s %+.2f%% (%+.2f$)", currentPrice, priceArrow, priceChangePercent, priceChange)
 
                     val addr = walletManager.getAddress()
                     addressText.text = "Địa chỉ: $addr"
@@ -244,9 +437,7 @@ class MainActivity : AppCompatActivity() {
                 }
             } catch (e: Exception) {
                 runOnUiThread {
-                    if (viewsReady) {
-                        spvStatusText.text = "SPV: Lỗi cập nhật"
-                    }
+                    if (viewsReady) spvStatusText.text = "SPV: Lỗi cập nhật"
                     isSyncing = false
                 }
             }
@@ -325,30 +516,17 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread {
                     if (viewsReady) {
                         val minedPct = ((totalMined / 21000000.0) * 100).toInt()
-                        statBars["mined"]?.progress = minedPct
                         statTexts["mined"]?.text = "Đã khai thác: ${String.format("%.2f", totalMined)} / 21M BTC ($minedPct%)"
-                        val halvingPct = ((1 - blocksToHalving / 210000.0) * 100).toInt()
-                        statBars["halving"]?.progress = halvingPct
                         statTexts["halving"]?.text = "Halving #${halvings + 1}: còn $blocksToHalving blocks (~${blocksToHalving / 144} ngày)"
-                        val rewardPct = ((reward / 50.0) * 100).toInt()
-                        statBars["reward"]?.progress = rewardPct
                         statTexts["reward"]?.text = "Thưởng block: $reward BTC (ban đầu 50 BTC)"
-                        statBars["diff"]?.progress = diffProgress.toInt()
                         statTexts["diff"]?.text = "Difficulty adj: ${String.format("%.1f", diffProgress)}%"
-                        val mempoolPct = (mempoolCount / 300000.0 * 100).toInt().coerceAtMost(100)
-                        statBars["mempool"]?.progress = mempoolPct
                         statTexts["mempool"]?.text = "Mempool: $mempoolCount tx chờ"
                         val hashEh = currentHash / 1e18
-                        statBars["hash"]?.progress = 70
                         statTexts["hash"]?.text = "Hashrate: ${String.format("%.0f", hashEh)} EH/s"
-                        statBars["fee"]?.progress = feeFast.coerceAtMost(100)
                         statTexts["fee"]?.text = "Phí nhanh: $feeFast sat/vB"
                         val blocksToday = height % 144
-                        statBars["today"]?.progress = (blocksToday * 100 / 144)
                         statTexts["today"]?.text = "Block hôm nay: $blocksToday / 144"
-                        statBars["supply"]?.progress = minedPct
                         statTexts["supply"]?.text = "Cung lưu thông: ${String.format("%.2f", totalMined / 1000000)}M BTC"
-                        statBars["height"]?.progress = height % 100
                         statTexts["height"]?.text = "Block height: #$height"
                     }
                 }
@@ -366,26 +544,7 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
-    private fun addStat(key: String, label: String, color: Int) {
-        val tv = TextView(this).apply {
-            text = label
-            textSize = POOL_FONT
-            setTextColor(color)
-            setPadding(0, 8, 0, 2)
-            typeface = Typeface.DEFAULT
-        }
-        val pb = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-            max = 100
-            progress = 0
-            scaleY = 0.6f
-        }
-        statsContainer.addView(tv)
-        statsContainer.addView(pb)
-        statTexts[key] = tv
-        statBars[key] = pb
-    }
-
-    // ================= SPARKLINE NHỎ =================
+    // Sparkline
     private fun setupSparkline() {
         sparkline = LineChart(this).apply {
             layoutParams = LinearLayout.LayoutParams(dpToPx(120), dpToPx(40))
@@ -405,20 +564,15 @@ class MainActivity : AppCompatActivity() {
     private fun updateSparkline(closePrices: List<Float>) {
         if (!viewsReady) return
         if (closePrices.isEmpty()) return
-
         val entries = closePrices.mapIndexed { index, price -> Entry(index.toFloat(), price) }
-        val dataSet = LineDataSet(entries, "")
-
-        // Xác định màu dựa trên xu hướng (giá cuối so với giá đầu)
         val firstPrice = closePrices.first()
         val lastPrice = closePrices.last()
         val trendColor = when {
-            lastPrice > firstPrice -> Color.parseColor("#00C853")   // xanh
-            lastPrice < firstPrice -> Color.parseColor("#D50000")   // đỏ
-            else -> Color.parseColor("#F7931A")                    // cam (bằng giá)
+            lastPrice > firstPrice -> Color.parseColor("#00C853")
+            lastPrice < firstPrice -> Color.parseColor("#D50000")
+            else -> Color.parseColor("#F7931A")
         }
-
-        dataSet.apply {
+        val dataSet = LineDataSet(entries, "").apply {
             color = trendColor
             setCircleColor(Color.TRANSPARENT)
             lineWidth = 2f
@@ -429,7 +583,6 @@ class MainActivity : AppCompatActivity() {
             fillAlpha = 50
             mode = LineDataSet.Mode.CUBIC_BEZIER
         }
-
         sparkline.data = LineData(dataSet)
         sparkline.invalidate()
     }
@@ -444,8 +597,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun dpToPx(dp: Int): Int = (dp * resources.displayMetrics.density).toInt()
-    // =============================================
 
+    // Các màn hình
     private fun showWelcome() {
         rootLayout.removeAllViews()
         val isDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
@@ -642,10 +795,9 @@ class MainActivity : AppCompatActivity() {
             setTextColor(mainColor)
         }
 
-        // Hàng chứa số dư BTC và sparkline
         val balanceRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
             gravity = Gravity.CENTER_VERTICAL
         }
         balanceText = TextView(this).apply {
@@ -653,7 +805,7 @@ class MainActivity : AppCompatActivity() {
             textSize = 32f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(mainColor)
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
         }
         balanceRow.addView(balanceText)
         setupSparkline()
@@ -680,7 +832,7 @@ class MainActivity : AppCompatActivity() {
             progress = 0
             progressTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#F7931A"))
             scaleY = 2f
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = 4; bottomMargin = 8 }
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = 4; bottomMargin = 8 }
         }
         addressText = TextView(this).apply {
             textSize = 12f
@@ -705,34 +857,34 @@ class MainActivity : AppCompatActivity() {
         val btnRow1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; weightSum = 2f }
         val btnReceive = Button(this).apply {
             text = "⬇ Nhận"
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = 8 }
+            layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = 8 }
         }
         val btnSend = Button(this).apply {
             text = "⬆ Gửi"
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = 8 }
+            layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginStart = 8 }
         }
         val btnRow2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; weightSum = 2f }
         val btnRefresh = Button(this).apply {
             text = "⟳ Làm mới"
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = 8 }
+            layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = 8 }
         }
         val btnSettings = Button(this).apply {
             text = "⚙ Cài đặt"
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = 8 }
+            layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginStart = 8 }
         }
         btnRow1.addView(btnReceive)
         btnRow1.addView(btnSend)
         btnRow2.addView(btnRefresh)
         btnRow2.addView(btnSettings)
 
-        statsContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, 5, 0, 0) }
         val statsTitle = TextView(this).apply {
             text = "📊 Thống kê Bitcoin"
-            textSize = POOL_FONT
-            typeface = Typeface.DEFAULT
-            setPadding(0, 20, 0, 5)
+            textSize = 14f
+            typeface = Typeface.DEFAULT_BOLD
             setTextColor(mainColor)
+            setPadding(0, 20, 0, 5)
         }
+
         val txTitle = TextView(this).apply {
             text = "Lịch sử giao dịch"
             textSize = 16f
@@ -741,9 +893,10 @@ class MainActivity : AppCompatActivity() {
             setTextColor(mainColor)
         }
         txListView = ListView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 600)
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, 600)
         }
 
+        // Add views theo thứ tự mới
         rootLayout.addView(walletNameText)
         rootLayout.addView(balanceRow)
         rootLayout.addView(balanceUsdText)
@@ -754,23 +907,19 @@ class MainActivity : AppCompatActivity() {
         rootLayout.addView(Space(this).apply { layoutParams = LinearLayout.LayoutParams(1, 20) })
         rootLayout.addView(btnRow1)
         rootLayout.addView(btnRow2)
+
+        addSpvCard(rootLayout, mainColor)
+
         rootLayout.addView(statsTitle)
+        addStatsGrid(rootLayout, mainColor)
+
         rootLayout.addView(blockText)
         rootLayout.addView(blockProgressBar)
-        rootLayout.addView(statsContainer)
+
+        addDeviceInfoCard(rootLayout, mainColor)
+
         rootLayout.addView(txTitle)
         rootLayout.addView(txListView)
-
-        addStat("mined", "Đã khai thác", mainColor)
-        addStat("halving", "Halving", mainColor)
-        addStat("reward", "Phần thưởng", mainColor)
-        addStat("diff", "Difficulty", mainColor)
-        addStat("mempool", "Mempool", mainColor)
-        addStat("hash", "Hashrate", mainColor)
-        addStat("fee", "Phí", mainColor)
-        addStat("today", "Hôm nay", mainColor)
-        addStat("supply", "Cung", mainColor)
-        addStat("height", "Height", mainColor)
 
         btnReceive.setOnClickListener { showReceiveDialog() }
         btnSend.setOnClickListener { showSendDialog() }
@@ -780,6 +929,7 @@ class MainActivity : AppCompatActivity() {
             fetchBtcStats()
             SyncService.getInstance()?.refreshProgress()
             fetchSparkline()
+            updateSpvDetail()
             toast("Đang làm mới...")
         }
         btnSettings.setOnClickListener { showSettings() }
@@ -789,6 +939,7 @@ class MainActivity : AppCompatActivity() {
                 if (viewsReady) {
                     spvStatusText.text = "SPV: $txt"
                     spvProgressBar.progress = pct
+                    updateSpvDetail()
                 }
             }
         }
@@ -797,6 +948,7 @@ class MainActivity : AppCompatActivity() {
                 if (viewsReady) {
                     spvStatusText.text = "SPV: $txt"
                     spvProgressBar.progress = pct
+                    updateSpvDetail()
                 }
             }
         }
@@ -808,6 +960,7 @@ class MainActivity : AppCompatActivity() {
         fetchSparkline()
     }
 
+    // ===================== CÁC HÀM DIALOG VÀ SETTINGS =====================
     private fun showReceiveDialog() {
         val address = walletManager.getAddress()
         if (address.isEmpty()) { toast("Ví chưa sẵn sàng"); return }
@@ -855,7 +1008,7 @@ class MainActivity : AppCompatActivity() {
         pendingAddressInput = toInput
 
         val scanBtn = Button(this).apply {
-            text = "📷 Quét QR như Trust"
+            text = "📷 Quét QR"
             setOnClickListener {
                 try {
                     qrScanLauncher.launch(com.journeyapps.barcodescanner.ScanOptions().apply {
@@ -865,7 +1018,7 @@ class MainActivity : AppCompatActivity() {
                         setOrientationLocked(false)
                     })
                 } catch (e: Exception) {
-                    toast("Cần thêm thư viện ZXing")
+                    toast("Cần thư viện ZXing")
                 }
             }
         }
@@ -1280,7 +1433,7 @@ class MainActivity : AppCompatActivity() {
     private fun showInfo() {
         AlertDialog.Builder(this)
             .setTitle("iBTC v4.7")
-            .setMessage("Build: 2026-05-30\n• SPV 100%\n• Foreground service\n• Gửi BTC\n• Biểu đồ giá nhỏ real-time (xanh/đỏ theo xu hướng)")
+            .setMessage("Build: 2026-05-30\n• SPV 100%\n• Foreground service\n• Gửi BTC\n• Biểu đồ giá nhỏ real-time\n• Thông tin thiết bị")
             .setPositiveButton("OK", null)
             .show()
     }
