@@ -55,9 +55,7 @@ class MainActivity : AppCompatActivity() {
     private var isSyncing = false
     private var autoRefreshStarted = false
     private var pendingAddressInput: EditText? = null
-    private var lastPrice: Double? = null
-    private var lastBalanceUsd: Double = 0.0
-    private var viewsReady = false  // cờ đánh dấu view đã sẵn sàng
+    private var viewsReady = false
 
     private val qrScanLauncher = registerForActivityResult(ScanContract()) { result ->
         result.contents?.let { addr ->
@@ -93,7 +91,6 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        // Chỉ gắn callback nếu view đã sẵn sàng
         if (viewsReady) {
             SyncService.getInstance()?.setProgressCallback { pct, txt ->
                 runOnUiThread {
@@ -135,6 +132,16 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // Hàm lấy mốc đầu ngày UTC
+    private fun getTodayUtcStart(): Long {
+        val calendar = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
+        calendar.set(Calendar.HOUR_OF_DAY, 0)
+        calendar.set(Calendar.MINUTE, 0)
+        calendar.set(Calendar.SECOND, 0)
+        calendar.set(Calendar.MILLISECOND, 0)
+        return calendar.timeInMillis
+    }
+
     private fun refreshWalletFromSPV() {
         if (isSyncing) return
         isSyncing = true
@@ -147,64 +154,87 @@ class MainActivity : AppCompatActivity() {
             try {
                 val bal = walletManager.getBalance()
                 val txs = walletManager.getTransactions()
-                val price = walletManager.price()
+                val currentPrice = walletManager.price()
+                val currentUsd = bal * currentPrice
+
+                // Lấy mốc đầu ngày UTC
+                val prefsDaily = getSharedPreferences("daily_mark", Context.MODE_PRIVATE)
+                val todayStart = getTodayUtcStart()
+                var dailyUsd = prefsDaily.getFloat("daily_usd", -1f).toDouble()
+                var dailyPrice = prefsDaily.getFloat("daily_price", -1f).toDouble()
+                var dailyTimestamp = prefsDaily.getLong("daily_timestamp", 0L)
+
+                // Nếu chưa có mốc cho hôm nay -> tạo mốc mới
+                if (dailyTimestamp != todayStart || dailyUsd < 0 || dailyPrice < 0) {
+                    dailyUsd = currentUsd
+                    dailyPrice = currentPrice
+                    prefsDaily.edit()
+                        .putFloat("daily_usd", dailyUsd.toFloat())
+                        .putFloat("daily_price", dailyPrice.toFloat())
+                        .putLong("daily_timestamp", todayStart)
+                        .apply()
+                }
+
+                // Tính thay đổi của USD tổng
+                val usdChange = currentUsd - dailyUsd
+                val usdChangePercent = if (dailyUsd > 0) (usdChange / dailyUsd) * 100 else 0.0
+                val usdArrow = when {
+                    usdChange > 0.01 -> "▲"
+                    usdChange < -0.01 -> "▼"
+                    else -> "●"
+                }
+                val usdColor = when {
+                    usdChange > 0.01 -> Color.parseColor("#00C853")
+                    usdChange < -0.01 -> Color.parseColor("#D50000")
+                    else -> Color.GRAY
+                }
+
+                // Tính thay đổi của giá BTC
+                val priceChange = currentPrice - dailyPrice
+                val priceChangePercent = if (dailyPrice > 0) (priceChange / dailyPrice) * 100 else 0.0
+                val priceArrow = when {
+                    priceChange > 0.01 -> "▲"
+                    priceChange < -0.01 -> "▼"
+                    else -> "●"
+                }
+                val priceColor = when {
+                    priceChange > 0.01 -> Color.parseColor("#00C853")
+                    priceChange < -0.01 -> Color.parseColor("#D50000")
+                    else -> Color.GRAY
+                }
+
                 runOnUiThread {
                     if (!viewsReady) return@runOnUiThread
                     balanceText.text = String.format(Locale.US, "%.8f BTC", bal)
-                    val balanceUsd = if (price > 0) bal * price else 0.0
-                    val priceDisplay = if (price > 0) String.format(Locale.US, "BTC $%,.2f", price) else "BTC ---"
 
-                    if (price > 0 && lastPrice != null && lastPrice!! > 0) {
-                        val balChange = balanceUsd - lastBalanceUsd
-                        val balPct = if (lastBalanceUsd > 0) balChange / lastBalanceUsd * 100 else 0.0
-                        val balArrow = when {
-                            balChange > 0.01 -> "▲"
-                            balChange < -0.01 -> "▼"
-                            else -> "●"
-                        }
-                        val balColor = when {
-                            balChange > 0.01 -> Color.parseColor("#00C853")
-                            balChange < -0.01 -> Color.parseColor("#D50000")
-                            else -> Color.GRAY
-                        }
-                        balanceUsdText.setTextColor(balColor)
-                        balanceUsdText.text = String.format(Locale.US, "≈ $%,.2f %s %+.2f%% (%+.2f$)", balanceUsd, balArrow, balPct, balChange)
+                    balanceUsdText.setTextColor(usdColor)
+                    balanceUsdText.text = String.format(
+                        Locale.US,
+                        "≈ $%,.2f %s %+.4f%% (%+.4f$)",
+                        currentUsd, usdArrow, usdChangePercent, usdChange
+                    )
 
-                        val priceChange = price - lastPrice!!
-                        val pricePct = if (lastPrice!! > 0) priceChange / lastPrice!! * 100 else 0.0
-                        val priceArrow = when {
-                            priceChange > 0.01 -> "▲"
-                            priceChange < -0.01 -> "▼"
-                            else -> "●"
-                        }
-                        val priceColor = when {
-                            priceChange > 0.01 -> Color.parseColor("#00C853")
-                            priceChange < -0.01 -> Color.parseColor("#D50000")
-                            else -> Color.GRAY
-                        }
-                        rateText.setTextColor(priceColor)
-                        rateText.text = String.format(Locale.US, "BTC $%,.2f %s %+.2f%% (%+.2f$)", price, priceArrow, pricePct, priceChange)
-                    } else {
-                        balanceUsdText.text = if (price > 0) String.format(Locale.US, "≈ $%,.2f", balanceUsd) else "≈ $---"
-                        rateText.text = priceDisplay
-                    }
-
-                    lastBalanceUsd = balanceUsd
-                    lastPrice = if (price > 0) price else null
+                    rateText.setTextColor(priceColor)
+                    rateText.text = String.format(
+                        Locale.US,
+                        "BTC $%,.2f %s %+.4f%% (%+.4f$)",
+                        currentPrice, priceArrow, priceChangePercent, priceChange
+                    )
 
                     val addr = walletManager.getAddress()
                     addressText.text = "Địa chỉ: $addr"
-                    val adapter = object : ArrayAdapter<String>(this, android.R.layout.simple_list_item_2, android.R.id.text1, txs.map { "" }) {
+                    val adapter = object : ArrayAdapter<String>(this@MainActivity, android.R.layout.simple_list_item_2, android.R.id.text1, txs.map { "" }) {
                         override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
                             val view = super.getView(position, convertView, parent)
                             val tx = txs[position]
                             val text1 = view.findViewById<TextView>(android.R.id.text1)
                             val text2 = view.findViewById<TextView>(android.R.id.text2)
                             val isDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
-                            text1.setTextColor(if (isDark) Color.WHITE else Color.BLACK)
+                            val mainColor = if (isDark) Color.WHITE else Color.BLACK
+                            text1.setTextColor(mainColor)
                             text1.text = "${if (tx.type == "RECEIVE") "⬇" else "⬆"} ${tx.type} ${String.format(Locale.US, "%.8f", tx.amount)} BTC"
                             text2.text = SimpleDateFormat("dd/MM HH:mm", Locale.getDefault()).format(tx.time) + " • " + tx.txId.take(12)
-                            text2.setTextColor(Color.GRAY)
+                            text2.setTextColor(mainColor)
                             text2.textSize = 11f
                             return view
                         }
@@ -336,11 +366,11 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
-    private fun addStat(key: String, label: String) {
+    private fun addStat(key: String, label: String, color: Int) {
         val tv = TextView(this).apply {
             text = label
             textSize = POOL_FONT
-            setTextColor(Color.GRAY)
+            setTextColor(color)
             setPadding(0, 8, 0, 2)
             typeface = Typeface.DEFAULT
         }
@@ -570,7 +600,7 @@ class MainActivity : AppCompatActivity() {
         spvStatusText = TextView(this).apply {
             text = "SPV: Đang khởi động..."
             textSize = 12f
-            setTextColor(Color.GRAY)
+            setTextColor(mainColor)   // Đồng bộ màu chính
             setPadding(0, 4, 0, 4)
         }
         spvProgressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
@@ -584,13 +614,13 @@ class MainActivity : AppCompatActivity() {
             textSize = 12f
             isSingleLine = true
             ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
-            setTextColor(subColor)
+            setTextColor(mainColor)   // Sửa: từ subColor sang mainColor
             setPadding(0, 10, 0, 10)
         }
         blockText = TextView(this).apply {
             text = "Đang kết nối mempool..."
             textSize = POOL_FONT
-            setTextColor(subColor)
+            setTextColor(mainColor)   // Sửa: từ subColor sang mainColor
             setPadding(0, 8, 0, 2)
             typeface = Typeface.DEFAULT
         }
@@ -659,16 +689,17 @@ class MainActivity : AppCompatActivity() {
         rootLayout.addView(txTitle)
         rootLayout.addView(txListView)
 
-        addStat("mined", "Đã khai thác")
-        addStat("halving", "Halving")
-        addStat("reward", "Phần thưởng")
-        addStat("diff", "Difficulty")
-        addStat("mempool", "Mempool")
-        addStat("hash", "Hashrate")
-        addStat("fee", "Phí")
-        addStat("today", "Hôm nay")
-        addStat("supply", "Cung")
-        addStat("height", "Height")
+        // Gọi addStat với màu mainColor
+        addStat("mined", "Đã khai thác", mainColor)
+        addStat("halving", "Halving", mainColor)
+        addStat("reward", "Phần thưởng", mainColor)
+        addStat("diff", "Difficulty", mainColor)
+        addStat("mempool", "Mempool", mainColor)
+        addStat("hash", "Hashrate", mainColor)
+        addStat("fee", "Phí", mainColor)
+        addStat("today", "Hôm nay", mainColor)
+        addStat("supply", "Cung", mainColor)
+        addStat("height", "Height", mainColor)
 
         btnReceive.setOnClickListener { showReceiveDialog() }
         btnSend.setOnClickListener { showSendDialog() }
@@ -698,7 +729,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Đánh dấu view đã sẵn sàng
         viewsReady = true
         refreshWalletFromSPV()
         startAutoRefresh()
