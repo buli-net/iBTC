@@ -62,9 +62,9 @@ class SyncService : Service() {
         val walletId = intent.getStringExtra("wallet_id") ?: "default_wallet"
         currentWalletId = walletId
 
+        // Nếu kit đã chạy và đúng walletId -> chỉ cập nhật callback, không tạo lại
         if (kit != null && kit?.isRunning == true && kit?.wallet() != null) {
             setProgressCallback(progressCallback)
-            refreshProgress()
             return START_STICKY
         }
         startBitcoinSync(walletId, seedPhrase)
@@ -121,21 +121,10 @@ class SyncService : Service() {
                 val dir = File(filesDir, "spv_wallets")
                 if (!dir.exists()) dir.mkdirs()
 
-                val walletFile = File(dir, "$walletId.wallet")
+                // QUAN TRỌNG: Không tự tạo wallet file, để WalletAppKit tự quản lý
+                // Chỉ cần tạo kit với đúng walletId
 
-                if (!walletFile.exists() && seedPhrase.isNotEmpty()) {
-                    val words = seedPhrase.trim().lowercase().split(" ")
-                    if (words.size == 12 || words.size == 24) {
-                        val seed = DeterministicSeed(words, null, "", 0L)
-                        val wallet = Wallet.fromSeed(params, seed, Script.ScriptType.P2WPKH)
-                        wallet.saveToFile(walletFile)
-                    } else {
-                        val randomSeed = DeterministicSeed(SecureRandom(), 128, "")
-                        val wallet = Wallet.fromSeed(params, randomSeed, Script.ScriptType.P2WPKH)
-                        wallet.saveToFile(walletFile)
-                    }
-                }
-
+                // Dừng kit cũ nếu có
                 try {
                     kit?.stopAsync()
                     kit?.awaitTerminated()
@@ -164,9 +153,20 @@ class SyncService : Service() {
                     startAsync()
                 }
                 kit = newKit
-                progressCallback?.invoke(lastProgress, lastMessage)
+
+                // Nếu có seed và wallet chưa có seed, import seed (chỉ sau khi kit đã khởi tạo)
+                Thread.sleep(2000)
+                val wallet = kit?.wallet()
+                if (wallet != null && wallet.keyChainSeed.mnemonicCode == null && seedPhrase.isNotEmpty()) {
+                    val words = seedPhrase.trim().lowercase().split(" ")
+                    if (words.size == 12 || words.size == 24) {
+                        val seed = DeterministicSeed(words, null, "", 0L)
+                        wallet.importSeed(seed)
+                    }
+                }
 
             } catch (e: Exception) {
+                // KHÔNG XÓA FILE WALLET, chỉ log lỗi
                 saveProgress(lastProgress, "Lỗi sync: ${e.message}")
                 updateNotification(lastMessage)
                 progressCallback?.invoke(lastProgress, lastMessage)
@@ -176,7 +176,7 @@ class SyncService : Service() {
     }
 
     fun refreshProgress() {
-        // Trong bitcoinj 0.16.3, peerGroup không có downloadPct. Chỉ cần gửi lại progress hiện tại.
+        // Gửi lại tiến độ hiện tại (callback sẽ cập nhật UI)
         progressCallback?.invoke(lastProgress, lastMessage)
     }
 
@@ -193,6 +193,7 @@ class SyncService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         instance = null
+        // KHÔNG stopAsync để giữ trạng thái cho lần sau
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
