@@ -132,7 +132,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // Hàm lấy mốc đầu ngày UTC
     private fun getTodayUtcStart(): Long {
         val calendar = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
         calendar.set(Calendar.HOUR_OF_DAY, 0)
@@ -157,14 +156,12 @@ class MainActivity : AppCompatActivity() {
                 val currentPrice = walletManager.price()
                 val currentUsd = bal * currentPrice
 
-                // Lấy mốc đầu ngày UTC
                 val prefsDaily = getSharedPreferences("daily_mark", Context.MODE_PRIVATE)
                 val todayStart = getTodayUtcStart()
                 var dailyUsd = prefsDaily.getFloat("daily_usd", -1f).toDouble()
                 var dailyPrice = prefsDaily.getFloat("daily_price", -1f).toDouble()
                 var dailyTimestamp = prefsDaily.getLong("daily_timestamp", 0L)
 
-                // Nếu chưa có mốc cho hôm nay -> tạo mốc mới
                 if (dailyTimestamp != todayStart || dailyUsd < 0 || dailyPrice < 0) {
                     dailyUsd = currentUsd
                     dailyPrice = currentPrice
@@ -175,7 +172,6 @@ class MainActivity : AppCompatActivity() {
                         .apply()
                 }
 
-                // Tính thay đổi của USD tổng
                 val usdChange = currentUsd - dailyUsd
                 val usdChangePercent = if (dailyUsd > 0) (usdChange / dailyUsd) * 100 else 0.0
                 val usdArrow = when {
@@ -189,7 +185,6 @@ class MainActivity : AppCompatActivity() {
                     else -> Color.GRAY
                 }
 
-                // Tính thay đổi của giá BTC
                 val priceChange = currentPrice - dailyPrice
                 val priceChangePercent = if (dailyPrice > 0) (priceChange / dailyPrice) * 100 else 0.0
                 val priceArrow = when {
@@ -207,17 +202,18 @@ class MainActivity : AppCompatActivity() {
                     if (!viewsReady) return@runOnUiThread
                     balanceText.text = String.format(Locale.US, "%.8f BTC", bal)
 
+                    // Chỉ hiển thị 2 số thập phân cho % và $ thay đổi
                     balanceUsdText.setTextColor(usdColor)
                     balanceUsdText.text = String.format(
                         Locale.US,
-                        "≈ $%,.2f %s %+.4f%% (%+.4f$)",
+                        "≈ $%,.2f %s %+.2f%% (%+.2f$)",
                         currentUsd, usdArrow, usdChangePercent, usdChange
                     )
 
                     rateText.setTextColor(priceColor)
                     rateText.text = String.format(
                         Locale.US,
-                        "BTC $%,.2f %s %+.4f%% (%+.4f$)",
+                        "BTC $%,.2f %s %+.2f%% (%+.2f$)",
                         currentPrice, priceArrow, priceChangePercent, priceChange
                     )
 
@@ -600,7 +596,7 @@ class MainActivity : AppCompatActivity() {
         spvStatusText = TextView(this).apply {
             text = "SPV: Đang khởi động..."
             textSize = 12f
-            setTextColor(mainColor)   // Đồng bộ màu chính
+            setTextColor(mainColor)
             setPadding(0, 4, 0, 4)
         }
         spvProgressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
@@ -614,13 +610,13 @@ class MainActivity : AppCompatActivity() {
             textSize = 12f
             isSingleLine = true
             ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
-            setTextColor(mainColor)   // Sửa: từ subColor sang mainColor
+            setTextColor(mainColor)
             setPadding(0, 10, 0, 10)
         }
         blockText = TextView(this).apply {
             text = "Đang kết nối mempool..."
             textSize = POOL_FONT
-            setTextColor(mainColor)   // Sửa: từ subColor sang mainColor
+            setTextColor(mainColor)
             setPadding(0, 8, 0, 2)
             typeface = Typeface.DEFAULT
         }
@@ -689,7 +685,6 @@ class MainActivity : AppCompatActivity() {
         rootLayout.addView(txTitle)
         rootLayout.addView(txListView)
 
-        // Gọi addStat với màu mainColor
         addStat("mined", "Đã khai thác", mainColor)
         addStat("halving", "Halving", mainColor)
         addStat("reward", "Phần thưởng", mainColor)
