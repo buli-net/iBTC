@@ -42,14 +42,14 @@ class SyncService : Service() {
         super.onCreate()
         instance = this
         prefs = getSharedPreferences("sync_state", Context.MODE_PRIVATE)
-        createNotificationChannel()
 
-        // Đọc tiến trình đã lưu
+        // Đọc tiến trình đã lưu (fallback)
         lastProgress = prefs.getInt("last_progress", 0)
         lastMessage = prefs.getString("last_message", "Đang khởi động...") ?: "Đang khởi động..."
         updateNotification(lastMessage)
         progressCallback?.invoke(lastProgress, lastMessage)
 
+        createNotificationChannel()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(NOTIFICATION_ID, buildNotification(lastMessage),
                 android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
@@ -63,9 +63,21 @@ class SyncService : Service() {
         val walletId = intent.getStringExtra("wallet_id") ?: "default_wallet"
         currentWalletId = walletId
 
-        // Nếu kit đã chạy và đúng walletId thì không làm gì
+        // Nếu kit đã chạy và đúng walletId -> chỉ cập nhật callback và lấy tiến trình thực tế
         if (kit != null && kit?.isRunning == true && kit?.wallet() != null) {
             setProgressCallback(progressCallback)
+            // Lấy tiến trình thực tế từ peerGroup (nếu có)
+            val peerGroup = kit?.peerGroup()
+            if (peerGroup != null) {
+                val realProgress = peerGroup.downloadPct.toInt()
+                if (realProgress in 0..100 && realProgress != lastProgress) {
+                    lastProgress = realProgress
+                    lastMessage = if (realProgress < 100) "Đồng bộ blockchain: $realProgress%" else "Đã đồng bộ blockchain (xử lý...)"
+                    saveProgress(lastProgress, lastMessage)
+                    progressCallback?.invoke(lastProgress, lastMessage)
+                    updateNotification(lastMessage)
+                }
+            }
             return START_STICKY
         }
         startBitcoinSync(walletId, seedPhrase)
@@ -132,7 +144,6 @@ class SyncService : Service() {
                         val wallet = Wallet.fromSeed(params, seed, Script.ScriptType.P2WPKH)
                         wallet.saveToFile(walletFile)
                     } else {
-                        // Seed không hợp lệ, tạo wallet ngẫu nhiên (chỉ dùng cho test)
                         val randomSeed = DeterministicSeed(SecureRandom(), 128, "")
                         val wallet = Wallet.fromSeed(params, randomSeed, Script.ScriptType.P2WPKH)
                         wallet.saveToFile(walletFile)
@@ -170,7 +181,7 @@ class SyncService : Service() {
                 }
                 kit = newKit
 
-                // Gửi lại tiến trình đã lưu ngay sau khi start (để UI hiển thị nhanh)
+                // Gửi lại tiến trình đã lưu ngay sau khi start
                 progressCallback?.invoke(lastProgress, lastMessage)
 
             } catch (e: Exception) {
