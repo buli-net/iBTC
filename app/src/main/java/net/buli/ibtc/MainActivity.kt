@@ -91,10 +91,13 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        // Gắn lại callback khi resume, tránh crash
         SyncService.getInstance()?.setProgressCallback { pct, txt ->
             runOnUiThread {
-                spvStatusText.text = "SPV: $txt"
-                spvProgressBar.progress = pct
+                if (::spvStatusText.isInitialized && ::spvProgressBar.isInitialized) {
+                    spvStatusText.text = "SPV: $txt"
+                    spvProgressBar.progress = pct
+                }
             }
         }
         try {
@@ -128,12 +131,13 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // ================== SPV refresh ==================
     private fun refreshWalletFromSPV() {
         if (isSyncing) return
         isSyncing = true
         runOnUiThread {
-            spvStatusText.text = "SPV: Đang cập nhật số dư..."
+            if (::spvStatusText.isInitialized) {
+                spvStatusText.text = "SPV: Đang cập nhật số dư..."
+            }
         }
         Thread {
             try {
@@ -141,6 +145,7 @@ class MainActivity : AppCompatActivity() {
                 val txs = walletManager.getTransactions()
                 val price = walletManager.price()
                 runOnUiThread {
+                    if (!::balanceText.isInitialized) return@runOnUiThread
                     balanceText.text = String.format(Locale.US, "%.8f BTC", bal)
                     val balanceUsd = if (price > 0) bal * price else 0.0
                     val priceDisplay = if (price > 0) String.format(Locale.US, "BTC $%,.2f", price) else "BTC ---"
@@ -205,7 +210,9 @@ class MainActivity : AppCompatActivity() {
                 }
             } catch (e: Exception) {
                 runOnUiThread {
-                    spvStatusText.text = "SPV: Lỗi cập nhật"
+                    if (::spvStatusText.isInitialized) {
+                        spvStatusText.text = "SPV: Lỗi cập nhật"
+                    }
                     isSyncing = false
                 }
             }
@@ -227,7 +234,6 @@ class MainActivity : AppCompatActivity() {
         }, 45000)
     }
 
-    // ================== Thống kê mạng (chỉ hiển thị) ==================
     private fun fetchBlockUpdate() {
         Thread {
             try {
@@ -239,20 +245,27 @@ class MainActivity : AppCompatActivity() {
                 val percent = ((elapsed * 100) / 600).toInt()
                 val remain = 600 - elapsed
                 runOnUiThread {
-                    blockProgressBar.progress = percent.coerceAtMost(100)
-                    if (remain >= 0) {
-                        val mins = remain / 60
-                        val secs = remain % 60
-                        blockText.text = "Đang khai thác block #$nextHeight — $percent% (~${mins}m${String.format("%02d", secs)}s)"
-                    } else {
-                        val over = -remain
-                        val mins = over / 60
-                        val secs = over % 60
-                        blockText.text = "Block #$nextHeight đã quá hạn +${mins}m${String.format("%02d", secs)}s ($percent%)"
+                    if (::blockProgressBar.isInitialized) {
+                        blockProgressBar.progress = percent.coerceAtMost(100)
+                        if (remain >= 0) {
+                            val mins = remain / 60
+                            val secs = remain % 60
+                            blockText.text = "Đang khai thác block #$nextHeight — $percent% (~${mins}m${String.format("%02d", secs)}s)"
+                        } else {
+                            val over = -remain
+                            val mins = over / 60
+                            val secs = over % 60
+                            blockText.text = "Block #$nextHeight đã quá hạn +${mins}m${String.format("%02d", secs)}s ($percent%)"
+                        }
                     }
                 }
             } catch (e: Exception) {
-                runOnUiThread { blockText.text = "Lỗi pool - tự thử lại"; blockProgressBar.progress = 0 }
+                runOnUiThread {
+                    if (::blockText.isInitialized) {
+                        blockText.text = "Lỗi pool - tự thử lại"
+                        blockProgressBar.progress = 0
+                    }
+                }
             }
         }.start()
     }
@@ -276,32 +289,34 @@ class MainActivity : AppCompatActivity() {
                 val hashJson = URL("https://mempool.space/api/v1/mining/hashrate/1w").readText()
                 val currentHash = Regex("\"currentHashrate\":([\\d.]+)").find(hashJson)?.groupValues?.get(1)?.toDouble() ?: 0.0
                 runOnUiThread {
-                    val minedPct = ((totalMined / 21000000.0) * 100).toInt()
-                    statBars["mined"]?.progress = minedPct
-                    statTexts["mined"]?.text = "Đã khai thác: ${String.format("%.2f", totalMined)} / 21M BTC ($minedPct%)"
-                    val halvingPct = ((1 - blocksToHalving / 210000.0) * 100).toInt()
-                    statBars["halving"]?.progress = halvingPct
-                    statTexts["halving"]?.text = "Halving #${halvings + 1}: còn $blocksToHalving blocks (~${blocksToHalving / 144} ngày)"
-                    val rewardPct = ((reward / 50.0) * 100).toInt()
-                    statBars["reward"]?.progress = rewardPct
-                    statTexts["reward"]?.text = "Thưởng block: $reward BTC (ban đầu 50 BTC)"
-                    statBars["diff"]?.progress = diffProgress.toInt()
-                    statTexts["diff"]?.text = "Difficulty adj: ${String.format("%.1f", diffProgress)}%"
-                    val mempoolPct = (mempoolCount / 300000.0 * 100).toInt().coerceAtMost(100)
-                    statBars["mempool"]?.progress = mempoolPct
-                    statTexts["mempool"]?.text = "Mempool: $mempoolCount tx chờ"
-                    val hashEh = currentHash / 1e18
-                    statBars["hash"]?.progress = 70
-                    statTexts["hash"]?.text = "Hashrate: ${String.format("%.0f", hashEh)} EH/s"
-                    statBars["fee"]?.progress = feeFast.coerceAtMost(100)
-                    statTexts["fee"]?.text = "Phí nhanh: $feeFast sat/vB"
-                    val blocksToday = height % 144
-                    statBars["today"]?.progress = (blocksToday * 100 / 144)
-                    statTexts["today"]?.text = "Block hôm nay: $blocksToday / 144"
-                    statBars["supply"]?.progress = minedPct
-                    statTexts["supply"]?.text = "Cung lưu thông: ${String.format("%.2f", totalMined / 1000000)}M BTC"
-                    statBars["height"]?.progress = height % 100
-                    statTexts["height"]?.text = "Block height: #$height"
+                    if (::statBars.isInitialized) {
+                        val minedPct = ((totalMined / 21000000.0) * 100).toInt()
+                        statBars["mined"]?.progress = minedPct
+                        statTexts["mined"]?.text = "Đã khai thác: ${String.format("%.2f", totalMined)} / 21M BTC ($minedPct%)"
+                        val halvingPct = ((1 - blocksToHalving / 210000.0) * 100).toInt()
+                        statBars["halving"]?.progress = halvingPct
+                        statTexts["halving"]?.text = "Halving #${halvings + 1}: còn $blocksToHalving blocks (~${blocksToHalving / 144} ngày)"
+                        val rewardPct = ((reward / 50.0) * 100).toInt()
+                        statBars["reward"]?.progress = rewardPct
+                        statTexts["reward"]?.text = "Thưởng block: $reward BTC (ban đầu 50 BTC)"
+                        statBars["diff"]?.progress = diffProgress.toInt()
+                        statTexts["diff"]?.text = "Difficulty adj: ${String.format("%.1f", diffProgress)}%"
+                        val mempoolPct = (mempoolCount / 300000.0 * 100).toInt().coerceAtMost(100)
+                        statBars["mempool"]?.progress = mempoolPct
+                        statTexts["mempool"]?.text = "Mempool: $mempoolCount tx chờ"
+                        val hashEh = currentHash / 1e18
+                        statBars["hash"]?.progress = 70
+                        statTexts["hash"]?.text = "Hashrate: ${String.format("%.0f", hashEh)} EH/s"
+                        statBars["fee"]?.progress = feeFast.coerceAtMost(100)
+                        statTexts["fee"]?.text = "Phí nhanh: $feeFast sat/vB"
+                        val blocksToday = height % 144
+                        statBars["today"]?.progress = (blocksToday * 100 / 144)
+                        statTexts["today"]?.text = "Block hôm nay: $blocksToday / 144"
+                        statBars["supply"]?.progress = minedPct
+                        statTexts["supply"]?.text = "Cung lưu thông: ${String.format("%.2f", totalMined / 1000000)}M BTC"
+                        statBars["height"]?.progress = height % 100
+                        statTexts["height"]?.text = "Block height: #$height"
+                    }
                 }
             } catch (_: Exception) {}
         }.start()
@@ -336,7 +351,6 @@ class MainActivity : AppCompatActivity() {
         statBars[key] = pb
     }
 
-    // ================== CÁC DIALOG ==================
     private fun showWelcome() {
         rootLayout.removeAllViews()
         val isDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
@@ -665,14 +679,18 @@ class MainActivity : AppCompatActivity() {
 
         walletManager.onProgress { pct, txt ->
             runOnUiThread {
-                spvStatusText.text = "SPV: $txt"
-                spvProgressBar.progress = pct
+                if (::spvStatusText.isInitialized) {
+                    spvStatusText.text = "SPV: $txt"
+                    spvProgressBar.progress = pct
+                }
             }
         }
         SyncService.getInstance()?.setProgressCallback { pct, txt ->
             runOnUiThread {
-                spvStatusText.text = "SPV: $txt"
-                spvProgressBar.progress = pct
+                if (::spvStatusText.isInitialized) {
+                    spvStatusText.text = "SPV: $txt"
+                    spvProgressBar.progress = pct
+                }
             }
         }
 
@@ -715,7 +733,6 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this).setTitle("Nhận Bitcoin").setView(layout).setPositiveButton("Đóng", null).show()
     }
 
-    // ================== DIALOG GỬI BTC ==================
     private fun showSendDialog() {
         if (isSyncing) {
             toast("Đang cập nhật SPV, vui lòng đợi")
