@@ -11,18 +11,20 @@ import org.bitcoinj.wallet.DeterministicSeed
 import org.bitcoinj.wallet.SendRequest
 import org.bitcoinj.wallet.Wallet
 import org.json.JSONObject
-import java.io.BufferedReader
-import java.io.InputStreamReader
-import java.net.HttpURLConnection
 import java.net.URL
 import java.security.SecureRandom
 import java.util.*
 import kotlin.math.abs
+import javax.net.ssl.HttpsURLConnection
 
 data class WalletInfo(val id: String, val name: String)
 data class TransactionInfo(val txId: String, val amount: Double, val type: String, val time: Date)
 data class FeeRates(val slow: Int, val normal: Int, val fast: Int)
 
+/**
+ * Manages wallet operations: create, import, unlock, send, balance, transactions.
+ * Uses SPV (SyncService) for wallet data, and Binance API for BTC price.
+ */
 class WalletManager(private val ctx: Context) {
 
     private val params = MainNetParams.get()
@@ -57,6 +59,9 @@ class WalletManager(private val ctx: Context) {
 
     fun getActiveId(): String? = active?.id
 
+    /**
+     * Mở khóa ví bằng mật khẩu, khởi động SyncService.
+     */
     fun unlock(id: String, password: String): Boolean {
         return try {
             val enc = prefs.getString("${id}_seed", "") ?: return false
@@ -78,7 +83,6 @@ class WalletManager(private val ctx: Context) {
                 ctx.startService(intent)
             }
             SyncService.getInstance()?.setProgressCallback(syncCallback)
-
             true
         } catch (e: Exception) {
             false
@@ -89,8 +93,12 @@ class WalletManager(private val ctx: Context) {
         locked = true
         cachedSeed = null
         cachedPassword = null
+        ctx.stopService(Intent(ctx, SyncService::class.java))
     }
 
+    /**
+     * Tạo ví mới với seed ngẫu nhiên.
+     */
     fun create(name: String, password: String): WalletInfo {
         val id = UUID.randomUUID().toString()
         val seed = DeterministicSeed(SecureRandom(), 128, "")
@@ -122,6 +130,9 @@ class WalletManager(private val ctx: Context) {
         return info
     }
 
+    /**
+     * Import ví từ seed phrase.
+     */
     fun import(name: String, phrase: String, password: String): WalletInfo? {
         return try {
             val clean = phrase.trim().lowercase().replace(Regex("\\s+"), " ")
@@ -177,13 +188,20 @@ class WalletManager(private val ctx: Context) {
         return prefs.getString("${id}_address", "") ?: ""
     }
 
+    // ========== Lấy dữ liệu từ SPV ==========
     private fun getWallet(): Wallet? = SyncService.getInstance()?.getWallet()
 
+    /**
+     * Số dư BTC từ SPV.
+     */
     fun getBalance(): Double {
         val wallet = getWallet() ?: return 0.0
         return wallet.getBalance().value / 1e8
     }
 
+    /**
+     * Lịch sử giao dịch từ SPV (bao gồm pending).
+     */
     fun getTransactions(): List<TransactionInfo> {
         val wallet = getWallet() ?: return emptyList()
         val list = mutableListOf<TransactionInfo>()
@@ -204,10 +222,11 @@ class WalletManager(private val ctx: Context) {
         return list
     }
 
+    // ========== Giá BTC từ Binance (không ảnh hưởng đến SPV) ==========
     fun price(): Double {
         return try {
             val url = URL("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT")
-            val conn = url.openConnection() as HttpURLConnection
+            val conn = url.openConnection() as HttpsURLConnection
             conn.requestMethod = "GET"
             conn.connectTimeout = 5000
             conn.readTimeout = 5000
@@ -224,6 +243,9 @@ class WalletManager(private val ctx: Context) {
 
     fun getFeeRates(): FeeRates = FeeRates(5, 10, 20)
 
+    /**
+     * Ước lượng phí giao dịch dựa trên số input (giả định 1 input + 2 outputs).
+     */
     fun estimateFee(to: String, amountBTC: Double, feeRateSatVb: Int): Double {
         return (68 + 62 + 11) * feeRateSatVb / 1e8
     }
@@ -239,6 +261,7 @@ class WalletManager(private val ctx: Context) {
         }
     }
 
+    // ========== Gửi BTC (dùng SPV) ==========
     fun send(to: String, amountBTC: Double, feeRateSatVb: Int): String {
         if (feeRateSatVb < 1 || feeRateSatVb > 500) {
             throw Exception("Fee rate không hợp lệ (1-500 sat/vB)")
@@ -279,7 +302,7 @@ class WalletManager(private val ctx: Context) {
 
         try {
             val broadcastFuture = peerGroup.broadcastTransaction(req.tx)
-            broadcastFuture.future().get()
+            broadcastFuture.future().get()  // chờ broadcast hoàn tất
         } catch (e: Exception) {
             throw Exception("Broadcast lỗi: ${e.message}")
         }
@@ -293,6 +316,7 @@ class WalletManager(private val ctx: Context) {
         return req.tx.getHashAsString()
     }
 
+    // ========== Hỗ trợ derive địa chỉ từ seed ==========
     private fun getAddressAtIndex(seedPhrase: String, index: Int): String {
         val seed = DeterministicSeed(seedPhrase.split(" "), null, "", 0L)
         val seedBytes = seed.seedBytes!!
