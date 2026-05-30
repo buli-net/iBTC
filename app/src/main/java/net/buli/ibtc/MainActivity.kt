@@ -57,6 +57,8 @@ class MainActivity : AppCompatActivity() {
     private var pendingAddressInput: EditText? = null
     private var lastPrice: Double? = null
     private var lastBalanceUsd: Double = 0.0
+    private var viewsReady = false  // cờ đánh dấu view đã sẵn sàng
+
     private val qrScanLauncher = registerForActivityResult(ScanContract()) { result ->
         result.contents?.let { addr ->
             pendingAddressInput?.setText(addr)
@@ -91,12 +93,14 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        // Gắn lại callback khi resume, tránh crash
-        SyncService.getInstance()?.setProgressCallback { pct, txt ->
-            runOnUiThread {
-                if (::spvStatusText.isInitialized && ::spvProgressBar.isInitialized) {
-                    spvStatusText.text = "SPV: $txt"
-                    spvProgressBar.progress = pct
+        // Chỉ gắn callback nếu view đã sẵn sàng
+        if (viewsReady) {
+            SyncService.getInstance()?.setProgressCallback { pct, txt ->
+                runOnUiThread {
+                    if (viewsReady) {
+                        spvStatusText.text = "SPV: $txt"
+                        spvProgressBar.progress = pct
+                    }
                 }
             }
         }
@@ -135,7 +139,7 @@ class MainActivity : AppCompatActivity() {
         if (isSyncing) return
         isSyncing = true
         runOnUiThread {
-            if (::spvStatusText.isInitialized) {
+            if (viewsReady) {
                 spvStatusText.text = "SPV: Đang cập nhật số dư..."
             }
         }
@@ -145,7 +149,7 @@ class MainActivity : AppCompatActivity() {
                 val txs = walletManager.getTransactions()
                 val price = walletManager.price()
                 runOnUiThread {
-                    if (!::balanceText.isInitialized) return@runOnUiThread
+                    if (!viewsReady) return@runOnUiThread
                     balanceText.text = String.format(Locale.US, "%.8f BTC", bal)
                     val balanceUsd = if (price > 0) bal * price else 0.0
                     val priceDisplay = if (price > 0) String.format(Locale.US, "BTC $%,.2f", price) else "BTC ---"
@@ -210,7 +214,7 @@ class MainActivity : AppCompatActivity() {
                 }
             } catch (e: Exception) {
                 runOnUiThread {
-                    if (::spvStatusText.isInitialized) {
+                    if (viewsReady) {
                         spvStatusText.text = "SPV: Lỗi cập nhật"
                     }
                     isSyncing = false
@@ -245,7 +249,7 @@ class MainActivity : AppCompatActivity() {
                 val percent = ((elapsed * 100) / 600).toInt()
                 val remain = 600 - elapsed
                 runOnUiThread {
-                    if (::blockProgressBar.isInitialized) {
+                    if (viewsReady) {
                         blockProgressBar.progress = percent.coerceAtMost(100)
                         if (remain >= 0) {
                             val mins = remain / 60
@@ -261,7 +265,7 @@ class MainActivity : AppCompatActivity() {
                 }
             } catch (e: Exception) {
                 runOnUiThread {
-                    if (::blockText.isInitialized) {
+                    if (viewsReady) {
                         blockText.text = "Lỗi pool - tự thử lại"
                         blockProgressBar.progress = 0
                     }
@@ -289,7 +293,7 @@ class MainActivity : AppCompatActivity() {
                 val hashJson = URL("https://mempool.space/api/v1/mining/hashrate/1w").readText()
                 val currentHash = Regex("\"currentHashrate\":([\\d.]+)").find(hashJson)?.groupValues?.get(1)?.toDouble() ?: 0.0
                 runOnUiThread {
-                    if (::statBars.isInitialized) {
+                    if (viewsReady) {
                         val minedPct = ((totalMined / 21000000.0) * 100).toInt()
                         statBars["mined"]?.progress = minedPct
                         statTexts["mined"]?.text = "Đã khai thác: ${String.format("%.2f", totalMined)} / 21M BTC ($minedPct%)"
@@ -679,7 +683,7 @@ class MainActivity : AppCompatActivity() {
 
         walletManager.onProgress { pct, txt ->
             runOnUiThread {
-                if (::spvStatusText.isInitialized) {
+                if (viewsReady) {
                     spvStatusText.text = "SPV: $txt"
                     spvProgressBar.progress = pct
                 }
@@ -687,13 +691,15 @@ class MainActivity : AppCompatActivity() {
         }
         SyncService.getInstance()?.setProgressCallback { pct, txt ->
             runOnUiThread {
-                if (::spvStatusText.isInitialized) {
+                if (viewsReady) {
                     spvStatusText.text = "SPV: $txt"
                     spvProgressBar.progress = pct
                 }
             }
         }
 
+        // Đánh dấu view đã sẵn sàng
+        viewsReady = true
         refreshWalletFromSPV()
         startAutoRefresh()
         startBlockProgress()
