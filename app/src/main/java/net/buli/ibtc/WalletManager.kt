@@ -31,7 +31,7 @@ class WalletManager(private val ctx: Context) {
     private var cachedSeed: String? = null
     private var cachedPassword: CharArray? = null
     private val prefs = ctx.getSharedPreferences("wallets", Context.MODE_PRIVATE)
-    private var lastPrice = 0.0  // khởi tạo 0, sẽ cập nhật khi gọi price()
+    private var lastPrice = prefs.getFloat("last_price", 0f).toDouble()
 
     private val DUST_THRESHOLD = 546L
     private var syncCallback: ((Int, String) -> Unit)? = null
@@ -89,7 +89,6 @@ class WalletManager(private val ctx: Context) {
         locked = true
         cachedSeed = null
         cachedPassword = null
-        ctx.stopService(Intent(ctx, SyncService::class.java))
     }
 
     fun create(name: String, password: String): WalletInfo {
@@ -178,7 +177,6 @@ class WalletManager(private val ctx: Context) {
         return prefs.getString("${id}_address", "") ?: ""
     }
 
-    // ========== SPV methods ==========
     private fun getWallet(): Wallet? = SyncService.getInstance()?.getWallet()
 
     fun getBalance(): Double {
@@ -206,7 +204,6 @@ class WalletManager(private val ctx: Context) {
         return list
     }
 
-    // ================== LẤY GIÁ BTC TỪ API (KHÔNG CỨNG) ==================
     fun price(): Double {
         return try {
             val url = URL("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT")
@@ -214,26 +211,20 @@ class WalletManager(private val ctx: Context) {
             conn.requestMethod = "GET"
             conn.connectTimeout = 5000
             conn.readTimeout = 5000
-            val reader = BufferedReader(InputStreamReader(conn.inputStream))
-            val response = reader.readText()
-            reader.close()
-            val json = JSONObject(response)
-            val price = json.getString("price").toDouble()
-            // Lưu lại để lần sau dùng
+            val response = conn.inputStream.bufferedReader().readText()
+            conn.disconnect()
+            val price = JSONObject(response).getString("price").toDouble()
             lastPrice = price
             prefs.edit().putFloat("last_price", price.toFloat()).commit()
             price
         } catch (e: Exception) {
-            // Fallback: lấy giá đã lưu, nếu không có thì trả 0.0 (MainActivity sẽ hiển thị ---)
-            val saved = prefs.getFloat("last_price", 0f).toDouble()
-            if (saved > 0) saved else 0.0
+            if (lastPrice > 0) lastPrice else 0.0
         }
     }
 
     fun getFeeRates(): FeeRates = FeeRates(5, 10, 20)
 
     fun estimateFee(to: String, amountBTC: Double, feeRateSatVb: Int): Double {
-        // fallback an toàn: 1 input + 2 outputs
         return (68 + 62 + 11) * feeRateSatVb / 1e8
     }
 
@@ -248,7 +239,6 @@ class WalletManager(private val ctx: Context) {
         }
     }
 
-    // ========== SEND ==========
     fun send(to: String, amountBTC: Double, feeRateSatVb: Int): String {
         if (feeRateSatVb < 1 || feeRateSatVb > 500) {
             throw Exception("Fee rate không hợp lệ (1-500 sat/vB)")
@@ -336,7 +326,7 @@ class WalletManager(private val ctx: Context) {
     }
 
     fun init() {}
-    fun stop() { lock() }
+    fun stop() {}
     fun isLocked(): Boolean = locked
 
     fun changePassword(oldPassword: String, newPassword: String): Boolean {
