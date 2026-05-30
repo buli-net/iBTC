@@ -19,7 +19,7 @@
         android:roundIcon="@android:mipmap/sym_def_app_icon"
         android:label="iBTC"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Material3.DayNight.NoActionBar"
+        android:theme="@style/Theme.iBTC"
         tools:targetApi="31">
 
         <activity
