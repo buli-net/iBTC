@@ -145,20 +145,10 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun getBgColor(): Int {
-        val isDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
-        return if (isDark) BG_DARK else BG_LIGHT
-    }
-
-    private fun getCardColor(): Int {
-        val isDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
-        return if (isDark) CARD_DARK else CARD_LIGHT
-    }
-
-    private fun getTextPrimaryColor(): Int {
-        val isDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
-        return if (isDark) Color.WHITE else Color.BLACK
-    }
+    private fun getBgColor(): Int = if (isDarkMode()) BG_DARK else BG_LIGHT
+    private fun getCardColor(): Int = if (isDarkMode()) CARD_DARK else CARD_LIGHT
+    private fun getTextPrimaryColor(): Int = if (isDarkMode()) Color.WHITE else Color.BLACK
+    private fun isDarkMode(): Boolean = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
 
     private fun styleButton(button: Button) {
         button.backgroundTintList = android.content.res.ColorStateList.valueOf(BITCOIN_ORANGE)
@@ -175,6 +165,12 @@ class MainActivity : AppCompatActivity() {
         drawable.setCornerRadius(16f)
         drawable.setStroke(1, BITCOIN_ORANGE)
         return drawable
+    }
+
+    private fun getDialogBuilder(title: String): AlertDialog.Builder {
+        val builder = AlertDialog.Builder(this, R.style.AlertDialogTheme)
+        builder.setTitle(title)
+        return builder
     }
 
     private fun getStartOfDayTimestamp(): Long {
@@ -202,7 +198,6 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread {
                     if (!viewsReady) return@runOnUiThread
                     balanceText.text = String.format(Locale.US, "%.8f BTC", bal)
-
                     val currentUsdValue = bal * price
                     val todayTimestamp = getStartOfDayTimestamp()
                     val lastUsdValueKey = "last_usd_value_$todayTimestamp"
@@ -260,7 +255,7 @@ class MainActivity : AppCompatActivity() {
                             val tx = txs[position]
                             val text1 = view.findViewById<TextView>(android.R.id.text1)
                             val text2 = view.findViewById<TextView>(android.R.id.text2)
-                            val isDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+                            val isDark = isDarkMode()
                             text1.setTextColor(if (isDark) Color.WHITE else Color.BLACK)
                             text1.text = "${if (tx.type == "RECEIVE") "⬇" else "⬆"} ${tx.type} ${String.format(Locale.US, "%.8f", tx.amount)} BTC"
                             text2.text = SimpleDateFormat("dd/MM HH:mm", Locale.getDefault()).format(tx.time) + " • " + tx.txId.take(12)
@@ -419,8 +414,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun showWelcome() {
         rootLayout.removeAllViews()
-        val isDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
-        val titleColor = if (isDark) Color.WHITE else Color.BLACK
+        val titleColor = getTextPrimaryColor()
         val logo = TextView(this).apply {
             text = "₿"
             textSize = 72f
@@ -446,7 +440,6 @@ class MainActivity : AppCompatActivity() {
         val createBtn = Button(this).apply {
             text = "Tạo ví mới"
             textSize = 16f
-            setPadding(0, 30, 0, 30)
         }
         val importBtn = Button(this).apply {
             text = "Import ví có sẵn"
@@ -488,24 +481,33 @@ class MainActivity : AppCompatActivity() {
         layout.addView(passInput)
         layout.addView(pass2Input)
         layout.addView(warning)
-        AlertDialog.Builder(this)
-            .setTitle("Tạo ví Bitcoin mới")
+        val dialog = getDialogBuilder("Tạo ví Bitcoin mới")
             .setView(layout)
-            .setPositiveButton("Tạo") { _, _ ->
+            .setPositiveButton("Tạo", null)
+            .setNegativeButton("Hủy", null)
+            .create()
+        dialog.setOnShowListener {
+            val positive = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+            positive.setTextColor(BITCOIN_ORANGE)
+            positive.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            val negative = dialog.getButton(AlertDialog.BUTTON_NEGATIVE)
+            negative.setTextColor(Color.GRAY)
+            positive.setOnClickListener {
                 val name = nameInput.text.toString().trim()
                 val p1 = passInput.text.toString()
                 val p2 = pass2Input.text.toString()
-                if (p1.length < 8) { toast("Mật khẩu phải ≥8 ký tự"); return@setPositiveButton }
-                if (p1 != p2) { toast("Mật khẩu không khớp"); return@setPositiveButton }
+                if (p1.length < 8) { toast("Mật khẩu phải ≥8 ký tự"); return@setOnClickListener }
+                if (p1 != p2) { toast("Mật khẩu không khớp"); return@setOnClickListener }
                 try {
                     walletManager.create(name, p1)
                     Thread { walletManager.init() }.start()
                     toast("Tạo ví thành công")
+                    dialog.dismiss()
                     showMainWallet()
                 } catch (e: Exception) { toast("Lỗi: ${e.message}") }
             }
-            .setNegativeButton("Hủy", null)
-            .show()
+        }
+        dialog.show()
     }
 
     private fun showImportDialog() {
@@ -531,40 +533,42 @@ class MainActivity : AppCompatActivity() {
         layout.addView(seedInput)
         layout.addView(passInput)
         layout.addView(confirmPassInput)
-        AlertDialog.Builder(this)
-            .setTitle("Import ví")
+        val dialog = getDialogBuilder("Import ví")
             .setView(layout)
-            .setPositiveButton("Import") { _, _ ->
+            .setPositiveButton("Import", null)
+            .setNegativeButton("Hủy", null)
+            .create()
+        dialog.setOnShowListener {
+            val positive = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+            positive.setTextColor(BITCOIN_ORANGE)
+            positive.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            val negative = dialog.getButton(AlertDialog.BUTTON_NEGATIVE)
+            negative.setTextColor(Color.GRAY)
+            positive.setOnClickListener {
                 val name = nameInput.text.toString().trim()
                 val seed = seedInput.text.toString().trim()
                 val pass = passInput.text.toString()
                 val confirm = confirmPassInput.text.toString()
-                if (pass.length < 8) {
-                    toast("Mật khẩu phải ≥8 ký tự")
-                    return@setPositiveButton
-                }
-                if (pass != confirm) {
-                    toast("Mật khẩu không khớp")
-                    return@setPositiveButton
-                }
+                if (pass.length < 8) { toast("Mật khẩu phải ≥8 ký tự"); return@setOnClickListener }
+                if (pass != confirm) { toast("Mật khẩu không khớp"); return@setOnClickListener }
                 val info = walletManager.import(name, seed, pass)
                 if (info == null) toast("Seed không hợp lệ (cần 12-24 từ)")
                 else {
                     Thread { walletManager.init() }.start()
                     toast("Import thành công")
+                    dialog.dismiss()
                     showMainWallet()
                 }
             }
-            .setNegativeButton("Hủy", null)
-            .show()
+        }
+        dialog.show()
     }
 
     private fun showUnlockDialog() {
         val id = walletManager.getActiveId()
         if (id == null) { showWelcome(); return }
         rootLayout.removeAllViews()
-        val isDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
-        val titleColor = if (isDark) Color.WHITE else Color.BLACK
+        val titleColor = getTextPrimaryColor()
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
@@ -608,9 +612,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun showMainWallet() {
         rootLayout.removeAllViews()
-        val isDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
         val mainColor = getTextPrimaryColor()
-        val subColor = if (isDark) Color.LTGRAY else Color.DKGRAY
+        val subColor = if (isDarkMode()) Color.LTGRAY else Color.DKGRAY
 
         walletNameText = TextView(this).apply {
             text = walletManager.getActive()?.name ?: "Ví"
@@ -821,7 +824,15 @@ class MainActivity : AppCompatActivity() {
         layout.addView(imageView)
         layout.addView(addressView)
         layout.addView(copyBtn)
-        AlertDialog.Builder(this).setTitle("Nhận Bitcoin").setView(layout).setPositiveButton("Đóng", null).show()
+        val dialog = getDialogBuilder("Nhận Bitcoin")
+            .setView(layout)
+            .setPositiveButton("Đóng", null)
+            .create()
+        dialog.setOnShowListener {
+            val positive = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+            positive.setTextColor(BITCOIN_ORANGE)
+        }
+        dialog.show()
     }
 
     private fun showSendDialog() {
@@ -903,8 +914,7 @@ class MainActivity : AppCompatActivity() {
         var currentBalance = 0.0
         var isSpvSynced = false
 
-        val dialog = AlertDialog.Builder(this)
-            .setTitle("Gửi BTC")
+        val dialog = getDialogBuilder("Gửi BTC")
             .setView(layout)
             .setPositiveButton("Tiếp tục", null)
             .setNegativeButton("Hủy", null)
@@ -913,6 +923,9 @@ class MainActivity : AppCompatActivity() {
         dialog.setOnShowListener {
             val btn = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
             btn.isEnabled = false
+            btn.setTextColor(BITCOIN_ORANGE)
+            val negative = dialog.getButton(AlertDialog.BUTTON_NEGATIVE)
+            negative.setTextColor(Color.GRAY)
 
             fun updateUI() {
                 val to = toInput.text.toString().trim()
@@ -1051,6 +1064,7 @@ class MainActivity : AppCompatActivity() {
         val summary = TextView(this).apply {
             text = "Gửi: $amt BTC\nĐến: $to\nPhí: ~$estFee BTC\nTổng: ${amt + estFee} BTC"
             setPadding(0,0,0,20)
+            setTextColor(getTextPrimaryColor())
         }
         val passInput = EditText(this).apply {
             hint = "Nhập mật khẩu để xác nhận"
@@ -1058,25 +1072,30 @@ class MainActivity : AppCompatActivity() {
         }
         layout.addView(summary)
         layout.addView(passInput)
-        AlertDialog.Builder(this)
-            .setTitle("Xác nhận gửi")
+        val dialog = getDialogBuilder("Xác nhận gửi")
             .setView(layout)
-            .setPositiveButton("Xác nhận") { _, _ ->
+            .setPositiveButton("Xác nhận", null)
+            .setNegativeButton("Hủy", null)
+            .create()
+        dialog.setOnShowListener {
+            val positive = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+            positive.setTextColor(BITCOIN_ORANGE)
+            val negative = dialog.getButton(AlertDialog.BUTTON_NEGATIVE)
+            negative.setTextColor(Color.GRAY)
+            positive.setOnClickListener {
                 val pass = passInput.text.toString()
-                val id = walletManager.getActiveId() ?: return@setPositiveButton
+                val id = walletManager.getActiveId() ?: return@setOnClickListener
                 if (!walletManager.unlock(id, pass)) {
                     toast("Sai mật khẩu")
-                    return@setPositiveButton
+                    return@setOnClickListener
                 }
+                dialog.dismiss()
                 val delayLayout = LinearLayout(this).apply {
                     orientation = LinearLayout.VERTICAL
                     setPadding(40,30,40,30)
                 }
                 val tv = TextView(this).apply { text = "Đang chuẩn bị gửi sau 60 giây..."; gravity = Gravity.CENTER }
-                val progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-                    max = 60
-                    progress = 60
-                }
+                val progress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply { max = 60; progress = 60 }
                 val countdown = TextView(this).apply { text = "60s"; gravity = Gravity.CENTER; textSize = 18f }
                 delayLayout.addView(tv); delayLayout.addView(progress); delayLayout.addView(countdown)
 
@@ -1108,8 +1127,7 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
                 }
-                delayDialog = AlertDialog.Builder(this)
-                    .setTitle("Delay bảo mật")
+                delayDialog = getDialogBuilder("Delay bảo mật")
                     .setView(delayLayout)
                     .setCancelable(false)
                     .setNegativeButton("Hủy giao dịch") { _, _ ->
@@ -1118,32 +1136,37 @@ class MainActivity : AppCompatActivity() {
                         toast("Đã hủy gửi")
                     }
                     .create()
+                delayDialog.setOnShowListener {
+                    val btn = delayDialog.getButton(AlertDialog.BUTTON_NEGATIVE)
+                    btn.setTextColor(BITCOIN_ORANGE)
+                }
                 delayDialog.show()
-
                 handler.postDelayed(runnable, 1000)
             }
-            .setNegativeButton("Hủy", null)
-            .show()
+        }
+        dialog.show()
     }
 
     private fun showSettings() {
         val items = arrayOf("👁 Xem seed phrase", "🔑 Đổi mật khẩu", "✏️ Đổi tên ví", "🗑 Xóa ví vĩnh viễn", "🔒 Khóa ví ngay", "ℹ️ Thông tin")
-        AlertDialog.Builder(this)
-            .setTitle("Cài đặt")
+        val dialog = getDialogBuilder("Cài đặt")
             .setItems(items) { _, w ->
                 when(w) {
                     0 -> showSeedDialog()
                     1 -> showChangePassDialog()
                     2 -> showRenameDialog()
                     3 -> showDeleteDialog()
-                    4 -> {
-                        walletManager.lock()
-                        showUnlockDialog()
-                    }
+                    4 -> { walletManager.lock(); showUnlockDialog() }
                     5 -> showInfo()
                 }
             }
-            .show()
+            .create()
+        dialog.setOnShowListener {
+            val listView = dialog.listView
+            listView?.setBackgroundColor(getCardColor())
+            listView?.divider = null
+        }
+        dialog.show()
     }
 
     private fun showSeedDialog() {
@@ -1151,11 +1174,18 @@ class MainActivity : AppCompatActivity() {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
             transformationMethod = PasswordTransformationMethod.getInstance()
         }
-        AlertDialog.Builder(this)
-            .setTitle("Nhập mật khẩu để xem seed")
+        val dialog = getDialogBuilder("Nhập mật khẩu để xem seed")
             .setView(pass)
-            .setPositiveButton("Xem") { _, _ ->
-                val id = walletManager.getActiveId()?: return@setPositiveButton
+            .setPositiveButton("Xem", null)
+            .setNegativeButton("Hủy", null)
+            .create()
+        dialog.setOnShowListener {
+            val positive = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+            positive.setTextColor(BITCOIN_ORANGE)
+            val negative = dialog.getButton(AlertDialog.BUTTON_NEGATIVE)
+            negative.setTextColor(Color.GRAY)
+            positive.setOnClickListener {
+                val id = walletManager.getActiveId() ?: return@setOnClickListener
                 if (walletManager.unlock(id, pass.text.toString())) {
                     val seed = walletManager.getSeed()
                     val tv = TextView(this).apply {
@@ -1164,27 +1194,36 @@ class MainActivity : AppCompatActivity() {
                         setTextIsSelectable(true)
                         setPadding(40,40,40,40)
                         gravity = Gravity.CENTER
+                        setTextColor(getTextPrimaryColor())
+                        background = getRoundedBackground()
                     }
-                    AlertDialog.Builder(this)
-                        .setTitle("⚠️ KHÔNG CHIA SẺ SEED")
+                    val seedDialog = getDialogBuilder("⚠️ KHÔNG CHIA SẺ SEED")
                         .setView(tv)
-                        .setPositiveButton("Copy 30s") { _, _ ->
+                        .setPositiveButton("Copy 30s", null)
+                        .setNegativeButton("Đóng", null)
+                        .create()
+                    seedDialog.setOnShowListener {
+                        val copyBtn = seedDialog.getButton(AlertDialog.BUTTON_POSITIVE)
+                        copyBtn.setTextColor(BITCOIN_ORANGE)
+                        copyBtn.setOnClickListener {
                             val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                             cm.setPrimaryClip(ClipData.newPlainText("seed", seed))
                             handler.postDelayed({ cm.clearPrimaryClip() }, 30000)
+                            toast("Đã copy - tự xóa sau 30s")
                         }
-                        .setNegativeButton("Đóng", null)
-                        .show()
+                        val closeBtn = seedDialog.getButton(AlertDialog.BUTTON_NEGATIVE)
+                        closeBtn.setTextColor(Color.GRAY)
+                    }
+                    seedDialog.show()
+                    dialog.dismiss()
                 } else toast("Sai mật khẩu")
             }
-            .show()
+        }
+        dialog.show()
     }
 
     private fun showChangePassDialog() {
-        val layout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(30)
-        }
+        val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(30) }
         val oldP = EditText(this).apply {
             hint = "Mật khẩu cũ"
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
@@ -1200,71 +1239,97 @@ class MainActivity : AppCompatActivity() {
         layout.addView(oldP)
         layout.addView(newP)
         layout.addView(confirmP)
-        AlertDialog.Builder(this)
-            .setTitle("Đổi mật khẩu")
+        val dialog = getDialogBuilder("Đổi mật khẩu")
             .setView(layout)
-            .setPositiveButton("Đổi") { _, _ ->
-                val id = walletManager.getActiveId()?: return@setPositiveButton
+            .setPositiveButton("Đổi", null)
+            .setNegativeButton("Hủy", null)
+            .create()
+        dialog.setOnShowListener {
+            val positive = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+            positive.setTextColor(BITCOIN_ORANGE)
+            val negative = dialog.getButton(AlertDialog.BUTTON_NEGATIVE)
+            negative.setTextColor(Color.GRAY)
+            positive.setOnClickListener {
+                val id = walletManager.getActiveId() ?: return@setOnClickListener
                 val newPass = newP.text.toString()
                 val confirm = confirmP.text.toString()
-                if (newPass.length < 8) {
-                    toast("Mật khẩu mới phải ≥8 ký tự")
-                    return@setPositiveButton
-                }
-                if (newPass != confirm) {
-                    toast("Mật khẩu mới không khớp")
-                    return@setPositiveButton
-                }
-                if (walletManager.changePassword(oldP.text.toString(), newPass))
+                if (newPass.length < 8) { toast("Mật khẩu mới phải ≥8 ký tự"); return@setOnClickListener }
+                if (newPass != confirm) { toast("Mật khẩu mới không khớp"); return@setOnClickListener }
+                if (walletManager.changePassword(oldP.text.toString(), newPass)) {
                     toast("Đã đổi thành công")
-                else toast("Sai mật khẩu cũ")
+                    dialog.dismiss()
+                } else toast("Sai mật khẩu cũ")
             }
-            .show()
+        }
+        dialog.show()
     }
 
     private fun showRenameDialog() {
         val input = EditText(this).apply {
             hint = "Tên ví mới"
-            setText(walletManager.getActive()?.name?: "")
+            setText(walletManager.getActive()?.name ?: "")
         }
-        AlertDialog.Builder(this)
-            .setTitle("Đổi tên")
+        val dialog = getDialogBuilder("Đổi tên")
             .setView(input)
-            .setPositiveButton("Lưu") { _, _ ->
-                val id = walletManager.getActiveId()?: return@setPositiveButton
+            .setPositiveButton("Lưu", null)
+            .setNegativeButton("Hủy", null)
+            .create()
+        dialog.setOnShowListener {
+            val positive = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+            positive.setTextColor(BITCOIN_ORANGE)
+            val negative = dialog.getButton(AlertDialog.BUTTON_NEGATIVE)
+            negative.setTextColor(Color.GRAY)
+            positive.setOnClickListener {
+                val id = walletManager.getActiveId() ?: return@setOnClickListener
                 walletManager.rename(input.text.toString())
                 walletNameText.text = input.text.toString()
                 toast("Đã đổi tên")
+                dialog.dismiss()
             }
-            .show()
+        }
+        dialog.show()
     }
 
     private fun showDeleteDialog() {
         val pass = EditText(this).apply {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
         }
-        AlertDialog.Builder(this)
+        val dialog = getDialogBuilder("XÓA VĨNH VIỄN")
             .setTitle("XÓA VĨNH VIỄN")
             .setMessage("Nhập mật khẩu để xóa. Không thể khôi phục nếu không có seed!")
             .setView(pass)
-            .setPositiveButton("XÓA") { _, _ ->
-                val id = walletManager.getActiveId()?: return@setPositiveButton
+            .setPositiveButton("XÓA", null)
+            .setNegativeButton("Hủy", null)
+            .create()
+        dialog.setOnShowListener {
+            val positive = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+            positive.setTextColor(Color.RED)
+            positive.typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            val negative = dialog.getButton(AlertDialog.BUTTON_NEGATIVE)
+            negative.setTextColor(Color.GRAY)
+            positive.setOnClickListener {
+                val id = walletManager.getActiveId() ?: return@setOnClickListener
                 if (walletManager.unlock(id, pass.text.toString())) {
                     walletManager.delete(id)
+                    dialog.dismiss()
                     showWelcome()
                     toast("Đã xóa")
                 } else toast("Sai pass")
             }
-            .setNegativeButton("Hủy", null)
-            .show()
+        }
+        dialog.show()
     }
 
     private fun showInfo() {
-        AlertDialog.Builder(this)
-            .setTitle("iBTC v4.7")
+        val dialog = getDialogBuilder("iBTC v4.7")
             .setMessage("Build: 2026-05-30\n• SPV 100%\n• Foreground service\n• Gửi BTC")
             .setPositiveButton("OK", null)
-            .show()
+            .create()
+        dialog.setOnShowListener {
+            val btn = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+            btn.setTextColor(BITCOIN_ORANGE)
+        }
+        dialog.show()
     }
 
     private fun toast(msg: String) {
