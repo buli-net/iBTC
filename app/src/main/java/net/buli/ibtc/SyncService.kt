@@ -13,10 +13,11 @@ import org.bitcoinj.core.Context as BtcContext
 import org.bitcoinj.core.listeners.DownloadProgressTracker
 import org.bitcoinj.kits.WalletAppKit
 import org.bitcoinj.params.MainNetParams
+import org.bitcoinj.script.Script
 import org.bitcoinj.wallet.DeterministicSeed
 import org.bitcoinj.wallet.Wallet
 import java.io.File
-import java.util.concurrent.TimeUnit
+import java.security.SecureRandom
 
 class SyncService : Service() {
 
@@ -25,7 +26,7 @@ class SyncService : Service() {
     private var progressCallback: ((Int, String) -> Unit)? = null
     private var currentWalletId: String = ""
     @Volatile private var isSynced = false
-    @Volatile private var lastProgress = 0
+    private var lastProgress = 0
     private var lastMessage = "Đang khởi động..."
     private var kit: WalletAppKit? = null
 
@@ -47,12 +48,15 @@ class SyncService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val seedPhrase = intent?.getStringExtra("seed_phrase")
-        val walletId = intent?.getStringExtra("wallet_id") ?: "default_wallet"
+        val seedPhrase = intent?.getStringExtra("seed_phrase") ?: return START_STICKY
+        val walletId = intent.getStringExtra("wallet_id") ?: "default_wallet"
         currentWalletId = walletId
-        if (seedPhrase != null) {
-            startBitcoinSync(walletId, seedPhrase)
+        // Nếu kit đã chạy và đúng walletId thì không làm gì
+        if (kit != null && kit?.isRunning == true && kit?.wallet() != null) {
+            setProgressCallback(progressCallback)
+            return START_STICKY
         }
+        startBitcoinSync(walletId, seedPhrase)
         return START_STICKY
     }
 
@@ -92,21 +96,6 @@ class SyncService : Service() {
     }
 
     private fun startBitcoinSync(walletId: String, seedPhrase: String) {
-        // Nếu kit đã chạy và đúng walletId thì không làm gì
-        if (kit != null && kit?.isRunning == true && kit?.wallet() != null) {
-            setProgressCallback(progressCallback)
-            return
-        }
-
-        // Nếu kit đang chạy nhưng walletId khác thì stop cũ để tạo mới
-        if (kit != null) {
-            try {
-                kit?.stopAsync()
-                kit?.awaitTerminated()
-            } catch (_: Exception) {}
-            kit = null
-        }
-
         Thread {
             try {
                 val params = MainNetParams.get()
@@ -115,8 +104,30 @@ class SyncService : Service() {
                 val dir = File(filesDir, "spv_wallets")
                 if (!dir.exists()) dir.mkdirs()
 
-                // **QUAN TRỌNG: KHÔNG tự tạo wallet file, để WalletAppKit tự quản lý**
-                // Chỉ cần tạo kit với đúng walletId, nó sẽ tự tìm file .wallet và .spvchain
+                val walletFile = File(dir, "$walletId.wallet")
+
+                // Nếu file wallet chưa tồn tại và có seed, tạo wallet từ seed và lưu
+                if (!walletFile.exists() && seedPhrase.isNotEmpty()) {
+                    val words = seedPhrase.trim().lowercase().split(" ")
+                    if (words.size == 12 || words.size == 24) {
+                        val seed = DeterministicSeed(words, null, "", 0L)
+                        val wallet = Wallet.fromSeed(params, seed, Script.ScriptType.P2WPKH)
+                        wallet.saveToFile(walletFile)
+                    } else {
+                        // Nếu seed không hợp lệ, tạo wallet mới ngẫu nhiên
+                        val randomSeed = DeterministicSeed(SecureRandom(), 128, "")
+                        val wallet = Wallet.fromSeed(params, randomSeed, Script.ScriptType.P2WPKH)
+                        wallet.saveToFile(walletFile)
+                    }
+                }
+
+                // Dừng kit cũ nếu có
+                try {
+                    kit?.stopAsync()
+                    kit?.awaitTerminated()
+                } catch (_: Exception) {}
+
+                // Tạo kit mới
                 val newKit = WalletAppKit(params, dir, walletId).apply {
                     setBlockingStartup(false)
                     setDownloadListener(object : DownloadProgressTracker() {
@@ -139,22 +150,9 @@ class SyncService : Service() {
                         }
                     })
                     startAsync()
-                    // KHÔNG awaitRunning, KHÔNG autosaveToFile (BitcoinJ tự lưu)
+                    // Không gọi awaitRunning() để tránh lỗi
                 }
                 kit = newKit
-
-                // Nếu có seed và wallet chưa có, import seed (nếu wallet chưa có seed)
-                // Chỉ chạy sau khi kit đã khởi tạo xong (chờ 2 giây)
-                Thread.sleep(2000)
-                val wallet = kit?.wallet()
-                if (wallet != null && wallet.keyChainSeed.mnemonicCode == null && seedPhrase.isNotEmpty()) {
-                    val words = seedPhrase.trim().lowercase().split(" ")
-                    if (words.size == 12 || words.size == 24) {
-                        val seed = DeterministicSeed(words, null, "", 0L)
-                        wallet.importSeed(seed)
-                    }
-                }
-
             } catch (e: Exception) {
                 lastMessage = "Lỗi sync: ${e.message}"
                 updateNotification(lastMessage)
@@ -183,8 +181,7 @@ class SyncService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         instance = null
-        // KHÔNG stopAsync ở đây để giữ state cho lần sau
-        // Chỉ stop khi app muốn dứt khoát (có thể để WalletManager lock thì stop)
+        // Không stopAsync để giữ state cho lần sau
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
