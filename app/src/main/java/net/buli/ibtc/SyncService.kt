@@ -120,6 +120,19 @@ class SyncService : Service() {
                 val dir = File(filesDir, "spv_wallets")
                 if (!dir.exists()) dir.mkdirs()
 
+                // Không tạo file wallet thủ công, để WalletAppKit tự quản lý
+                // Chỉ tạo nếu lần đầu và có seed
+                val walletFile = File(dir, "$walletId.wallet")
+                if (!walletFile.exists() && seedPhrase.isNotEmpty()) {
+                    val words = seedPhrase.trim().lowercase().split(" ")
+                    if (words.size == 12 || words.size == 24) {
+                        val seed = DeterministicSeed(words, null, "", 0L)
+                        val wallet = Wallet.fromSeed(params, seed, Script.ScriptType.P2WPKH)
+                        wallet.saveToFile(walletFile)
+                    }
+                }
+
+                // Dừng kit cũ nếu có
                 try {
                     kit?.stopAsync()
                     kit?.awaitTerminated()
@@ -148,6 +161,7 @@ class SyncService : Service() {
                     startAsync()
                 }
                 kit = newKit
+                progressCallback?.invoke(lastProgress, lastMessage)
 
             } catch (e: Exception) {
                 saveProgress(lastProgress, "Lỗi sync: ${e.message}")
@@ -175,6 +189,7 @@ class SyncService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         instance = null
+        // Không stopAsync để giữ trạng thái cho lần sau
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
