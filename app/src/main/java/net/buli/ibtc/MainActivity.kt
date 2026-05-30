@@ -11,17 +11,9 @@ import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Typeface
-import android.hardware.Sensor
-import android.hardware.SensorManager
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
-import android.net.wifi.WifiManager
-import android.os.BatteryManager
-import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
-import android.telephony.TelephonyManager
 import android.text.InputType
 import android.text.method.PasswordTransformationMethod
 import android.view.Gravity
@@ -31,8 +23,11 @@ import android.view.WindowManager
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.setPadding
+import com.github.mikephil.charting.charts.CandleStickChart
 import com.github.mikephil.charting.charts.LineChart
+import com.github.mikephil.charting.components.XAxis
 import com.github.mikephil.charting.data.*
+import com.github.mikephil.charting.formatter.ValueFormatter
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
 import com.journeyapps.barcodescanner.ScanContract
@@ -200,7 +195,7 @@ class MainActivity : AppCompatActivity() {
     private fun addStatsGrid(container: LinearLayout, mainColor: Int) {
         val gridContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
         }
         val row1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; weightSum = 2f }
         val row2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; weightSum = 2f }
@@ -211,7 +206,7 @@ class MainActivity : AppCompatActivity() {
         fun addStatToRow(row: LinearLayout, label: String, key: String) {
             val item = LinearLayout(this@MainActivity).apply {
                 orientation = LinearLayout.VERTICAL
-                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
                 setPadding(8, 4, 8, 4)
             }
             val title = TextView(this@MainActivity).apply {
@@ -251,82 +246,6 @@ class MainActivity : AppCompatActivity() {
         container.addView(gridContainer)
     }
 
-    // ===================== THÔNG TIN THIẾT BỊ =====================
-    private fun getDeviceDetails(): Map<String, String> {
-        val details = mutableMapOf<String, String>()
-        val batteryManager = getSystemService(BATTERY_SERVICE) as BatteryManager
-        val batteryPct = batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
-        val isCharging = batteryManager.isCharging
-        details["Pin"] = "$batteryPct% ${if (isCharging) "🔌 Đang sạc" else ""}"
-
-        val cm = getSystemService(CONNECTIVITY_SERVICE) as ConnectivityManager
-        val activeNetwork = cm.activeNetwork
-        val caps = cm.getNetworkCapabilities(activeNetwork)
-        val networkType = when {
-            caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true -> "WiFi"
-            caps?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true -> "Di động"
-            else -> "Không có mạng"
-        }
-        details["Mạng"] = networkType
-        if (networkType == "WiFi") {
-            val wifiManager = applicationContext.getSystemService(WIFI_SERVICE) as WifiManager
-            val wifiInfo = wifiManager.connectionInfo
-            details["WiFi"] = wifiInfo.ssid ?: "Unknown"
-        }
-        val tm = getSystemService(TELEPHONY_SERVICE) as TelephonyManager
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val simOperator = tm.simOperatorName
-            details["SIM"] = simOperator ?: "Không SIM"
-        } else {
-            details["SIM"] = tm.simOperatorName ?: "Không SIM"
-        }
-        details["Thiết bị"] = "${Build.MANUFACTURER} ${Build.MODEL}"
-        details["Android"] = Build.VERSION.RELEASE
-        details["RAM"] = "${getTotalRAM() / (1024 * 1024)} MB"
-        details["CPU"] = Build.HARDWARE ?: "Unknown"
-        val sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
-        val sensors = sensorManager.getSensorList(Sensor.TYPE_ALL).size
-        details["Cảm biến"] = "$sensors sensors"
-        return details
-    }
-
-    private fun getTotalRAM(): Long {
-        val memInfo = android.app.ActivityManager.MemoryInfo()
-        (getSystemService(ACTIVITY_SERVICE) as android.app.ActivityManager).getMemoryInfo(memInfo)
-        return memInfo.totalMem
-    }
-
-    private fun addDeviceInfoCard(container: LinearLayout, mainColor: Int) {
-        val card = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(16, 16, 16, 16)
-            setBackgroundColor(Color.parseColor("#2C2C2C"))
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = 16 }
-        }
-        val title = TextView(this).apply {
-            text = "📱 Thông tin thiết bị"
-            textSize = 14f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(mainColor)
-            setPadding(0, 0, 0, 8)
-        }
-        card.addView(title)
-
-        val details = getDeviceDetails()
-        val grid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        for ((key, value) in details) {
-            val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; setPadding(4, 2, 4, 2) }
-            val keyTv = TextView(this).apply { text = "$key: "; textSize = 12f; setTextColor(Color.GRAY); layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.4f) }
-            val valTv = TextView(this).apply { text = value; textSize = 12f; setTextColor(mainColor); layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 0.6f) }
-            row.addView(keyTv)
-            row.addView(valTv)
-            grid.addView(row)
-        }
-        card.addView(grid)
-        container.addView(card)
-    }
-
-    // ===================== CÁC HÀM CŨ =====================
     private fun getTodayUtcStart(): Long {
         val calendar = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
         calendar.set(Calendar.HOUR_OF_DAY, 0)
@@ -574,7 +493,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun fetchSparkline() {
         BitcoinChartService.fetchKlines("1h", 30) { klines ->
-            if (klines != null && klines.isNotEmpty()) {
+            if (viewsReady && !isFinishing && !isDestroyed && klines != null && klines.isNotEmpty()) {
                 val closePrices = klines.map { it.close.toFloat() }
                 runOnUiThread { updateSparkline(closePrices) }
             }
@@ -695,6 +614,7 @@ class MainActivity : AppCompatActivity() {
         layout.addView(seedInput)
         layout.addView(passInput)
         layout.addView(confirmPassInput)
+
         AlertDialog.Builder(this)
             .setTitle("Import ví")
             .setView(layout)
@@ -703,6 +623,7 @@ class MainActivity : AppCompatActivity() {
                 val seed = seedInput.text.toString().trim()
                 val pass = passInput.text.toString()
                 val confirm = confirmPassInput.text.toString()
+
                 if (pass.length < 8) {
                     toast("Mật khẩu phải ≥8 ký tự")
                     return@setPositiveButton
@@ -711,12 +632,30 @@ class MainActivity : AppCompatActivity() {
                     toast("Mật khẩu không khớp")
                     return@setPositiveButton
                 }
-                val info = walletManager.import(name, seed, pass)
-                if (info == null) toast("Seed không hợp lệ (cần 12-24 từ)")
-                else {
-                    Thread { walletManager.init() }.start()
+                val cleanSeed = seed.trim().replace(Regex("\\s+"), " ")
+                if (cleanSeed.split(" ").size != 12 && cleanSeed.split(" ").size != 24) {
+                    toast("Seed phải có 12 hoặc 24 từ")
+                    return@setPositiveButton
+                }
+                try {
+                    val info = walletManager.import(name, cleanSeed, pass)
+                    if (info == null) {
+                        toast("Seed không hợp lệ")
+                        return@setPositiveButton
+                    }
                     toast("Import thành công")
-                    showMainWallet()
+                    Thread {
+                        try {
+                            walletManager.init()
+                            runOnUiThread { showMainWallet() }
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                            runOnUiThread { toast("Lỗi đồng bộ: ${e.message}") }
+                        }
+                    }.start()
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                    toast("Lỗi: ${e.message}")
                 }
             }
             .setNegativeButton("Hủy", null)
@@ -782,7 +721,7 @@ class MainActivity : AppCompatActivity() {
 
         val balanceRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT)
             gravity = Gravity.CENTER_VERTICAL
         }
         balanceText = TextView(this).apply {
@@ -790,7 +729,7 @@ class MainActivity : AppCompatActivity() {
             textSize = 32f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(mainColor)
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f)
         }
         balanceRow.addView(balanceText)
         setupSparkline()
@@ -806,22 +745,19 @@ class MainActivity : AppCompatActivity() {
             textSize = 14f
             setTextColor(Color.GRAY)
         }
-
-        // Dòng SPV
         spvStatusText = TextView(this).apply {
             text = "SPV: Đang khởi động..."
-            textSize = 11f
+            textSize = 12f
             setTextColor(mainColor)
-            setPadding(0, 4, 0, 2)
+            setPadding(0, 4, 0, 4)
         }
         spvProgressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100
             progress = 0
             progressTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#F7931A"))
-            scaleY = 1.5f
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            scaleY = 2f
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, WRAP_CONTENT).apply { topMargin = 4; bottomMargin = 8 }
         }
-
         addressText = TextView(this).apply {
             textSize = 12f
             isSingleLine = true
@@ -829,27 +765,25 @@ class MainActivity : AppCompatActivity() {
             setTextColor(mainColor)
             setPadding(0, 10, 0, 10)
         }
-
-        // Dòng Block
         blockText = TextView(this).apply {
             text = "Đang kết nối mempool..."
-            textSize = 11f
+            textSize = POOL_FONT
             setTextColor(mainColor)
             setPadding(0, 8, 0, 2)
+            typeface = Typeface.DEFAULT
         }
         blockProgressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100
             progress = 0
-            scaleY = 1.5f
-            progressTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#F7931A"))
+            scaleY = 0.7f
         }
 
         val btnRow1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; weightSum = 2f }
-        val btnReceive = Button(this).apply { text = "⬇ Nhận"; layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = 8 } }
-        val btnSend = Button(this).apply { text = "⬆ Gửi"; layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = 8 } }
+        val btnReceive = Button(this).apply { text = "⬇ Nhận"; layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = 8 } }
+        val btnSend = Button(this).apply { text = "⬆ Gửi"; layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginStart = 8 } }
         val btnRow2 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; weightSum = 2f }
-        val btnRefresh = Button(this).apply { text = "⟳ Làm mới"; layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginEnd = 8 } }
-        val btnSettings = Button(this).apply { text = "⚙ Cài đặt"; layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply { marginStart = 8 } }
+        val btnRefresh = Button(this).apply { text = "⟳ Làm mới"; layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginEnd = 8 } }
+        val btnSettings = Button(this).apply { text = "⚙ Cài đặt"; layoutParams = LinearLayout.LayoutParams(0, WRAP_CONTENT, 1f).apply { marginStart = 8 } }
         btnRow1.addView(btnReceive); btnRow1.addView(btnSend)
         btnRow2.addView(btnRefresh); btnRow2.addView(btnSettings)
 
@@ -860,7 +794,6 @@ class MainActivity : AppCompatActivity() {
             setTextColor(mainColor)
             setPadding(0, 20, 0, 5)
         }
-
         val txTitle = TextView(this).apply {
             text = "Lịch sử giao dịch"
             textSize = 16f
@@ -869,10 +802,10 @@ class MainActivity : AppCompatActivity() {
             setTextColor(mainColor)
         }
         txListView = ListView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 600)
+            layoutParams = LinearLayout.LayoutParams(MATCH_PARENT, 600)
         }
 
-        // Thêm các view theo thứ tự
+        // Add views
         rootLayout.addView(walletNameText)
         rootLayout.addView(balanceRow)
         rootLayout.addView(balanceUsdText)
@@ -880,7 +813,7 @@ class MainActivity : AppCompatActivity() {
         rootLayout.addView(spvStatusText)
         rootLayout.addView(spvProgressBar)
         rootLayout.addView(addressText)
-        rootLayout.addView(Space(this).apply { layoutParams = LinearLayout.LayoutParams(1, 12) })
+        rootLayout.addView(Space(this).apply { layoutParams = LinearLayout.LayoutParams(1, 20) })
         rootLayout.addView(btnRow1)
         rootLayout.addView(btnRow2)
         rootLayout.addView(blockText)
@@ -890,8 +823,6 @@ class MainActivity : AppCompatActivity() {
 
         rootLayout.addView(statsTitle)
         addStatsGrid(rootLayout, mainColor)
-
-        addDeviceInfoCard(rootLayout, mainColor)
 
         rootLayout.addView(txTitle)
         rootLayout.addView(txListView)
@@ -939,6 +870,7 @@ class MainActivity : AppCompatActivity() {
         fetchSparkline()
     }
 
+    // ================= CÁC HÀM DIALOG (GIỮ NGUYÊN) =================
     private fun showReceiveDialog() {
         val address = walletManager.getAddress()
         if (address.isEmpty()) { toast("Ví chưa sẵn sàng"); return }
@@ -1411,7 +1343,7 @@ class MainActivity : AppCompatActivity() {
     private fun showInfo() {
         AlertDialog.Builder(this)
             .setTitle("iBTC v4.7")
-            .setMessage("Build: 2026-05-30\n• SPV 100%\n• Foreground service\n• Gửi BTC\n• Biểu đồ giá nhỏ real-time\n• Thông tin thiết bị\n• Card SPV mở rộng")
+            .setMessage("Build: 2026-05-30\n• SPV 100%\n• Foreground service\n• Gửi BTC\n• Biểu đồ giá nhỏ real-time\n• Card SPV mở rộng\n• Thống kê lưới 2 cột")
             .setPositiveButton("OK", null)
             .show()
     }
