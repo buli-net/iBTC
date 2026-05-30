@@ -176,17 +176,8 @@ class SyncService : Service() {
     }
 
     fun refreshProgress() {
-        val peerGroup = kit?.peerGroup()
-        if (peerGroup != null) {
-            val realProgress = peerGroup.downloadPct.toInt()
-            if (realProgress in 0..100 && realProgress != lastProgress) {
-                lastProgress = realProgress
-                lastMessage = if (realProgress < 100) "Đồng bộ blockchain: $realProgress%" else "Đã đồng bộ blockchain (xử lý...)"
-                saveProgress(lastProgress, lastMessage)
-                progressCallback?.invoke(lastProgress, lastMessage)
-                updateNotification(lastMessage)
-            }
-        }
+        // Trong bitcoinj 0.16.3, peerGroup không có downloadPct. Chỉ cần gửi lại progress hiện tại.
+        progressCallback?.invoke(lastProgress, lastMessage)
     }
 
     fun setProgressCallback(callback: ((Int, String) -> Unit)?) {
