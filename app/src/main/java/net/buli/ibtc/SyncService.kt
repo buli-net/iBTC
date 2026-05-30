@@ -20,12 +20,7 @@ import org.bitcoinj.wallet.DeterministicSeed
 import org.bitcoinj.wallet.Wallet
 import java.io.File
 import java.security.SecureRandom
-import java.util.concurrent.TimeUnit
 
-/**
- * Foreground service that manages the SPV WalletAppKit.
- * Continues syncing blockchain in the background even when app is closed.
- */
 class SyncService : Service() {
 
     private val CHANNEL_ID = "bitcoin_sync_channel"
@@ -33,7 +28,6 @@ class SyncService : Service() {
     private var progressCallback: ((Int, String) -> Unit)? = null
     private var currentWalletId: String = ""
     @Volatile private var isSynced = false
-    @Volatile private var syncing = false
     private var lastProgress = 0
     private var lastMessage = "Đang khởi động..."
     private var kit: WalletAppKit? = null
@@ -49,7 +43,6 @@ class SyncService : Service() {
         instance = this
         prefs = getSharedPreferences("sync_state", Context.MODE_PRIVATE)
 
-        // Khôi phục tiến trình đã lưu (nếu có)
         lastProgress = prefs.getInt("last_progress", 0)
         lastMessage = prefs.getString("last_message", "Đang khởi động...") ?: "Đang khởi động..."
         updateNotification(lastMessage)
@@ -69,7 +62,6 @@ class SyncService : Service() {
         val walletId = intent.getStringExtra("wallet_id") ?: "default_wallet"
         currentWalletId = walletId
 
-        // Nếu kit đã chạy, chỉ cập nhật callback
         if (kit != null && kit?.isRunning == true && kit?.wallet() != null) {
             setProgressCallback(progressCallback)
             return START_STICKY
@@ -119,15 +111,7 @@ class SyncService : Service() {
         prefs.edit().putInt("last_progress", progress).putString("last_message", message).apply()
     }
 
-    /**
-     * Khởi tạo WalletAppKit và bắt đầu đồng bộ SPV.
-     */
     private fun startBitcoinSync(walletId: String, seedPhrase: String) {
-        synchronized(this) {
-            if (syncing) return
-            syncing = true
-            isSynced = false
-        }
         Thread {
             try {
                 val params = MainNetParams.get()
@@ -136,19 +120,14 @@ class SyncService : Service() {
                 val dir = File(filesDir, "spv_wallets")
                 if (!dir.exists()) dir.mkdirs()
 
+                // Không tạo file wallet thủ công, để WalletAppKit tự quản lý
+                // Chỉ tạo nếu lần đầu và có seed
                 val walletFile = File(dir, "$walletId.wallet")
-
-                // Nếu chưa có file wallet, tạo mới từ seed
                 if (!walletFile.exists() && seedPhrase.isNotEmpty()) {
                     val words = seedPhrase.trim().lowercase().split(" ")
                     if (words.size == 12 || words.size == 24) {
                         val seed = DeterministicSeed(words, null, "", 0L)
                         val wallet = Wallet.fromSeed(params, seed, Script.ScriptType.P2WPKH)
-                        wallet.saveToFile(walletFile)
-                    } else {
-                        // Nếu seed không hợp lệ, tạo wallet ngẫu nhiên (chỉ cho test)
-                        val randomSeed = DeterministicSeed(SecureRandom(), 128, "")
-                        val wallet = Wallet.fromSeed(params, randomSeed, Script.ScriptType.P2WPKH)
                         wallet.saveToFile(walletFile)
                     }
                 }
@@ -159,7 +138,6 @@ class SyncService : Service() {
                     kit?.awaitTerminated()
                 } catch (_: Exception) {}
 
-                // Tạo kit mới
                 val newKit = WalletAppKit(params, dir, walletId).apply {
                     setBlockingStartup(false)
                     setDownloadListener(object : DownloadProgressTracker() {
@@ -181,7 +159,6 @@ class SyncService : Service() {
                         }
                     })
                     startAsync()
-                    // Không gọi awaitRunning() để tránh block UI
                 }
                 kit = newKit
                 progressCallback?.invoke(lastProgress, lastMessage)
@@ -191,15 +168,10 @@ class SyncService : Service() {
                 updateNotification(lastMessage)
                 progressCallback?.invoke(lastProgress, lastMessage)
                 kit = null
-            } finally {
-                synchronized(this) { syncing = false }
             }
         }.start()
     }
 
-    /**
-     * Gửi lại tiến trình hiện tại cho UI (dùng khi refresh)
-     */
     fun refreshProgress() {
         progressCallback?.invoke(lastProgress, lastMessage)
     }
