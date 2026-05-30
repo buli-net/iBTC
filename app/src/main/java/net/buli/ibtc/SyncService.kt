@@ -43,7 +43,6 @@ class SyncService : Service() {
         instance = this
         prefs = getSharedPreferences("sync_state", Context.MODE_PRIVATE)
 
-        // Đọc tiến trình đã lưu (fallback)
         lastProgress = prefs.getInt("last_progress", 0)
         lastMessage = prefs.getString("last_message", "Đang khởi động...") ?: "Đang khởi động..."
         updateNotification(lastMessage)
@@ -63,21 +62,9 @@ class SyncService : Service() {
         val walletId = intent.getStringExtra("wallet_id") ?: "default_wallet"
         currentWalletId = walletId
 
-        // Nếu kit đã chạy và đúng walletId -> chỉ cập nhật callback và lấy tiến trình thực tế
         if (kit != null && kit?.isRunning == true && kit?.wallet() != null) {
             setProgressCallback(progressCallback)
-            // Lấy tiến trình thực tế từ peerGroup (nếu có)
-            val peerGroup = kit?.peerGroup()
-            if (peerGroup != null) {
-                val realProgress = peerGroup.downloadPct.toInt()
-                if (realProgress in 0..100 && realProgress != lastProgress) {
-                    lastProgress = realProgress
-                    lastMessage = if (realProgress < 100) "Đồng bộ blockchain: $realProgress%" else "Đã đồng bộ blockchain (xử lý...)"
-                    saveProgress(lastProgress, lastMessage)
-                    progressCallback?.invoke(lastProgress, lastMessage)
-                    updateNotification(lastMessage)
-                }
-            }
+            refreshProgress()
             return START_STICKY
         }
         startBitcoinSync(walletId, seedPhrase)
@@ -136,7 +123,6 @@ class SyncService : Service() {
 
                 val walletFile = File(dir, "$walletId.wallet")
 
-                // Tạo wallet nếu chưa có
                 if (!walletFile.exists() && seedPhrase.isNotEmpty()) {
                     val words = seedPhrase.trim().lowercase().split(" ")
                     if (words.size == 12 || words.size == 24) {
@@ -150,13 +136,11 @@ class SyncService : Service() {
                     }
                 }
 
-                // Dừng kit cũ nếu có
                 try {
                     kit?.stopAsync()
                     kit?.awaitTerminated()
                 } catch (_: Exception) {}
 
-                // Tạo kit mới
                 val newKit = WalletAppKit(params, dir, walletId).apply {
                     setBlockingStartup(false)
                     setDownloadListener(object : DownloadProgressTracker() {
@@ -180,8 +164,6 @@ class SyncService : Service() {
                     startAsync()
                 }
                 kit = newKit
-
-                // Gửi lại tiến trình đã lưu ngay sau khi start
                 progressCallback?.invoke(lastProgress, lastMessage)
 
             } catch (e: Exception) {
@@ -193,9 +175,22 @@ class SyncService : Service() {
         }.start()
     }
 
+    fun refreshProgress() {
+        val peerGroup = kit?.peerGroup()
+        if (peerGroup != null) {
+            val realProgress = peerGroup.downloadPct.toInt()
+            if (realProgress in 0..100 && realProgress != lastProgress) {
+                lastProgress = realProgress
+                lastMessage = if (realProgress < 100) "Đồng bộ blockchain: $realProgress%" else "Đã đồng bộ blockchain (xử lý...)"
+                saveProgress(lastProgress, lastMessage)
+                progressCallback?.invoke(lastProgress, lastMessage)
+                updateNotification(lastMessage)
+            }
+        }
+    }
+
     fun setProgressCallback(callback: ((Int, String) -> Unit)?) {
         progressCallback = callback
-        // Gửi trạng thái hiện tại ngay lập tức
         callback?.invoke(lastProgress, lastMessage)
     }
 
@@ -207,7 +202,6 @@ class SyncService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         instance = null
-        // Không stopAsync để giữ trạng thái cho lần sau
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
