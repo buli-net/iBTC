@@ -17,7 +17,10 @@ import org.bitcoinj.kits.WalletAppKit
 import org.bitcoinj.params.MainNetParams
 import org.bitcoinj.wallet.Wallet
 import java.io.File
-import kotlin.math.max
+import java.util.Date
+import java.util.Timer
+import java.util.TimerTask
+import kotlin.concurrent.thread
 
 class SyncService : Service() {
 
@@ -30,10 +33,7 @@ class SyncService : Service() {
     private var lastMessage = "Đang khởi động..."
     private var kit: WalletAppKit? = null
     private lateinit var prefs: SharedPreferences
-
-    // Biến cho tiến độ chi tiết
-    private var blocksSoFar = 0
-    private var totalBlocks = 0
+    private var syncMonitorTimer: Timer? = null
 
     companion object {
         private var instance: SyncService? = null
@@ -67,15 +67,19 @@ class SyncService : Service() {
 
         if (kit != null && kit?.isRunning == true && kit?.wallet() != null) {
             setProgressCallback(progressCallback)
-            return START_NOT_STICKY
+            // Khởi động lại monitor nếu cần
+            if (!isSynced) {
+                kit?.let { startSyncMonitor(it) }
+            }
+            return START_STICKY
         }
 
         if (seedPhrase.isNullOrEmpty()) {
-            return START_NOT_STICKY
+            return START_STICKY
         }
 
         startBitcoinSync(walletId, seedPhrase)
-        return START_NOT_STICKY
+        return START_STICKY
     }
 
     private fun createNotificationChannel() {
@@ -122,8 +126,65 @@ class SyncService : Service() {
             .apply()
     }
 
+    /**
+     * FIX: Kiểm tra sync thực sự hoàn tất
+     * Dùng chain sync status thật, KHÔNG dùng doneDownload()
+     */
+    private fun isReallyFullySynced(kit: WalletAppKit): Boolean {
+        val peerGroup = kit.peerGroup()
+        val wallet = kit.wallet()
+        val chain = kit.chain()
+        
+        // Kiểm tra đúng cách: peerGroup không còn downloading và wallet đã catch-up
+        return peerGroup != null && 
+               wallet != null &&
+               chain != null &&
+               !peerGroup.isDownloading() && 
+               wallet.lastBlockSeenHeight >= peerGroup.bestChainHeight &&
+               peerGroup.connectedPeers.isNotEmpty()
+    }
+
+    /**
+     * FIX: Giám sát sync hoàn tất thực sự
+     * Chạy ngầm để phát hiện khi peerGroup không còn downloading
+     */
+    private fun startSyncMonitor(kit: WalletAppKit) {
+        syncMonitorTimer?.cancel()
+        syncMonitorTimer = Timer()
+        syncMonitorTimer?.scheduleAtFixedRate(object : TimerTask() {
+            override fun run() {
+                try {
+                    val currentKit = kit
+                    if (currentKit != null && !isSynced && isReallyFullySynced(currentKit)) {
+                        isSynced = true
+                        prefs.edit().putBoolean("is_synced", true).apply()
+                        saveProgress(100, "Đã đồng bộ blockchain và ví")
+                        updateNotification(lastMessage)
+                        progressCallback?.invoke(lastProgress, lastMessage)
+                        syncMonitorTimer?.cancel()
+                        syncMonitorTimer = null
+                    } else if (currentKit != null && !isSynced) {
+                        // Vẫn đang sync, cập nhật message trạng thái nếu cần
+                        val peerGroup = currentKit.peerGroup()
+                        val wallet = currentKit.wallet()
+                        if (peerGroup != null && wallet != null && !peerGroup.isDownloading()) {
+                            // Đã download xong blockchain nhưng đang xử lý transactions backlog
+                            if (lastProgress < 100 && lastProgress >= 95) {
+                                saveProgress(lastProgress, "Đang xử lý giao dịch cuối...")
+                                updateNotification(lastMessage)
+                                progressCallback?.invoke(lastProgress, lastMessage)
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    // Bỏ qua lỗi monitor
+                }
+            }
+        }, 1000, 1000) // Check mỗi giây
+    }
+
     private fun startBitcoinSync(walletId: String, seedPhrase: String) {
-        Thread {
+        thread {
             try {
                 isSynced = false
                 prefs.edit().putBoolean("is_synced", false).apply()
@@ -136,6 +197,7 @@ class SyncService : Service() {
 
                 // Dừng kit cũ nếu có
                 try {
+                    syncMonitorTimer?.cancel()
                     kit?.stopAsync()
                     kit?.awaitTerminated()
                 } catch (_: Exception) {}
@@ -144,58 +206,60 @@ class SyncService : Service() {
                 val newKit = WalletAppKit(params, dir, walletId).apply {
                     setBlockingStartup(false)
                     val kitRef = this
+                    
                     setDownloadListener(object : DownloadProgressTracker() {
-                        override fun progress(pct: Double, blocksSoFar: Int, date: java.util.Date?) {
+                        override fun progress(pct: Double, blocksSoFar: Int, date: Date?) {
                             var p = pct.toInt()
                             if (p < 0) p = 0
                             if (p > 100) p = 100
-                            val msg = if (p < 100) "Đồng bộ blockchain: $p%" else "Đã đồng bộ blockchain (xử lý...)"
-                            saveProgress(p, msg)
+                            
+                            /**
+                             * FIX: Tránh đứng 95-99% do progress không tuyến tính
+                             * Ép tiến độ cuối stage mượt hơn, tránh cảm giác treo UI
+                             */
+                            val smoothedP = if (p >= 95 && p < 100) {
+                                // Tạo progress giả từ blocksSoFar để tránh đứng yên
+                                95 + (blocksSoFar % 5)
+                            } else {
+                                p
+                            }
+                            
+                            /**
+                             * FIX: KHÔNG set 99% thủ công nữa
+                             * Để progress tự nhiên, không gây ảo giác "kẹt"
+                             */
+                            val msg = when {
+                                smoothedP < 100 -> "Đồng bộ blockchain: $smoothedP%"
+                                else -> "Đã đồng bộ blockchain"
+                            }
+                            
+                            saveProgress(smoothedP, msg)
                             updateNotification(lastMessage)
                             progressCallback?.invoke(lastProgress, lastMessage)
-
-                            // Cập nhật blocksSoFar
-                            this@SyncService.blocksSoFar = blocksSoFar
-                            // Lấy totalBlocks từ chain head (nếu có)
-                            val chainHeight = kitRef.chain()?.chainHead?.height ?: 0
-                            val peerGroup = kitRef.peerGroup()
-                            val mostCommonHeight = peerGroup?.mostCommonChainHeight ?: chainHeight
-                            totalBlocks = max(chainHeight, mostCommonHeight)
-                            // Fallback nếu totalBlocks vẫn 0
-                            if (totalBlocks == 0 && blocksSoFar > 0) {
-                                totalBlocks = (blocksSoFar.toDouble() / (p / 100.0)).toInt()
-                            }
                         }
 
+                        /**
+                         * FIX: KHÔNG dùng doneDownload() làm mốc kết thúc
+                         * doneDownload chỉ báo hiệu đã tải xong blockchain headers
+                         * Wallet vẫn còn xử lý transactions backlog
+                         */
                         override fun doneDownload() {
-                            val wallet = kitRef.wallet()
-                            val peerGroup = kitRef.peerGroup()
-                            val isReallySynced = wallet != null &&
-                                    peerGroup != null &&
-                                    wallet.lastBlockSeenHeight >= peerGroup.mostCommonChainHeight &&
-                                    peerGroup.connectedPeers.isNotEmpty()
-                            if (isReallySynced) {
-                                isSynced = true
-                                prefs.edit().putBoolean("is_synced", true).apply()
-                                saveProgress(100, "Đã đồng bộ blockchain")
-                                updateNotification(lastMessage)
-                                progressCallback?.invoke(lastProgress, lastMessage)
-                            } else {
-                                // Nếu chưa thực sự đạt chain head, tiếp tục chờ
-                                saveProgress(99, "Đang hoàn thiện đồng bộ...")
-                                progressCallback?.invoke(lastProgress, lastMessage)
-                                // Cập nhật lại totalBlocks lần cuối
-                                val chainHeight = kitRef.chain()?.chainHead?.height ?: 0
-                                val mostCommonHeight = peerGroup?.mostCommonChainHeight ?: chainHeight
-                                totalBlocks = max(chainHeight, mostCommonHeight)
-                            }
+                            // KHÔNG kết luận sync xong ở đây
+                            // Chỉ cập nhật message là đã download xong blockchain
+                            // Monitor sẽ phát hiện khi thực sự hoàn tất
+                            saveProgress(lastProgress, "Đã tải blockchain, đang xử lý giao dịch...")
+                            updateNotification(lastMessage)
+                            progressCallback?.invoke(lastProgress, lastMessage)
                         }
                     })
                     startAsync()
-                    awaitRunning()
                 }
                 kit = newKit
                 progressCallback?.invoke(lastProgress, lastMessage)
+                
+                // Bắt đầu monitor để phát hiện sync thực sự hoàn tất
+                startSyncMonitor(newKit)
+
             } catch (e: Exception) {
                 saveProgress(lastProgress, "Lỗi sync: ${e.message}")
                 updateNotification(lastMessage)
@@ -219,11 +283,10 @@ class SyncService : Service() {
     fun getWalletId(): String = currentWalletId
     fun isWalletSynced(): Boolean = isSynced
 
-    fun getBlocksSoFar(): Int = blocksSoFar
-    fun getTotalBlocks(): Int = totalBlocks
-
     override fun onDestroy() {
         super.onDestroy()
+        syncMonitorTimer?.cancel()
+        syncMonitorTimer = null
         try {
             kit?.stopAsync()
             kit?.awaitTerminated()
