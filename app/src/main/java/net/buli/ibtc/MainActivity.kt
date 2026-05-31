@@ -16,6 +16,7 @@ import android.os.Handler
 import android.os.Looper
 import android.text.InputType
 import android.text.method.PasswordTransformationMethod
+import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -154,7 +155,7 @@ class MainActivity : AppCompatActivity() {
         return calendar.timeInMillis
     }
 
-    // ============= API FALLBACK (cải tiến với nhiều nguồn) =============
+    // ============= API FALLBACK (cải tiến lịch sử giao dịch) =============
     private fun fetchBalanceFromApi(address: String): Double? {
         if (address.isEmpty()) return null
         // Thử blockchain.info trước
@@ -174,6 +175,7 @@ class MainActivity : AppCompatActivity() {
                 val balanceSat = funded - spent
                 return balanceSat / 1e8
             } catch (e2: Exception) {
+                Log.e("iBTC", "fetchBalanceFromApi: both APIs failed", e2)
                 return null
             }
         }
@@ -181,7 +183,56 @@ class MainActivity : AppCompatActivity() {
 
     private fun fetchTransactionsFromApi(address: String): List<TransactionInfo>? {
         if (address.isEmpty()) return null
-        // Thử blockchain.info trước
+        
+        // 1. Thử mempool.space (lấy toàn bộ lịch sử qua /txs/chain)
+        try {
+            val url = URL("https://mempool.space/api/address/$address/txs/chain")
+            val json = url.readText()
+            val txsArray = JSONArray(json)
+            val list = mutableListOf<TransactionInfo>()
+            for (i in 0 until txsArray.length()) {
+                val tx = txsArray.getJSONObject(i)
+                val hash = tx.getString("txid")
+                val time = tx.getLong("received") * 1000
+                var amount = 0.0
+                val vout = tx.getJSONArray("vout")
+                var isReceive = false
+                for (j in 0 until vout.length()) {
+                    val out = vout.getJSONObject(j)
+                    val scriptpubkey = out.getJSONObject("scriptpubkey")
+                    val outAddr = scriptpubkey.optString("address")
+                    if (outAddr == address) {
+                        amount += out.getLong("value") / 1e8
+                        isReceive = true
+                    }
+                }
+                if (!isReceive) {
+                    val vin = tx.getJSONArray("vin")
+                    for (j in 0 until vin.length()) {
+                        val inp = vin.getJSONObject(j)
+                        val prevout = inp.optJSONObject("prevout")
+                        if (prevout != null) {
+                            val scriptpubkey = prevout.getJSONObject("scriptpubkey")
+                            val inpAddr = scriptpubkey.optString("address")
+                            if (inpAddr == address) {
+                                amount -= prevout.getLong("value") / 1e8
+                            }
+                        }
+                    }
+                }
+                val type = if (amount > 0) "RECEIVE" else "SEND"
+                if (kotlin.math.abs(amount) > 0) { // bỏ qua giao dịch 0 BTC
+                    list.add(TransactionInfo(hash, kotlin.math.abs(amount), type, Date(time)))
+                }
+            }
+            if (list.isNotEmpty()) {
+                return list.sortedByDescending { it.time }
+            }
+        } catch (e: Exception) {
+            Log.e("iBTC", "mempool.space txs failed", e)
+        }
+
+        // 2. Fallback sang blockchain.info
         try {
             val url = URL("https://blockchain.info/rawaddr/$address")
             val json = url.readText()
@@ -215,54 +266,19 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
                 val type = if (amount > 0) "RECEIVE" else "SEND"
-                list.add(TransactionInfo(hash, kotlin.math.abs(amount), type, Date(time)))
-            }
-            return list.sortedByDescending { it.time }
-        } catch (e: Exception) {
-            // Thử mempool.space
-            try {
-                val url = URL("https://mempool.space/api/address/$address/txs")
-                val json = url.readText()
-                val txsArray = JSONArray(json)
-                val list = mutableListOf<TransactionInfo>()
-                for (i in 0 until txsArray.length()) {
-                    val tx = txsArray.getJSONObject(i)
-                    val hash = tx.getString("txid")
-                    val time = tx.getLong("received") * 1000
-                    var amount = 0.0
-                    val vout = tx.getJSONArray("vout")
-                    var isReceive = false
-                    for (j in 0 until vout.length()) {
-                        val out = vout.getJSONObject(j)
-                        val scriptpubkey = out.getJSONObject("scriptpubkey")
-                        val outAddr = scriptpubkey.optString("address")
-                        if (outAddr == address) {
-                            amount += out.getLong("value") / 1e8
-                            isReceive = true
-                        }
-                    }
-                    if (!isReceive) {
-                        val vin = tx.getJSONArray("vin")
-                        for (j in 0 until vin.length()) {
-                            val inp = vin.getJSONObject(j)
-                            val prevout = inp.optJSONObject("prevout")
-                            if (prevout != null) {
-                                val scriptpubkey = prevout.getJSONObject("scriptpubkey")
-                                val inpAddr = scriptpubkey.optString("address")
-                                if (inpAddr == address) {
-                                    amount -= prevout.getLong("value") / 1e8
-                                }
-                            }
-                        }
-                    }
-                    val type = if (amount > 0) "RECEIVE" else "SEND"
+                if (kotlin.math.abs(amount) > 0) {
                     list.add(TransactionInfo(hash, kotlin.math.abs(amount), type, Date(time)))
                 }
-                return list.sortedByDescending { it.time }
-            } catch (e2: Exception) {
-                return null
             }
+            if (list.isNotEmpty()) {
+                return list.sortedByDescending { it.time }
+            }
+        } catch (e: Exception) {
+            Log.e("iBTC", "blockchain.info txs failed", e)
         }
+
+        // 3. Fallback cuối: trả về null (không có dữ liệu)
+        return null
     }
 
     private fun fetchPriceFromApi(): Double? {
@@ -289,7 +305,6 @@ class MainActivity : AppCompatActivity() {
                     spvStatusText.text = if (address.isEmpty()) "SPV: Chưa có địa chỉ (đang chờ khởi tạo)..." else "SPV: Đang đồng bộ (hiển thị tạm từ API)..."
                 }
             }
-            // Nếu không có địa chỉ, không thể gọi API
             if (address.isEmpty()) {
                 runOnUiThread {
                     if (viewsReady) {
@@ -380,6 +395,7 @@ class MainActivity : AppCompatActivity() {
                             currentPrice, priceArrow, priceChangePercent, priceChange
                         )
 
+                        // Hiển thị lịch sử giao dịch
                         if (txsApi != null && txsApi.isNotEmpty()) {
                             val adapter = object : ArrayAdapter<String>(this@MainActivity, android.R.layout.simple_list_item_2, android.R.id.text1, txsApi.map { "" }) {
                                 override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
@@ -399,10 +415,12 @@ class MainActivity : AppCompatActivity() {
                             }
                             txListView.adapter = adapter
                         } else {
-                            txListView.adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_list_item_1, listOf("Không thể tải lịch sử giao dịch"))
+                            // Nếu không có giao dịch, hiển thị thông báo thân thiện
+                            txListView.adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_list_item_1, listOf("Chưa có giao dịch nào"))
                         }
                     }
                 } catch (e: Exception) {
+                    Log.e("iBTC", "API fallback error", e)
                     runOnUiThread {
                         if (viewsReady) {
                             balanceText.text = "--- BTC"
