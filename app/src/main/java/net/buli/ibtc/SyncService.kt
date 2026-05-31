@@ -35,9 +35,10 @@ class SyncService : Service() {
     @Volatile private var isEngineRunning = false
     private var engineThread: Thread? = null
 
-    // Freeze detection (thread-safe)
-    @Volatile private var lastStableHeight = 0
-    @Volatile private var lastStableTime = 0L
+    // 2-layer freeze detection
+    @Volatile private var lastPeerHeight = 0
+    @Volatile private var lastWalletHeight = 0
+    @Volatile private var lastActivityTime = 0L
 
     // Recovery cooldown
     @Volatile private var lastRecoveryTime = 0L
@@ -46,8 +47,9 @@ class SyncService : Service() {
     // Peer discovery deduplication
     private val discoverySet = mutableSetOf<String>()
 
-    // UI throttling
+    // UI throttling with buffer
     @Volatile private var lastUiUpdate = 0L
+    @Volatile private var lastSentPercent = -1
 
     companion object {
         private var instance: SyncService? = null
@@ -138,18 +140,28 @@ class SyncService : Service() {
         updateNotification(message)
     }
 
-    // =============== FREEZE DETECTION (THREAD-SAFE) ===============
-    private fun isFrozen(height: Int): Boolean {
-        val now = System.currentTimeMillis()
-        if (height > lastStableHeight) {
-            lastStableHeight = height
-            lastStableTime = now
-            return false
-        }
-        return (now - lastStableTime) > 60000
+    // =============== CHAIN HEIGHT: ưu tiên peerGroup consensus ===============
+    private fun getBestChainHeight(kitRef: WalletAppKit): Int {
+        return kitRef.peerGroup()?.mostCommonChainHeight
+            ?: kitRef.chain()?.chainHead?.height
+            ?: 0
     }
 
-    // =============== PEER ROTATION (NO RESTART, NO DUPLICATE) ===============
+    // =============== 2-LAYER FREEZE DETECTION ===============
+    private fun isFrozen(peerHeight: Int, walletHeight: Int): Boolean {
+        val now = System.currentTimeMillis()
+        // Có hoạt động nếu peer height hoặc wallet height tăng
+        if (peerHeight > lastPeerHeight || walletHeight > lastWalletHeight) {
+            lastPeerHeight = peerHeight
+            lastWalletHeight = walletHeight
+            lastActivityTime = now
+            return false
+        }
+        // Nếu không có thay đổi trong 60 giây → frozen
+        return (now - lastActivityTime) > 60000
+    }
+
+    // =============== PEER ROTATION: không restart, chỉ thêm discovery + ping dead peers ===============
     private fun rotatePeers(kitRef: WalletAppKit) {
         try {
             val peerGroup = kitRef.peerGroup() ?: return
@@ -162,12 +174,22 @@ class SyncService : Service() {
                     saveProgress(lastProgress, "Added peer discovery (safe mode)")
                 }
             }
+            // Dọn dẹp peer chết: ping tất cả peer, nếu lỗi thì peerGroup tự loại bỏ
+            try {
+                peerGroup.peers.forEach { peer ->
+                    try {
+                        peer.ping().get()
+                    } catch (_: Exception) {
+                        // peer không phản hồi, peerGroup sẽ tự động xóa
+                    }
+                }
+            } catch (_: Exception) {}
         } catch (e: Exception) {
             saveProgress(lastProgress, "Peer rotate error: ${e.message}")
         }
     }
 
-    // =============== SMART RECOVERY (WITH CONCURRENCY LOCK) ===============
+    // =============== SMART RECOVERY (chỉ khi thực sự cần) ===============
     private fun smartRecovery(kitRef: WalletAppKit) {
         val now = System.currentTimeMillis()
         if (now - lastRecoveryTime < 60000) return
@@ -177,8 +199,9 @@ class SyncService : Service() {
             val peerGroup = kitRef.peerGroup() ?: return
             val wallet = kitRef.wallet() ?: return
             val peers = peerGroup.connectedPeers.size
+            val peerHeight = getBestChainHeight(kitRef)
             val walletHeight = wallet.lastBlockSeenHeight
-            val frozen = isFrozen(walletHeight)
+            val frozen = isFrozen(peerHeight, walletHeight)
 
             if (peers == 0 || frozen) {
                 lastRecoveryTime = now
@@ -195,7 +218,7 @@ class SyncService : Service() {
         }
     }
 
-    // =============== PROGRESS CALCULATION (NO 95-99 FAKE) ===============
+    // =============== PROGRESS CALCULATION (KHÔNG 95-99 ẢO) ===============
     private fun calculateProgress(walletHeight: Int, chainHeight: Int): Int {
         if (chainHeight <= 0) return 0
         if (walletHeight >= chainHeight - 1) return 100
@@ -204,15 +227,17 @@ class SyncService : Service() {
         return if (raw > 94) 94 else raw.toInt()
     }
 
-    // =============== UI THROTTLE ===============
-    private fun shouldUpdateUi(): Boolean {
+    // =============== UI THROTTLE + BUFFER ===============
+    private fun shouldUpdateUi(percent: Int): Boolean {
         val now = System.currentTimeMillis()
         if (now - lastUiUpdate < 2500) return false
+        if (percent == lastSentPercent) return false
         lastUiUpdate = now
+        lastSentPercent = percent
         return true
     }
 
-    // =============== ENGINE LOOP (ADAPTIVE SLEEP + THROTTLED UI) ===============
+    // =============== ENGINE LOOP (ADAPTIVE SLEEP + CHAIN HEIGHT ỔN ĐỊNH) ===============
     private fun startEngine(kitRef: WalletAppKit) {
         if (isEngineRunning) return
         isEngineRunning = true
@@ -226,14 +251,15 @@ class SyncService : Service() {
                     }
                     val peerGroup = kitRef.peerGroup()
                     val walletHeight = wallet.lastBlockSeenHeight
-                    val chainHeight = kitRef.chain()?.chainHead?.height ?: 0
+                    val chainHeight = getBestChainHeight(kitRef)
+                    val peerHeight = peerGroup?.mostCommonChainHeight ?: 0
 
-                    // Freeze detection & recovery
-                    if (isFrozen(walletHeight)) {
+                    // Freeze detection (2-layer)
+                    if (isFrozen(peerHeight, walletHeight)) {
                         smartRecovery(kitRef)
                     }
 
-                    // Peer health (only add if needed)
+                    // Peer health (chỉ add nếu cần, không restart)
                     if ((peerGroup?.connectedPeers?.size ?: 0) < 2) {
                         rotatePeers(kitRef)
                     }
@@ -258,12 +284,12 @@ class SyncService : Service() {
                         else -> "Đồng bộ blockchain: $percent%"
                     }
 
-                    // Update UI only when needed (throttle)
-                    if (shouldUpdateUi()) {
+                    // Update UI only when needed (throttle + buffer)
+                    if (shouldUpdateUi(percent)) {
                         saveProgress(percent, statusText)
                     }
 
-                    // Adaptive sleep
+                    // Adaptive sleep: tiết kiệm pin
                     val peerCount = peerGroup?.connectedPeers?.size ?: 0
                     val sleepTime = when {
                         peerCount == 0 -> 2000L
@@ -273,7 +299,8 @@ class SyncService : Service() {
                     Thread.sleep(sleepTime)
 
                 } catch (e: Exception) {
-                    saveProgress(lastProgress, "Engine error: ${e.message}")
+                    // Log lỗi nhưng không spam UI
+                    e.printStackTrace()
                     Thread.sleep(5000)
                 }
             }
@@ -310,8 +337,15 @@ class SyncService : Service() {
                 }
                 kit = newKit
 
-                // Khởi tạo discovery set (dns flag)
+                // Reset các state cho engine mới
                 discoverySet.clear()
+                lastPeerHeight = 0
+                lastWalletHeight = 0
+                lastActivityTime = System.currentTimeMillis()
+                lastRecoveryTime = 0L
+                lastUiUpdate = 0L
+                lastSentPercent = -1
+
                 startEngine(newKit)
 
                 saveProgress(lastProgress, lastMessage)
@@ -337,7 +371,7 @@ class SyncService : Service() {
     fun isWalletSynced(): Boolean = isSynced
 
     fun getBlocksSoFar(): Int = kit?.wallet()?.lastBlockSeenHeight ?: 0
-    fun getTotalBlocks(): Int = kit?.chain()?.chainHead?.height ?: 0
+    fun getTotalBlocks(): Int = getBestChainHeight(kit ?: return 0)
 
     override fun onDestroy() {
         super.onDestroy()
