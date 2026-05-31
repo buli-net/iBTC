@@ -286,7 +286,7 @@ class WalletManager(private val ctx: Context) {
         }
     }
 
-    // ====================== TẠO VÀ KÝ GIAO DỊCH OFFLINE (ĐÃ SỬA LỖI) ======================
+    // ====================== TẠO VÀ KÝ GIAO DỊCH OFFLINE (SỬA LỖI KIỂU + hashForSignatureWitness) ======================
     private fun createAndSignTransaction(
         toAddress: String,
         amountSat: Long,
@@ -301,29 +301,28 @@ class WalletManager(private val ctx: Context) {
             var totalInput = 0L
             for (utxo in utxos) {
                 totalInput += utxo.value.value
-                // Tạo outPoint từ UTXO
                 val outPoint = TransactionOutPoint(params, utxo.index, utxo.hash)
-                // Script mặc định (sẽ được ký sau)
                 val scriptPubKey = ScriptBuilder.createOutputScript(Address.fromString(params, getAddress()))
                 val input = TransactionInput(params, tx, scriptPubKey.program, outPoint)
                 tx.addInput(input)
             }
 
-            // Tính phí ước lượng (đơn giản)
-            val estimatedSize = tx.unsafeBitcoinSerialize().size + utxos.size * 107
+            // Sửa lỗi kiểu: ép sang Long
+            val estimatedSize = tx.unsafeBitcoinSerialize().size.toLong() + utxos.size * 107L
             val fee = (estimatedSize / 1000.0 * feeRateSatVb).toLong().coerceAtLeast(1000)
             val change = totalInput - amountSat - fee
             if (change > DUST_THRESHOLD) {
                 tx.addOutput(Coin.valueOf(change), Address.fromString(params, getAddress()))
             }
 
-            // Ký từng input
             val seedPhrase = cachedSeed ?: return null
             val key = getPrivateKeyForAddress(seedPhrase, 0)
+
             for (i in 0 until tx.inputs.size) {
                 val input = tx.inputs[i]
                 val redeemScript = ScriptBuilder.createOutputScript(Address.fromString(params, getAddress()))
-                val sighash = tx.hashForSignatureWitness(i, redeemScript, Transaction.SigHash.ALL, false)
+                // Sửa lỗi hashForSignatureWitness: truyền scriptPubKey dạng byte array
+                val sighash = tx.hashForSignatureWitness(i, redeemScript.program, Transaction.SigHash.ALL, false)
                 val sig = key.sign(sighash)
                 val sigWithHashType = TransactionSignature(sig, Transaction.SigHash.ALL, false).encodeToBitcoin()
                 val witness = TransactionWitness(2)
@@ -373,7 +372,6 @@ class WalletManager(private val ctx: Context) {
         }
     }
 
-    // ====================== GỬI BTC LINH HOẠT ======================
     fun send(to: String, amountBTC: Double, feeRateSatVb: Int): String {
         if (feeRateSatVb < 1 || feeRateSatVb > 500) {
             throw Exception("Fee rate không hợp lệ (1-500 sat/vB)")
@@ -384,7 +382,6 @@ class WalletManager(private val ctx: Context) {
             throw Exception("Số tiền quá nhỏ (dưới 546 satoshi)")
         }
 
-        // Nếu SPV đã đồng bộ, dùng cách cũ
         if (isWalletSynced()) {
             val wallet = getWallet() ?: throw Exception("Wallet chưa sẵn sàng")
             val peerGroup = getPeerGroup() ?: throw Exception("PeerGroup null, chưa kết nối mạng")
@@ -422,7 +419,6 @@ class WalletManager(private val ctx: Context) {
             return req.tx.getHashAsString()
         }
 
-        // SPV chưa đồng bộ: dùng API
         val address = getAddress()
         if (address.isEmpty()) throw Exception("Địa chỉ ví không hợp lệ")
 
