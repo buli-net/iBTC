@@ -144,7 +144,7 @@ class SyncService : Service() {
                 val dir = File(filesDir, "spv_wallets")
                 if (!dir.exists()) dir.mkdirs()
 
-                // ✅ KHÔNG tạo wallet thủ công - để WalletAppKit tự quản lý
+                // KHÔNG tạo wallet thủ công - để WalletAppKit tự quản lý
 
                 try {
                     kit?.stopAsync()
@@ -167,7 +167,6 @@ class SyncService : Service() {
                         }
 
                         override fun doneDownload() {
-                            // ✅ isSynced chỉ true khi có peer kết nối
                             val wallet = kit?.wallet()
                             val peerGroup = kit?.peerGroup()
                             val reallySynced = wallet != null && 
@@ -181,7 +180,7 @@ class SyncService : Service() {
                         }
                     })
                     startAsync()
-                    awaitRunning()  // ✅ Đợi kit khởi động xong
+                    awaitRunning()
                 }
                 kit = newKit
                 progressCallback?.invoke(lastProgress, lastMessage)
