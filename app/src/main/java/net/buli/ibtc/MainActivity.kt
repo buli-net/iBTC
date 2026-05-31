@@ -674,16 +674,20 @@ class MainActivity : AppCompatActivity() {
 
     private fun dpToPx(dp: Int): Int = (dp * resources.displayMetrics.density).toInt()
 
+    // ================= SỬA LỖI MICRO PROGRESS =================
     private fun updateMicroProgress() {
         val syncService = SyncService.getInstance() ?: return
         val blocksSoFar = syncService.getBlocksSoFar()
         val totalBlocks = syncService.getTotalBlocks()
         if (totalBlocks <= 0) return
 
+        // Macro percent
         val macroPercent = (blocksSoFar.toDouble() / totalBlocks * 100).toInt().coerceIn(0, 100)
-        val blockPerPercent = totalBlocks.toDouble() / 100.0
-        val currentBlockInPercent = (blocksSoFar % blockPerPercent).toInt()
-        val microPercent = (currentBlockInPercent / blockPerPercent * 100).toInt().coerceIn(0, 100)
+
+        // Micro percent: phần dư của blocksSoFar so với 1% của totalBlocks
+        val onePercentBlocks = totalBlocks.toDouble() / 100.0
+        val remaining = blocksSoFar % onePercentBlocks
+        val microPercent = (remaining / onePercentBlocks * 100).toInt().coerceIn(0, 100)
 
         spvProgressBar.progress = macroPercent
         spvProgressBar.progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(macroPercent))
@@ -1034,6 +1038,7 @@ class MainActivity : AppCompatActivity() {
             fetchBtcStats()
             SyncService.getInstance()?.refreshProgress()
             fetchSparkline()
+            updateMicroProgress()
             toast("Đang làm mới...")
         }
         btnSettings.setOnClickListener { showSettings() }
