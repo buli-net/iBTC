@@ -70,6 +70,38 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // Hàm tính màu theo phần trăm (0% -> 100%: xanh -> vàng -> cam -> đỏ)
+    private fun getColorForProgress(progress: Int): Int {
+        val p = progress.coerceIn(0, 100)
+        val r: Float
+        val g: Float
+        val b: Float
+        when {
+            p <= 50 -> {
+                // Xanh (0,255,0) đến Vàng (255,255,0)
+                val factor = p / 50f
+                r = factor * 255f
+                g = 255f
+                b = 0f
+            }
+            p <= 75 -> {
+                // Vàng (255,255,0) đến Cam (255,165,0)
+                val factor = (p - 50) / 25f
+                r = 255f
+                g = 255f - factor * (255f - 165f)
+                b = 0f
+            }
+            else -> {
+                // Cam (255,165,0) đến Đỏ (255,0,0)
+                val factor = (p - 75) / 25f
+                r = 255f
+                g = 165f - factor * 165f
+                b = 0f
+            }
+        }
+        return Color.rgb(r.toInt(), g.toInt(), b.toInt())
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
@@ -103,6 +135,7 @@ class MainActivity : AppCompatActivity() {
                     if (viewsReady) {
                         spvStatusText.text = "SPV: $txt"
                         spvProgressBar.progress = pct
+                        spvProgressBar.progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(pct))
                         fetchAndUpdatePrice()
                     }
                 }
@@ -323,18 +356,19 @@ class MainActivity : AppCompatActivity() {
         Thread {
             try {
                 val json = URL("https://mempool.space/api/v1/blocks").openStream().bufferedReader().readText()
-                // Lấy block đầu tiên từ mảng JSON
                 val firstBlockJson = json.substringAfter("[").substringBefore(",")
                 val obj = JSONObject(firstBlockJson)
                 val height = obj.getInt("height")
                 val lastTime = obj.getLong("timestamp")
                 val nextHeight = height + 1
                 val elapsed = (System.currentTimeMillis() / 1000 - lastTime).coerceAtLeast(0)
-                val percent = ((elapsed * 100) / 600).toInt()
+                var percent = ((elapsed * 100) / 600).toInt()
+                if (percent > 100) percent = 100
                 val remain = 600 - elapsed
                 runOnUiThread {
                     if (viewsReady) {
-                        blockProgressBar.progress = percent.coerceAtMost(100)
+                        blockProgressBar.progress = percent
+                        blockProgressBar.progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(percent))
                         if (remain >= 0) {
                             val mins = remain / 60
                             val secs = remain % 60
@@ -352,6 +386,7 @@ class MainActivity : AppCompatActivity() {
                     if (viewsReady) {
                         blockText.text = "Lỗi pool - tự thử lại"
                         blockProgressBar.progress = 0
+                        blockProgressBar.progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(0))
                     }
                 }
             }
@@ -388,20 +423,75 @@ class MainActivity : AppCompatActivity() {
                 val hashEh = currentHash / 1e18
 
                 val blocksToday = height % 144
+                val minedPct = ((totalMined / 21000000.0) * 100).toInt()
+                val halvingPct = ((1 - blocksToHalving / 210000.0) * 100).toInt()
+                val rewardPct = ((reward / 50.0) * 100).toInt()
+                val mempoolPct = (mempoolCount / 300000.0 * 100).toInt().coerceAtMost(100)
+                val feePct = feeFast.coerceAtMost(100)
+                val todayPct = (blocksToday * 100 / 144)
+                val heightPct = height % 100
 
                 runOnUiThread {
                     if (viewsReady) {
-                        val minedPct = ((totalMined / 21000000.0) * 100).toInt()
-                        statBars["mined"]?.progress = minedPct
+                        // Cập nhật progress và màu cho từng stat bar
+                        statBars["mined"]?.apply {
+                            progress = minedPct
+                            progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(minedPct))
+                        }
                         statTexts["mined"]?.text = "Đã khai thác: ${String.format("%.2f", totalMined)} / 21M BTC ($minedPct%)"
+
+                        statBars["halving"]?.apply {
+                            progress = halvingPct
+                            progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(halvingPct))
+                        }
                         statTexts["halving"]?.text = "Halving #${halvings + 1}: còn $blocksToHalving blocks (~${blocksToHalving / 144} ngày)"
+
+                        statBars["reward"]?.apply {
+                            progress = rewardPct
+                            progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(rewardPct))
+                        }
                         statTexts["reward"]?.text = "Thưởng block: $reward BTC (ban đầu 50 BTC)"
+
+                        statBars["diff"]?.apply {
+                            progress = diffProgress.toInt()
+                            progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(diffProgress.toInt()))
+                        }
                         statTexts["diff"]?.text = "Difficulty adj: ${String.format("%.1f", diffProgress)}%"
+
+                        statBars["mempool"]?.apply {
+                            progress = mempoolPct
+                            progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(mempoolPct))
+                        }
                         statTexts["mempool"]?.text = "Mempool: $mempoolCount tx chờ"
+
+                        statBars["hash"]?.apply {
+                            progress = 70  // hashrate không có %, tạm đặt 70
+                            progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(70))
+                        }
                         statTexts["hash"]?.text = "Hashrate: ${String.format("%.0f", hashEh)} EH/s"
+
+                        statBars["fee"]?.apply {
+                            progress = feePct
+                            progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(feePct))
+                        }
                         statTexts["fee"]?.text = "Phí nhanh: $feeFast sat/vB"
+
+                        statBars["today"]?.apply {
+                            progress = todayPct
+                            progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(todayPct))
+                        }
                         statTexts["today"]?.text = "Block hôm nay: $blocksToday / 144"
+
+                        statBars["supply"]?.apply {
+                            progress = minedPct
+                            progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(minedPct))
+                        }
                         statTexts["supply"]?.text = "Cung lưu thông: ${String.format("%.2f", totalMined / 1000000)}M BTC"
+
+                        statBars["height"]?.apply {
+                            progress = heightPct
+                            progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(heightPct))
+                        }
                         statTexts["height"]?.text = "Block height: #$height"
                     }
                 }
@@ -724,9 +814,9 @@ class MainActivity : AppCompatActivity() {
         spvProgressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100
             progress = 0
-            progressTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#F7931A"))
             scaleY = 2f
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = 4; bottomMargin = 8 }
+            progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(0))
         }
         addressText = TextView(this).apply {
             textSize = 12f
@@ -746,6 +836,7 @@ class MainActivity : AppCompatActivity() {
             max = 100
             progress = 0
             scaleY = 0.7f
+            progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(0))
         }
 
         val btnRow1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; weightSum = 2f }
@@ -835,6 +926,7 @@ class MainActivity : AppCompatActivity() {
                 if (viewsReady) {
                     spvStatusText.text = "SPV: $txt"
                     spvProgressBar.progress = pct
+                    spvProgressBar.progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(pct))
                 }
             }
         }
@@ -843,6 +935,7 @@ class MainActivity : AppCompatActivity() {
                 if (viewsReady) {
                     spvStatusText.text = "SPV: $txt"
                     spvProgressBar.progress = pct
+                    spvProgressBar.progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(pct))
                     fetchAndUpdatePrice()
                 }
             }
@@ -856,7 +949,7 @@ class MainActivity : AppCompatActivity() {
         fetchAndUpdatePrice()
     }
 
-    // ===================== CÁC HÀM DIALOG, SETTINGS (GIỮ NGUYÊN) =====================
+    // Các hàm dialog, settings (giữ nguyên từ bản gốc, đã có ở trên)
     private fun showReceiveDialog() {
         val address = walletManager.getAddress()
         if (address.isEmpty()) { toast("Ví chưa sẵn sàng"); return }
@@ -1135,9 +1228,6 @@ class MainActivity : AppCompatActivity() {
                     toast("Nhập mật khẩu")
                     return@setPositiveButton
                 }
-                // Bỏ unlock lại để tránh restart sync, chỉ kiểm tra mật khẩu không rỗng
-                // Nếu muốn kiểm tra mật khẩu đúng, có thể dùng walletManager.unlock nhưng sẽ restart sync.
-                // Tạm thời bỏ unlock.
                 val delayLayout = LinearLayout(this).apply {
                     orientation = LinearLayout.VERTICAL
                     setPadding(40,30,40,30)
@@ -1332,7 +1422,7 @@ class MainActivity : AppCompatActivity() {
     private fun showInfo() {
         AlertDialog.Builder(this)
             .setTitle("iBTC v4.7")
-            .setMessage("Build: 2026-05-30\n• SPV 100%\n• Foreground service\n• Gửi BTC\n• Biểu đồ giá nhỏ real-time (xanh/đỏ/cam theo xu hướng)")
+            .setMessage("Build: 2026-05-30\n• SPV 100%\n• Foreground service\n• Gửi BTC\n• Biểu đồ giá nhỏ real-time (xanh/đỏ/cam theo xu hướng)\n• Progress bar đổi màu theo tiến độ")
             .setPositiveButton("OK", null)
             .show()
     }
