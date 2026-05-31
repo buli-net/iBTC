@@ -137,7 +137,6 @@ class MainActivity : AppCompatActivity() {
                         spvProgressBar.progress = pct
                         spvProgressBar.progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(pct))
                         fetchAndUpdatePrice()
-                        updateSyncProgress()
                     }
                 }
             }
@@ -673,17 +672,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun dpToPx(dp: Int): Int = (dp * resources.displayMetrics.density).toInt()
 
-    // Hàm cập nhật 1 thanh progress duy nhất (thay thế micro+macro cũ)
-    private fun updateSyncProgress() {
-        val syncService = SyncService.getInstance() ?: return
-        val blocksSoFar = syncService.getBlocksSoFar()
-        val totalBlocks = syncService.getTotalBlocks()
-        if (totalBlocks <= 0) return
-
-        val percent = (blocksSoFar.toDouble() / totalBlocks * 100).toInt().coerceIn(0, 100)
-        spvProgressBar.progress = percent
-        spvProgressBar.progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(percent))
-    }
+    // =============== PHẦN HIỂN THỊ CHÍNH ===============
 
     private fun showWelcome() {
         rootLayout.removeAllViews()
@@ -1020,18 +1009,17 @@ class MainActivity : AppCompatActivity() {
             fetchBtcStats()
             SyncService.getInstance()?.refreshProgress()
             fetchSparkline()
-            updateSyncProgress()
             toast("Đang làm mới...")
         }
         btnSettings.setOnClickListener { showSettings() }
 
+        // Chỉ cập nhật progress từ callback (không tự tính)
         walletManager.onProgress { pct, txt ->
             runOnUiThread {
                 if (viewsReady) {
                     spvStatusText.text = "SPV: $txt"
                     spvProgressBar.progress = pct
                     spvProgressBar.progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(pct))
-                    updateSyncProgress()
                 }
             }
         }
@@ -1042,7 +1030,6 @@ class MainActivity : AppCompatActivity() {
                     spvProgressBar.progress = pct
                     spvProgressBar.progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(pct))
                     fetchAndUpdatePrice()
-                    updateSyncProgress()
                 }
             }
         }
