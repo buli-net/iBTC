@@ -395,7 +395,10 @@ class MainActivity : AppCompatActivity() {
         Thread {
             try {
                 val height = URL("https://mempool.space/api/blocks/tip/height").readText().trim().toInt()
-                val halvings = height / 210000
+                val halvings = height / 210000  // số lần halving đã qua
+                val totalHalvings = 32          // tổng số lần halving đến năm 2140
+                val halvingProgress = (halvings.toFloat() / totalHalvings * 100).toInt()
+
                 val reward = 50.0 / Math.pow(2.0, halvings.toDouble())
                 val nextHalving = (halvings + 1) * 210000
                 val blocksToHalving = nextHalving - height
@@ -422,7 +425,6 @@ class MainActivity : AppCompatActivity() {
 
                 val blocksToday = height % 144
                 val minedPct = ((totalMined / 21000000.0) * 100).toInt()
-                val halvingPct = ((1 - blocksToHalving / 210000.0) * 100).toInt()
                 val rewardPct = ((reward / 50.0) * 100).toInt()
                 val mempoolPct = (mempoolCount / 300000.0 * 100).toInt().coerceAtMost(100)
                 val feePct = feeFast.coerceAtMost(100)
@@ -431,6 +433,13 @@ class MainActivity : AppCompatActivity() {
 
                 runOnUiThread {
                     if (viewsReady) {
+                        // Halving count progress (mới)
+                        statBars["halvingCount"]?.apply {
+                            progress = halvingProgress
+                            progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(halvingProgress))
+                        }
+                        statTexts["halvingCount"]?.text = "Halving count: $halvings / $totalHalvings ($halvingProgress%)"
+
                         statBars["mined"]?.apply {
                             progress = minedPct
                             progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(minedPct))
@@ -438,8 +447,8 @@ class MainActivity : AppCompatActivity() {
                         statTexts["mined"]?.text = "Đã khai thác: ${String.format("%.2f", totalMined)} / 21M BTC ($minedPct%)"
 
                         statBars["halving"]?.apply {
-                            progress = halvingPct
-                            progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(halvingPct))
+                            progress = ((1 - blocksToHalving / 210000.0) * 100).toInt()
+                            progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(((1 - blocksToHalving / 210000.0) * 100).toInt()))
                         }
                         statTexts["halving"]?.text = "Halving #${halvings + 1}: còn $blocksToHalving blocks (~${blocksToHalving / 144} ngày)"
 
@@ -895,6 +904,8 @@ class MainActivity : AppCompatActivity() {
         rootLayout.addView(txTitle)
         rootLayout.addView(txListView)
 
+        // Thêm tất cả các stat, bao gồm cả "Halving count"
+        addStat("halvingCount", "Halving count", mainColor)
         addStat("mined", "Đã khai thác", mainColor)
         addStat("halving", "Halving", mainColor)
         addStat("reward", "Phần thưởng", mainColor)
@@ -980,6 +991,7 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this).setTitle("Nhận Bitcoin").setView(layout).setPositiveButton("Đóng", null).show()
     }
 
+    // Các hàm dialog, settings (giữ nguyên từ bản gốc, đã có ở trên)
     private fun showSendDialog() {
         if (isSyncing) {
             toast("Đang cập nhật SPV, vui lòng đợi")
@@ -1418,7 +1430,7 @@ class MainActivity : AppCompatActivity() {
     private fun showInfo() {
         AlertDialog.Builder(this)
             .setTitle("iBTC v4.7")
-            .setMessage("Build: 2026-05-30\n• SPV 100%\n• Foreground service\n• Gửi BTC\n• Biểu đồ giá nhỏ real-time\n• Progress bar đổi màu theo tiến độ")
+            .setMessage("Build: 2026-05-30\n• SPV 100%\n• Foreground service\n• Gửi BTC\n• Biểu đồ giá nhỏ real-time\n• Progress bar đổi màu theo tiến độ\n• Halving count progress")
             .setPositiveButton("OK", null)
             .show()
     }
