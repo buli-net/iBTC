@@ -286,7 +286,7 @@ class WalletManager(private val ctx: Context) {
         }
     }
 
-    // ====================== TẠO VÀ KÝ GIAO DỊCH OFFLINE (SỬA LỖI KIỂU + hashForSignatureWitness) ======================
+    // ====================== TẠO VÀ KÝ GIAO DỊCH OFFLINE ======================
     private fun createAndSignTransaction(
         toAddress: String,
         amountSat: Long,
@@ -307,7 +307,7 @@ class WalletManager(private val ctx: Context) {
                 tx.addInput(input)
             }
 
-            // Sửa lỗi kiểu: ép sang Long
+            // Sửa lỗi kiểu: chuyển size sang Long
             val estimatedSize = tx.unsafeBitcoinSerialize().size.toLong() + utxos.size * 107L
             val fee = (estimatedSize / 1000.0 * feeRateSatVb).toLong().coerceAtLeast(1000)
             val change = totalInput - amountSat - fee
@@ -321,7 +321,7 @@ class WalletManager(private val ctx: Context) {
             for (i in 0 until tx.inputs.size) {
                 val input = tx.inputs[i]
                 val redeemScript = ScriptBuilder.createOutputScript(Address.fromString(params, getAddress()))
-                // Sửa lỗi hashForSignatureWitness: truyền scriptPubKey dạng byte array
+                // Sử dụng redeemScript.program (ByteArray) đúng API bitcoinj 0.16.3
                 val sighash = tx.hashForSignatureWitness(i, redeemScript.program, Transaction.SigHash.ALL, false)
                 val sig = key.sign(sighash)
                 val sigWithHashType = TransactionSignature(sig, Transaction.SigHash.ALL, false).encodeToBitcoin()
@@ -372,6 +372,7 @@ class WalletManager(private val ctx: Context) {
         }
     }
 
+    // ====================== GỬI BTC LINH HOẠT ======================
     fun send(to: String, amountBTC: Double, feeRateSatVb: Int): String {
         if (feeRateSatVb < 1 || feeRateSatVb > 500) {
             throw Exception("Fee rate không hợp lệ (1-500 sat/vB)")
@@ -382,6 +383,7 @@ class WalletManager(private val ctx: Context) {
             throw Exception("Số tiền quá nhỏ (dưới 546 satoshi)")
         }
 
+        // Nếu SPV đã đồng bộ, dùng SPV
         if (isWalletSynced()) {
             val wallet = getWallet() ?: throw Exception("Wallet chưa sẵn sàng")
             val peerGroup = getPeerGroup() ?: throw Exception("PeerGroup null, chưa kết nối mạng")
@@ -419,6 +421,7 @@ class WalletManager(private val ctx: Context) {
             return req.tx.getHashAsString()
         }
 
+        // SPV chưa đồng bộ: dùng API
         val address = getAddress()
         if (address.isEmpty()) throw Exception("Địa chỉ ví không hợp lệ")
 
