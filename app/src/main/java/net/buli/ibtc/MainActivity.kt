@@ -433,18 +433,19 @@ class MainActivity : AppCompatActivity() {
 
                 runOnUiThread {
                     if (viewsReady) {
-                        // Halving count progress (mới)
-                        statBars["halvingCount"]?.apply {
-                            progress = halvingProgress
-                            progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(halvingProgress))
-                        }
-                        statTexts["halvingCount"]?.text = "Halving count: $halvings / $totalHalvings ($halvingProgress%)"
-
+                        // Đã khai thác (giữ vị trí đầu tiên)
                         statBars["mined"]?.apply {
                             progress = minedPct
                             progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(minedPct))
                         }
                         statTexts["mined"]?.text = "Đã khai thác: ${String.format("%.2f", totalMined)} / 21M BTC ($minedPct%)"
+
+                        // Halving count (sau "Đã khai thác")
+                        statBars["halvingCount"]?.apply {
+                            progress = halvingProgress
+                            progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(halvingProgress))
+                        }
+                        statTexts["halvingCount"]?.text = "Halving count: $halvings / $totalHalvings ($halvingProgress%)"
 
                         statBars["halving"]?.apply {
                             progress = ((1 - blocksToHalving / 210000.0) * 100).toInt()
@@ -904,9 +905,9 @@ class MainActivity : AppCompatActivity() {
         rootLayout.addView(txTitle)
         rootLayout.addView(txListView)
 
-        // Thêm tất cả các stat, bao gồm cả "Halving count"
-        addStat("halvingCount", "Halving count", mainColor)
+        // Thứ tự addStat: Đã khai thác trước, sau đó Halving count
         addStat("mined", "Đã khai thác", mainColor)
+        addStat("halvingCount", "Halving count", mainColor)
         addStat("halving", "Halving", mainColor)
         addStat("reward", "Phần thưởng", mainColor)
         addStat("diff", "Difficulty", mainColor)
@@ -991,8 +992,8 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this).setTitle("Nhận Bitcoin").setView(layout).setPositiveButton("Đóng", null).show()
     }
 
-    // Các hàm dialog, settings (giữ nguyên từ bản gốc, đã có ở trên)
     private fun showSendDialog() {
+        // Giữ nguyên code cũ, đã có ở lần gửi trước
         if (isSyncing) {
             toast("Đang cập nhật SPV, vui lòng đợi")
             return
