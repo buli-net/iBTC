@@ -18,6 +18,7 @@ import java.net.URL
 import java.security.SecureRandom
 import java.util.*
 import kotlin.math.abs
+import java.io.File
 
 data class WalletInfo(val id: String, val name: String)
 data class TransactionInfo(val txId: String, val amount: Double, val type: String, val time: Date)
@@ -249,7 +250,7 @@ class WalletManager(private val ctx: Context) {
                 val feeSat = estimatedSize * feeRateSatVb
                 return feeSat / 1e8
             } catch (e: Exception) {
-                // Fallback
+                // Fallback nếu lỗi
             }
         }
         return (141.0 * feeRateSatVb) / 1e8
