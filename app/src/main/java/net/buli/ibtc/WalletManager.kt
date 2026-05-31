@@ -89,6 +89,9 @@ class WalletManager(private val ctx: Context) {
         locked = true
         cachedSeed = null
         cachedPassword = null
+        try {
+            ctx.stopService(Intent(ctx, SyncService::class.java))
+        } catch (_: Exception) {}
     }
 
     fun create(name: String, password: String): WalletInfo {
@@ -162,12 +165,16 @@ class WalletManager(private val ctx: Context) {
 
     fun delete(id: String) {
         lock()
-        prefs.edit()
-            .remove("${id}_name")
-            .remove("${id}_seed")
-            .remove("${id}_attempts")
-            .remove("${id}_address")
-            .commit()
+        val editor = prefs.edit()
+        editor.remove("${id}_name")
+        editor.remove("${id}_seed")
+        editor.remove("${id}_attempts")
+        editor.remove("${id}_address")
+        if (active?.id == id) {
+            editor.remove("active_wallet_id")
+            active = null
+        }
+        editor.apply()
     }
 
     fun getSeed(): String = cachedSeed ?: ""
@@ -225,7 +232,27 @@ class WalletManager(private val ctx: Context) {
     fun getFeeRates(): FeeRates = FeeRates(5, 10, 20)
 
     fun estimateFee(to: String, amountBTC: Double, feeRateSatVb: Int): Double {
-        return (68 + 62 + 11) * feeRateSatVb / 1e8
+        val wallet = getWallet()
+        if (wallet != null) {
+            try {
+                val coin = Coin.valueOf((amountBTC * 1e8).toLong())
+                val address = Address.fromString(params, to)
+                val req = SendRequest.to(address, coin)
+                req.feePerKb = Coin.valueOf(feeRateSatVb.toLong() * 1000L)
+                req.ensureMinRequiredFee = true
+                req.signInputs = true
+                req.shuffleOutputs = true
+                req.changeAddress = wallet.currentReceiveAddress()
+                
+                val tx = wallet.createSend(req)
+                val estimatedSize = tx.unsafeBitcoinSerialize().size
+                val feeSat = estimatedSize * feeRateSatVb
+                return feeSat / 1e8
+            } catch (e: Exception) {
+                // Fallback
+            }
+        }
+        return (141.0 * feeRateSatVb) / 1e8
     }
 
     fun isWalletSynced(): Boolean = SyncService.getInstance()?.isWalletSynced() ?: false
@@ -240,15 +267,26 @@ class WalletManager(private val ctx: Context) {
     }
 
     fun send(to: String, amountBTC: Double, feeRateSatVb: Int): String {
+        if (!isWalletSynced()) {
+            throw Exception("Blockchain chưa đồng bộ xong, vui lòng đợi")
+        }
+
         if (feeRateSatVb < 1 || feeRateSatVb > 500) {
             throw Exception("Fee rate không hợp lệ (1-500 sat/vB)")
         }
-        val wallet = getWallet() ?: throw Exception("Wallet chưa sẵn sàng, vui lòng đợi đồng bộ")
+
+        val wallet = getWallet() ?: throw Exception("Wallet chưa sẵn sàng")
         val peerGroup = SyncService.getInstance()?.getPeerGroup()
             ?: throw Exception("PeerGroup null, chưa kết nối mạng")
 
+        var retry = 0
+        while (peerGroup.connectedPeers.isEmpty() && retry < 30) {
+            Thread.sleep(1000)
+            retry++
+        }
+
         if (peerGroup.connectedPeers.isEmpty()) {
-            throw Exception("Chưa kết nối peer nào, không thể broadcast")
+            throw Exception("Không có peer kết nối, vui lòng thử lại sau")
         }
 
         val amountSat = (amountBTC * 1e8).toLong()
@@ -257,15 +295,12 @@ class WalletManager(private val ctx: Context) {
         }
 
         val coin = Coin.valueOf(amountSat)
-        val balance = wallet.getBalance(Wallet.BalanceType.AVAILABLE_SPENDABLE)
-        if (balance.isLessThan(coin)) {
-            throw Exception("Không đủ số dư (cần ${amountBTC} BTC, có ${balance.value / 1e8} BTC)")
-        }
+        val spendableBalance = wallet.getBalance(Wallet.BalanceType.AVAILABLE_SPENDABLE)
 
         val address = Address.fromString(params, to)
         val req = SendRequest.to(address, coin)
 
-        req.feePerKb = Coin.valueOf(feeRateSatVb * 1000L)
+        req.feePerKb = Coin.valueOf(feeRateSatVb.toLong() * 1000L)
         req.ensureMinRequiredFee = true
         req.signInputs = true
         req.shuffleOutputs = true
@@ -273,24 +308,43 @@ class WalletManager(private val ctx: Context) {
 
         try {
             wallet.completeTx(req)
-        } catch (e: Exception) {
-            throw Exception("Không tạo được transaction: ${e.message}")
+        } catch (e: InsufficientMoneyException) {
+            throw Exception("Không đủ BTC (cần ${coin.value / 1e8} + phí)")
         }
 
-        try {
-            val broadcastFuture = peerGroup.broadcastTransaction(req.tx)
-            broadcastFuture.future().get()
-        } catch (e: Exception) {
-            throw Exception("Broadcast lỗi: ${e.message}")
-        }
+        wallet.commitTx(req.tx)
 
-        try {
-            wallet.commitTx(req.tx)
-        } catch (e: Exception) {
-            throw Exception("Commit tx lỗi (giao dịch đã broadcast): ${e.message}")
-        }
+        val broadcastFuture = peerGroup.broadcastTransaction(req.tx)
+        broadcastFuture.future().get()
 
         return req.tx.getHashAsString()
+    }
+
+    fun checkPassword(password: String): Boolean {
+        return try {
+            val id = active?.id ?: return false
+            val enc = prefs.getString("${id}_seed", null) ?: return false
+            CryptoUtil.decrypt(enc, password)
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    fun rescanWallet() {
+        val walletFile = File(ctx.filesDir, "spv_wallets/${active?.id}.spvchain")
+        if (walletFile.exists()) {
+            walletFile.delete()
+        }
+        val intent = Intent(ctx, SyncService::class.java).apply {
+            putExtra("wallet_id", active?.id)
+            putExtra("seed_phrase", cachedSeed ?: "")
+        }
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            ctx.startForegroundService(intent)
+        } else {
+            ctx.startService(intent)
+        }
     }
 
     private fun getAddressAtIndex(seedPhrase: String, index: Int): String {
@@ -337,6 +391,7 @@ class WalletManager(private val ctx: Context) {
             val newEnc = CryptoUtil.encrypt(seed, newPassword)
             prefs.edit().putString("${id}_seed", newEnc).commit()
             cachedPassword = newPassword.toCharArray()
+            cachedSeed = seed
             true
         } catch (e: Exception) { false }
     }
