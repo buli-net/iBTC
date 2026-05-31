@@ -150,9 +150,9 @@ class SyncService : Service() {
                         }
 
                         override fun doneDownload() {
-                            // SỬA: dùng newKit thay vì kit
-                            val wallet = newKit.wallet()
-                            val peerGroup = newKit.peerGroup()
+                            // SỬA: dùng this (chính là WalletAppKit instance)
+                            val wallet = this.wallet()
+                            val peerGroup = this.peerGroup()
                             val isReallySynced = wallet != null &&
                                     wallet.lastBlockSeenHeight > 0 &&
                                     peerGroup != null &&
