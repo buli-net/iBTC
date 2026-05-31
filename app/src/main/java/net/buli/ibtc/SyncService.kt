@@ -67,7 +67,6 @@ class SyncService : Service() {
 
         if (kit != null && kit?.isRunning == true && kit?.wallet() != null) {
             setProgressCallback(progressCallback)
-            // Khởi động lại monitor nếu cần
             if (!isSynced) {
                 kit?.let { startSyncMonitor(it) }
             }
@@ -135,7 +134,7 @@ class SyncService : Service() {
         val wallet = kit.wallet()
         val chain = kit.chain()
         
-        // Kiểm tra đúng cách: peerGroup không còn downloading và wallet đã catch-up
+        // SỬA: isDownloading() là function, cần gọi với ngoặc đơn
         return peerGroup != null && 
                wallet != null &&
                chain != null &&
@@ -146,7 +145,6 @@ class SyncService : Service() {
 
     /**
      * FIX: Giám sát sync hoàn tất thực sự
-     * Chạy ngầm để phát hiện khi peerGroup không còn downloading
      */
     private fun startSyncMonitor(kit: WalletAppKit) {
         syncMonitorTimer?.cancel()
@@ -164,11 +162,10 @@ class SyncService : Service() {
                         syncMonitorTimer?.cancel()
                         syncMonitorTimer = null
                     } else if (currentKit != null && !isSynced) {
-                        // Vẫn đang sync, cập nhật message trạng thái nếu cần
                         val peerGroup = currentKit.peerGroup()
                         val wallet = currentKit.wallet()
+                        // SỬA: isDownloading() là function
                         if (peerGroup != null && wallet != null && !peerGroup.isDownloading()) {
-                            // Đã download xong blockchain nhưng đang xử lý transactions backlog
                             if (lastProgress < 100 && lastProgress >= 95) {
                                 saveProgress(lastProgress, "Đang xử lý giao dịch cuối...")
                                 updateNotification(lastMessage)
@@ -180,7 +177,7 @@ class SyncService : Service() {
                     // Bỏ qua lỗi monitor
                 }
             }
-        }, 1000, 1000) // Check mỗi giây
+        }, 1000, 1000)
     }
 
     private fun startBitcoinSync(walletId: String, seedPhrase: String) {
@@ -195,7 +192,6 @@ class SyncService : Service() {
                 val dir = File(filesDir, "spv_wallets")
                 if (!dir.exists()) dir.mkdirs()
 
-                // Dừng kit cũ nếu có
                 try {
                     syncMonitorTimer?.cancel()
                     kit?.stopAsync()
@@ -213,21 +209,12 @@ class SyncService : Service() {
                             if (p < 0) p = 0
                             if (p > 100) p = 100
                             
-                            /**
-                             * FIX: Tránh đứng 95-99% do progress không tuyến tính
-                             * Ép tiến độ cuối stage mượt hơn, tránh cảm giác treo UI
-                             */
                             val smoothedP = if (p >= 95 && p < 100) {
-                                // Tạo progress giả từ blocksSoFar để tránh đứng yên
                                 95 + (blocksSoFar % 5)
                             } else {
                                 p
                             }
                             
-                            /**
-                             * FIX: KHÔNG set 99% thủ công nữa
-                             * Để progress tự nhiên, không gây ảo giác "kẹt"
-                             */
                             val msg = when {
                                 smoothedP < 100 -> "Đồng bộ blockchain: $smoothedP%"
                                 else -> "Đã đồng bộ blockchain"
@@ -238,15 +225,7 @@ class SyncService : Service() {
                             progressCallback?.invoke(lastProgress, lastMessage)
                         }
 
-                        /**
-                         * FIX: KHÔNG dùng doneDownload() làm mốc kết thúc
-                         * doneDownload chỉ báo hiệu đã tải xong blockchain headers
-                         * Wallet vẫn còn xử lý transactions backlog
-                         */
                         override fun doneDownload() {
-                            // KHÔNG kết luận sync xong ở đây
-                            // Chỉ cập nhật message là đã download xong blockchain
-                            // Monitor sẽ phát hiện khi thực sự hoàn tất
                             saveProgress(lastProgress, "Đã tải blockchain, đang xử lý giao dịch...")
                             updateNotification(lastMessage)
                             progressCallback?.invoke(lastProgress, lastMessage)
@@ -257,7 +236,6 @@ class SyncService : Service() {
                 kit = newKit
                 progressCallback?.invoke(lastProgress, lastMessage)
                 
-                // Bắt đầu monitor để phát hiện sync thực sự hoàn tất
                 startSyncMonitor(newKit)
 
             } catch (e: Exception) {
