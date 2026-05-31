@@ -36,7 +36,7 @@ class SyncService : Service() {
     @Volatile private var isEngineRunning = false
     private var engineThread: Thread? = null
 
-    // 2-layer freeze detection
+    // Freeze detection (chỉ dùng khi chưa có dữ liệu)
     @Volatile private var lastPeerHeight = 0
     @Volatile private var lastWalletHeight = 0
     @Volatile private var lastActivityTime = 0L
@@ -141,17 +141,18 @@ class SyncService : Service() {
         updateNotification(message)
     }
 
-    // =============== CHAIN HEIGHT: ưu tiên peerGroup consensus ===============
     private fun getBestChainHeight(kitRef: WalletAppKit): Int {
         return kitRef.peerGroup()?.mostCommonChainHeight
             ?: kitRef.chain()?.chainHead?.height
             ?: 0
     }
 
-    // =============== 2-LAYER FREEZE DETECTION ===============
-    private fun isFrozen(peerHeight: Int, walletHeight: Int): Boolean {
+    // Chỉ phát hiện frozen khi chưa có dữ liệu
+    private fun isFrozen(peerHeight: Int, walletHeight: Int, hasData: Boolean): Boolean {
+        if (hasData) return false
         val now = System.currentTimeMillis()
-        if (peerHeight > lastPeerHeight || walletHeight > lastWalletHeight) {
+        val activity = (peerHeight > lastPeerHeight) || (walletHeight > lastWalletHeight)
+        if (activity) {
             lastPeerHeight = peerHeight
             lastWalletHeight = walletHeight
             lastActivityTime = now
@@ -160,7 +161,6 @@ class SyncService : Service() {
         return (now - lastActivityTime) > 60000
     }
 
-    // =============== PEER ROTATION: không restart, chỉ thêm discovery ===============
     private fun rotatePeers(kitRef: WalletAppKit) {
         try {
             val peerGroup = kitRef.peerGroup() ?: return
@@ -178,8 +178,8 @@ class SyncService : Service() {
         }
     }
 
-    // =============== SMART RECOVERY: KHÔNG restart peer group ===============
-    private fun smartRecovery(kitRef: WalletAppKit) {
+    private fun smartRecovery(kitRef: WalletAppKit, hasData: Boolean) {
+        if (hasData) return // không recovery khi đã có dữ liệu
         val now = System.currentTimeMillis()
         if (now - lastRecoveryTime < 60000) return
         if (isRecovering) return
@@ -190,7 +190,7 @@ class SyncService : Service() {
             val peers = peerGroup.connectedPeers.size
             val peerHeight = getBestChainHeight(kitRef)
             val walletHeight = wallet.lastBlockSeenHeight
-            val frozen = isFrozen(peerHeight, walletHeight)
+            val frozen = isFrozen(peerHeight, walletHeight, hasData)
 
             if (peers == 0 || frozen) {
                 lastRecoveryTime = now
@@ -214,7 +214,6 @@ class SyncService : Service() {
         }
     }
 
-    // =============== PROGRESS CALCULATION (KHÔNG 95-99 ẢO) ===============
     private fun calculateProgress(walletHeight: Int, chainHeight: Int): Int {
         if (chainHeight <= 0) return 0
         if (walletHeight >= chainHeight - 1) return 100
@@ -222,7 +221,6 @@ class SyncService : Service() {
         return if (raw > 94) 94 else raw.toInt()
     }
 
-    // =============== UI THROTTLE + BUFFER ===============
     private fun shouldUpdateUi(percent: Int): Boolean {
         val now = System.currentTimeMillis()
         if (now - lastUiUpdate < 2500) return false
@@ -232,7 +230,6 @@ class SyncService : Service() {
         return true
     }
 
-    // =============== ENGINE LOOP ===============
     private fun startEngine(kitRef: WalletAppKit) {
         if (isEngineRunning) return
         isEngineRunning = true
@@ -250,25 +247,26 @@ class SyncService : Service() {
                     val peerHeight = peerGroup?.mostCommonChainHeight ?: 0
                     val hasBalance = wallet.getBalance().value > 0
                     val hasTransactions = wallet.getTransactionsByTime().isNotEmpty()
+                    val hasData = hasBalance || hasTransactions
 
-                    // Freeze detection
-                    if (isFrozen(peerHeight, walletHeight)) {
-                        smartRecovery(kitRef)
+                    // Freeze & recovery (chỉ khi chưa có dữ liệu)
+                    if (isFrozen(peerHeight, walletHeight, hasData)) {
+                        smartRecovery(kitRef, hasData)
                     }
 
-                    // Peer health
                     if ((peerGroup?.connectedPeers?.size ?: 0) < 2) {
                         rotatePeers(kitRef)
                     }
 
-                    // Trạng thái thực tế: phải có balance hoặc tx mới coi là SYNCED
+                    // Xác định trạng thái: có dữ liệu thì coi như SYNCED
                     val state = when {
-                        walletHeight >= chainHeight - 1 && walletHeight > 0 && (hasBalance || hasTransactions) -> "SYNCED"
+                        hasData -> "SYNCED"
+                        walletHeight >= chainHeight - 1 && walletHeight > 0 -> "SYNCED"
                         chainHeight == 0 -> "CONNECTING"
                         else -> "SYNCING"
                     }
 
-                    val percent = calculateProgress(walletHeight, chainHeight)
+                    val percent = if (state == "SYNCED") 100 else calculateProgress(walletHeight, chainHeight)
 
                     if (state == "SYNCED" && !isSynced) {
                         isSynced = true
@@ -276,7 +274,6 @@ class SyncService : Service() {
                         if (shouldUpdateUi(100)) {
                             saveProgress(100, "Đã đồng bộ blockchain")
                         }
-                        // Lưu wallet xuống disk
                         try {
                             wallet.saveToFile(File(filesDir, "wallet_$currentWalletId"))
                         } catch (_: Exception) {}
@@ -287,6 +284,13 @@ class SyncService : Service() {
                         }
                         if (shouldUpdateUi(percent)) {
                             saveProgress(percent, statusText)
+                        }
+                    } else {
+                        // Đã có dữ liệu nhưng chưa báo sync, báo 100%
+                        if (!isSynced && shouldUpdateUi(100)) {
+                            isSynced = true
+                            prefs.edit().putBoolean("is_synced", true).apply()
+                            saveProgress(100, "Đã đồng bộ blockchain")
                         }
                     }
 
@@ -306,7 +310,6 @@ class SyncService : Service() {
         }.apply { start() }
     }
 
-    // =============== KHỞI TẠO VÍ TỪ SEED (QUAN TRỌNG) ===============
     private fun startBitcoinSync(walletId: String, seedPhrase: String) {
         Thread {
             try {
@@ -319,7 +322,6 @@ class SyncService : Service() {
                 val dir = File(filesDir, "spv_wallets")
                 if (!dir.exists()) dir.mkdirs()
 
-                // Dừng kit cũ an toàn
                 kit?.let { oldKit ->
                     try {
                         oldKit.stopAsync()
@@ -330,23 +332,19 @@ class SyncService : Service() {
                 isEngineRunning = false
                 engineThread?.interrupt()
 
-                // Tạo WalletAppKit mới
                 val newKit = WalletAppKit(params, dir, walletId).apply {
                     setBlockingStartup(false)
                 }
 
-                // Khôi phục ví từ seed phrase
                 val words = seedPhrase.trim().split(Regex("\\s+"))
                 val seed = DeterministicSeed(words, null, "", System.currentTimeMillis() / 1000)
                 newKit.restoreWalletFromSeed(seed)
 
-                // Khởi động
                 newKit.startAsync()
                 newKit.awaitRunning()
 
                 kit = newKit
 
-                // Reset state cho engine mới
                 discoverySet.clear()
                 lastPeerHeight = 0
                 lastWalletHeight = 0
