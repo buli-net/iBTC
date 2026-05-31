@@ -36,6 +36,7 @@ import java.util.*
 
 class MainActivity : AppCompatActivity() {
 
+    // ================= Khai báo biến =================
     private lateinit var walletManager: WalletManager
     private val handler = Handler(Looper.getMainLooper())
     private val POOL_FONT = 13f
@@ -43,35 +44,37 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var rootLayout: LinearLayout
     private lateinit var scrollView: ScrollView
-    private lateinit var balanceText: TextView
-    private lateinit var balanceUsdText: TextView
-    private lateinit var rateText: TextView
-    private lateinit var addressText: TextView
-    private lateinit var blockText: TextView
-    private lateinit var blockProgressBar: ProgressBar
-    private lateinit var txListView: ListView
-    private lateinit var walletNameText: TextView
-    private lateinit var statsContainer: LinearLayout
-    private lateinit var spvStatusText: TextView
-    private lateinit var spvProgressBar: ProgressBar
-    private val statBars = mutableMapOf<String, ProgressBar>()
-    private val statTexts = mutableMapOf<String, TextView>()
+    private lateinit var balanceText: TextView          // Số dư BTC
+    private lateinit var balanceUsdText: TextView       // Giá trị USD
+    private lateinit var rateText: TextView             // Giá BTC
+    private lateinit var addressText: TextView          // Địa chỉ ví
+    private lateinit var blockText: TextView            // Trạng thái block
+    private lateinit var blockProgressBar: ProgressBar  // Thanh tiến độ block
+    private lateinit var txListView: ListView           // Lịch sử giao dịch
+    private lateinit var walletNameText: TextView       // Tên ví
+    private lateinit var statsContainer: LinearLayout   // Container cho thống kê
+    private lateinit var spvStatusText: TextView        // Trạng thái SPV
+    private lateinit var spvProgressBar: ProgressBar    // Thanh tiến độ SPV
+    private val statBars = mutableMapOf<String, ProgressBar>()   // Map lưu các thanh progress của thống kê
+    private val statTexts = mutableMapOf<String, TextView>()     // Map lưu text của từng stat
     private var isSyncing = false
     private var autoRefreshStarted = false
     private var pendingAddressInput: EditText? = null
     private var viewsReady = false
 
-    private lateinit var sparkline: LineChart
+    private lateinit var sparkline: LineChart           // Biểu đồ nhỏ giá
 
+    // ================= Xử lý QR scan =================
     private val qrScanLauncher = registerForActivityResult(ScanContract()) { result ->
         result.contents?.let { raw ->
+            // Xử lý URI bitcoin: (bitcoin:địa_chỉ?amount=...)
             val cleanAddress = raw.removePrefix("bitcoin:").substringBefore("?")
             pendingAddressInput?.setText(cleanAddress)
             toast("Đã quét: ${cleanAddress.take(10)}...")
         }
     }
 
-    // Hàm tính màu theo phần trăm (0% -> 100%: xanh -> vàng -> cam -> đỏ)
+    // ================= Hàm tính màu theo phần trăm (xanh -> vàng -> cam -> đỏ) =================
     private fun getColorForProgress(progress: Int): Int {
         val p = progress.coerceIn(0, 100)
         val r: Float
@@ -79,18 +82,21 @@ class MainActivity : AppCompatActivity() {
         val b: Float
         when {
             p <= 50 -> {
+                // 0-50%: xanh (0,255,0) đến vàng (255,255,0)
                 val factor = p / 50f
                 r = factor * 255f
                 g = 255f
                 b = 0f
             }
             p <= 75 -> {
+                // 50-75%: vàng (255,255,0) đến cam (255,165,0)
                 val factor = (p - 50) / 25f
                 r = 255f
                 g = 255f - factor * (255f - 165f)
                 b = 0f
             }
             else -> {
+                // 75-100%: cam (255,165,0) đến đỏ (255,0,0)
                 val factor = (p - 75) / 25f
                 r = 255f
                 g = 165f - factor * 165f
@@ -100,6 +106,7 @@ class MainActivity : AppCompatActivity() {
         return Color.rgb(r.toInt(), g.toInt(), b.toInt())
     }
 
+    // ================= Vòng đời Activity =================
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
@@ -107,6 +114,7 @@ class MainActivity : AppCompatActivity() {
         setupRootLayout()
         setContentView(scrollView)
 
+        // Lắng nghe sự kiện tắt màn hình
         screenReceiver = object : BroadcastReceiver() {
             override fun onReceive(c: Context?, intent: Intent?) {
                 if (intent?.action == Intent.ACTION_SCREEN_OFF) { }
@@ -171,6 +179,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // ================= Lấy mốc đầu ngày UTC =================
     private fun getTodayUtcStart(): Long {
         val calendar = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
         calendar.set(Calendar.HOUR_OF_DAY, 0)
@@ -180,6 +189,7 @@ class MainActivity : AppCompatActivity() {
         return calendar.timeInMillis
     }
 
+    // ================= Cập nhật tỷ giá và USD =================
     private fun fetchAndUpdatePrice() {
         Thread {
             val price = walletManager.price()
@@ -192,6 +202,7 @@ class MainActivity : AppCompatActivity() {
     private fun updatePriceUI(price: Double) {
         val hasPrice = price > 0
         if (!hasPrice) {
+            // Không có giá (mất mạng) -> hiển thị --- màu xám
             rateText.text = "BTC ---"
             rateText.setTextColor(Color.GRAY)
             balanceUsdText.text = "≈ $---"
@@ -199,6 +210,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
+        // Lưu mốc giá đầu ngày
         val prefsDaily = getSharedPreferences("daily_mark", Context.MODE_PRIVATE)
         val todayStart = getTodayUtcStart()
         var dailyPrice = prefsDaily.getFloat("daily_price", -1f).toDouble()
@@ -212,6 +224,7 @@ class MainActivity : AppCompatActivity() {
                 .apply()
         }
 
+        // Biến động giá BTC
         val priceChange = price - dailyPrice
         val priceChangePercent = if (dailyPrice > 0) (priceChange / dailyPrice) * 100 else 0.0
         val priceArrow = when {
@@ -220,14 +233,15 @@ class MainActivity : AppCompatActivity() {
             else -> "●"
         }
         val priceColor = when {
-            priceChange > 0.01 -> Color.parseColor("#00C853")
-            priceChange < -0.01 -> Color.parseColor("#D50000")
-            else -> Color.parseColor("#F7931A")
+            priceChange > 0.01 -> Color.parseColor("#00C853")   // xanh
+            priceChange < -0.01 -> Color.parseColor("#D50000")   // đỏ
+            else -> Color.parseColor("#F7931A")                  // cam
         }
 
         rateText.setTextColor(priceColor)
         rateText.text = String.format(Locale.US, "BTC $%,.2f %s %+.2f%% (%+.2f$)", price, priceArrow, priceChangePercent, priceChange)
 
+        // Giá trị USD (balance * giá)
         val bal = if (walletManager.isWalletSynced()) walletManager.getBalance() else 0.0
         val currentUsd = bal * price
         var dailyUsd = prefsDaily.getFloat("daily_usd", -1f).toDouble()
@@ -251,7 +265,9 @@ class MainActivity : AppCompatActivity() {
         balanceUsdText.text = String.format(Locale.US, "≈ $%,.2f %s %+.2f%% (%+.2f$)", currentUsd, usdArrow, usdChangePercent, usdChange)
     }
 
+    // ================= Làm mới số dư và lịch sử giao dịch =================
     private fun refreshWalletFromSPV() {
+        // Luôn cập nhật địa chỉ ví
         runOnUiThread {
             if (viewsReady) {
                 addressText.text = "Địa chỉ: ${walletManager.getAddress()}"
@@ -259,6 +275,7 @@ class MainActivity : AppCompatActivity() {
         }
         fetchAndUpdatePrice()
 
+        // Nếu chưa đồng bộ -> thoát
         if (!walletManager.isWalletSynced()) {
             runOnUiThread {
                 if (viewsReady) spvStatusText.text = "SPV: Đang đồng bộ blockchain..."
@@ -278,6 +295,8 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread {
                     if (!viewsReady) return@runOnUiThread
                     balanceText.text = String.format(Locale.US, "%.8f BTC", bal)
+
+                    // Cập nhật lại USD với số dư mới
                     val price = walletManager.price()
                     if (price > 0) {
                         val prefsDaily = getSharedPreferences("daily_mark", Context.MODE_PRIVATE)
@@ -304,6 +323,7 @@ class MainActivity : AppCompatActivity() {
                         balanceUsdText.text = String.format(Locale.US, "≈ $%,.2f %s %+.2f%% (%+.2f$)", currentUsd, usdArrow, usdChangePercent, usdChange)
                     }
 
+                    // Hiển thị lịch sử giao dịch
                     val adapter = object : ArrayAdapter<String>(this@MainActivity, android.R.layout.simple_list_item_2, android.R.id.text1, txs.map { "" }) {
                         override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
                             val view = super.getView(position, convertView, parent)
@@ -347,6 +367,7 @@ class MainActivity : AppCompatActivity() {
         }, 45000)
     }
 
+    // ================= Cập nhật thông tin block (mempool.space) =================
     private fun fetchBlockUpdate() {
         Thread {
             try {
@@ -391,110 +412,141 @@ class MainActivity : AppCompatActivity() {
         }.start()
     }
 
+    // ================= Cập nhật thống kê Bitcoin (toàn cầu) =================
     private fun fetchBtcStats() {
         Thread {
             try {
+                // Chiều cao block hiện tại
                 val height = URL("https://mempool.space/api/blocks/tip/height").readText().trim().toInt()
-                val halvings = height / 210000  // số lần halving đã qua
-                val totalHalvings = 32          // tổng số lần halving đến năm 2140
-                val halvingProgress = (halvings.toFloat() / totalHalvings * 100).toInt()
 
+                // Số lần halving đã qua
+                val halvings = height / 210000
+                val totalHalvings = 32
+                val halvingProgress = (halvings.toFloat() / totalHalvings * 100).toInt()   // % tổng số halving
+
+                // Phần thưởng block hiện tại
                 val reward = 50.0 / Math.pow(2.0, halvings.toDouble())
+                val rewardPct = ((reward / 50.0) * 100).toInt()
+
+                // Halving tiếp theo
                 val nextHalving = (halvings + 1) * 210000
                 val blocksToHalving = nextHalving - height
+                // Số thứ tự halving tiếp theo (tự động cập nhật)
+                val nextHalvingNumber = halvings + 1
+                val halvingText = if (blocksToHalving <= 0) {
+                    "Halving #$nextHalvingNumber đã diễn ra"
+                } else {
+                    val daysRemaining = blocksToHalving / 144   // 144 blocks/ngày
+                    "Halving #$nextHalvingNumber: còn $blocksToHalving blocks (~$daysRemaining ngày)"
+                }
+                val halvingProgressValue = if (blocksToHalving <= 0) 100 else ((1 - blocksToHalving / 210000.0) * 100).toInt()
 
+                // Tổng số BTC đã khai thác
                 val totalSats = URL("https://blockchain.info/q/totalbc").readText().trim().toLong()
                 val totalMined = totalSats / 100000000.0
+                val minedPct = ((totalMined / 21000000.0) * 100).toInt()
 
+                // Difficulty adjustment
                 val diffJson = URL("https://mempool.space/api/v1/difficulty-adjustment").readText()
                 val diffObj = JSONObject(diffJson)
                 val diffProgress = diffObj.getDouble("progressPercent").toFloat()
 
+                // Mempool
                 val mempoolJson = URL("https://mempool.space/api/mempool").readText()
                 val mempoolObj = JSONObject(mempoolJson)
                 val mempoolCount = mempoolObj.getInt("count")
+                val mempoolPct = (mempoolCount / 300000.0 * 100).toInt().coerceAtMost(100)
 
+                // Phí khuyến nghị
                 val feesJson = URL("https://mempool.space/api/v1/fees/recommended").readText()
                 val feesObj = JSONObject(feesJson)
                 val feeFast = feesObj.getInt("fastestFee")
+                val feePct = feeFast.coerceAtMost(100)
 
+                // Hashrate
                 val hashJson = URL("https://mempool.space/api/v1/mining/hashrate/1w").readText()
                 val hashObj = JSONObject(hashJson)
                 val currentHash = hashObj.getDouble("currentHashrate")
                 val hashEh = currentHash / 1e18
 
+                // Các chỉ số khác
                 val blocksToday = height % 144
-                val minedPct = ((totalMined / 21000000.0) * 100).toInt()
-                val rewardPct = ((reward / 50.0) * 100).toInt()
-                val mempoolPct = (mempoolCount / 300000.0 * 100).toInt().coerceAtMost(100)
-                val feePct = feeFast.coerceAtMost(100)
                 val todayPct = (blocksToday * 100 / 144)
                 val heightPct = height % 100
 
                 runOnUiThread {
                     if (viewsReady) {
-                        // Đã khai thác (giữ vị trí đầu tiên)
+                        // "Đã khai thác"
                         statBars["mined"]?.apply {
                             progress = minedPct
                             progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(minedPct))
                         }
                         statTexts["mined"]?.text = "Đã khai thác: ${String.format("%.2f", totalMined)} / 21M BTC ($minedPct%)"
 
-                        // Halving count (sau "Đã khai thác")
+                        // "Halving count" (số lần đã qua / tổng)
                         statBars["halvingCount"]?.apply {
                             progress = halvingProgress
                             progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(halvingProgress))
                         }
                         statTexts["halvingCount"]?.text = "Halving count: $halvings / $totalHalvings ($halvingProgress%)"
 
+                        // "Halving #X" (tự động số thứ tự, có % progress)
                         statBars["halving"]?.apply {
-                            progress = ((1 - blocksToHalving / 210000.0) * 100).toInt()
-                            progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(((1 - blocksToHalving / 210000.0) * 100).toInt()))
+                            progress = halvingProgressValue
+                            progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(halvingProgressValue))
                         }
-                        statTexts["halving"]?.text = "Halving #${halvings + 1}: còn $blocksToHalving blocks (~${blocksToHalving / 144} ngày)"
+                        statTexts["halving"]?.text = halvingText
 
+                        // "Thưởng block"
                         statBars["reward"]?.apply {
                             progress = rewardPct
                             progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(rewardPct))
                         }
                         statTexts["reward"]?.text = "Thưởng block: $reward BTC (ban đầu 50 BTC)"
 
+                        // "Difficulty"
                         statBars["diff"]?.apply {
                             progress = diffProgress.toInt()
                             progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(diffProgress.toInt()))
                         }
                         statTexts["diff"]?.text = "Difficulty adj: ${String.format("%.1f", diffProgress)}%"
 
+                        // "Mempool"
                         statBars["mempool"]?.apply {
                             progress = mempoolPct
                             progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(mempoolPct))
                         }
                         statTexts["mempool"]?.text = "Mempool: $mempoolCount tx chờ"
 
+                        // "Hashrate"
                         statBars["hash"]?.apply {
-                            progress = 70
+                            progress = 70   // Không có % thực tế, tạm 70
                             progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(70))
                         }
                         statTexts["hash"]?.text = "Hashrate: ${String.format("%.0f", hashEh)} EH/s"
 
+                        // "Phí nhanh"
                         statBars["fee"]?.apply {
                             progress = feePct
                             progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(feePct))
                         }
                         statTexts["fee"]?.text = "Phí nhanh: $feeFast sat/vB"
 
+                        // "Block hôm nay"
                         statBars["today"]?.apply {
                             progress = todayPct
                             progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(todayPct))
                         }
                         statTexts["today"]?.text = "Block hôm nay: $blocksToday / 144"
 
+                        // "Cung lưu thông"
                         statBars["supply"]?.apply {
                             progress = minedPct
                             progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(minedPct))
                         }
                         statTexts["supply"]?.text = "Cung lưu thông: ${String.format("%.2f", totalMined / 1000000)}M BTC"
 
+                        // "Block height"
                         statBars["height"]?.apply {
                             progress = heightPct
                             progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(heightPct))
@@ -518,6 +570,7 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
+    // ================= Thêm một stat (dòng text + progress bar) =================
     private fun addStat(key: String, label: String, color: Int) {
         val tv = TextView(this).apply {
             text = label
@@ -537,6 +590,7 @@ class MainActivity : AppCompatActivity() {
         statBars[key] = pb
     }
 
+    // ================= Sparkline (biểu đồ nhỏ cạnh số dư) =================
     private fun setupSparkline() {
         sparkline = LineChart(this).apply {
             layoutParams = LinearLayout.LayoutParams(dpToPx(120), dpToPx(40))
@@ -560,9 +614,9 @@ class MainActivity : AppCompatActivity() {
         val firstPrice = closePrices.first()
         val lastPrice = closePrices.last()
         val trendColor = when {
-            lastPrice > firstPrice -> Color.parseColor("#00C853")
-            lastPrice < firstPrice -> Color.parseColor("#D50000")
-            else -> Color.parseColor("#F7931A")
+            lastPrice > firstPrice -> Color.parseColor("#00C853")   // xanh
+            lastPrice < firstPrice -> Color.parseColor("#D50000")   // đỏ
+            else -> Color.parseColor("#F7931A")                    // cam
         }
         val dataSet = LineDataSet(entries, "").apply {
             color = trendColor
@@ -590,6 +644,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun dpToPx(dp: Int): Int = (dp * resources.displayMetrics.density).toInt()
 
+    // ================= Các màn hình: Welcome, Create, Import, Unlock =================
     private fun showWelcome() {
         rootLayout.removeAllViews()
         val isDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
@@ -773,6 +828,7 @@ class MainActivity : AppCompatActivity() {
         rootLayout.addView(layout)
     }
 
+    // ================= Màn hình chính (ví) =================
     private fun showMainWallet() {
         rootLayout.removeAllViews()
         val isDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
@@ -786,6 +842,7 @@ class MainActivity : AppCompatActivity() {
             setTextColor(mainColor)
         }
 
+        // Hàng chứa số dư BTC + sparkline
         val balanceRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
@@ -802,6 +859,7 @@ class MainActivity : AppCompatActivity() {
         setupSparkline()
         balanceRow.addView(sparkline)
 
+        // Các TextView hiển thị giá
         balanceUsdText = TextView(this).apply {
             text = "≈ $---"
             textSize = 16f
@@ -846,6 +904,7 @@ class MainActivity : AppCompatActivity() {
             progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(0))
         }
 
+        // Các nút chức năng
         val btnRow1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; weightSum = 2f }
         val btnReceive = Button(this).apply {
             text = "⬇ Nhận"
@@ -888,6 +947,7 @@ class MainActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 600)
         }
 
+        // Thêm các view theo thứ tự
         rootLayout.addView(walletNameText)
         rootLayout.addView(balanceRow)
         rootLayout.addView(balanceUsdText)
@@ -905,19 +965,20 @@ class MainActivity : AppCompatActivity() {
         rootLayout.addView(txTitle)
         rootLayout.addView(txListView)
 
-        // Thứ tự addStat: Đã khai thác trước, sau đó Halving count
+        // Thêm các stat (thống kê) - Đã sắp xếp thứ tự: Đã khai thác, Halving count, Halving #, ...
         addStat("mined", "Đã khai thác", mainColor)
         addStat("halvingCount", "Halving count", mainColor)
-        addStat("halving", "Halving", mainColor)
-        addStat("reward", "Phần thưởng", mainColor)
+        addStat("halving", "Halving", mainColor)   // dòng này sẽ tự động cập nhật số #X và % progress
+        addStat("reward", "Thưởng block", mainColor)
         addStat("diff", "Difficulty", mainColor)
         addStat("mempool", "Mempool", mainColor)
         addStat("hash", "Hashrate", mainColor)
         addStat("fee", "Phí", mainColor)
-        addStat("today", "Hôm nay", mainColor)
+        addStat("today", "Block hôm nay", mainColor)
         addStat("supply", "Cung", mainColor)
         addStat("height", "Height", mainColor)
 
+        // Sự kiện các nút
         btnReceive.setOnClickListener { showReceiveDialog() }
         btnSend.setOnClickListener { showSendDialog() }
         btnRefresh.setOnClickListener {
@@ -930,6 +991,7 @@ class MainActivity : AppCompatActivity() {
         }
         btnSettings.setOnClickListener { showSettings() }
 
+        // Lắng nghe tiến trình SPV từ WalletManager
         walletManager.onProgress { pct, txt ->
             runOnUiThread {
                 if (viewsReady) {
@@ -957,6 +1019,10 @@ class MainActivity : AppCompatActivity() {
         fetchSparkline()
         fetchAndUpdatePrice()
     }
+
+    // ================= Các hàm dialog, gửi/nhận, cài đặt (giữ nguyên từ bản gốc) =================
+    // (Các hàm showReceiveDialog, showSendDialog, confirmSend, showSettings, showSeedDialog, ...)
+    // Vì dài, tôi giữ nguyên logic cũ, không thay đổi. Bạn đã có sẵn trong file cũ.
 
     private fun showReceiveDialog() {
         val address = walletManager.getAddress()
@@ -992,8 +1058,8 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this).setTitle("Nhận Bitcoin").setView(layout).setPositiveButton("Đóng", null).show()
     }
 
+    // Hàm gửi BTC (giữ nguyên, dài nhưng không thay đổi)
     private fun showSendDialog() {
-        // Giữ nguyên code cũ, đã có ở lần gửi trước
         if (isSyncing) {
             toast("Đang cập nhật SPV, vui lòng đợi")
             return
@@ -1431,7 +1497,7 @@ class MainActivity : AppCompatActivity() {
     private fun showInfo() {
         AlertDialog.Builder(this)
             .setTitle("iBTC v4.7")
-            .setMessage("Build: 2026-05-30\n• SPV 100%\n• Foreground service\n• Gửi BTC\n• Biểu đồ giá nhỏ real-time\n• Progress bar đổi màu theo tiến độ\n• Halving count progress")
+            .setMessage("Build: 2026-05-31\n• SPV 100%\n• Foreground service\n• Gửi BTC\n• Biểu đồ giá nhỏ real-time\n• Progress bar đổi màu theo tiến độ\n• Halving count tự động cập nhật số thứ tự và %")
             .setPositiveButton("OK", null)
             .show()
     }
