@@ -6,14 +6,11 @@ import org.bitcoinj.core.*
 import org.bitcoinj.crypto.ChildNumber
 import org.bitcoinj.crypto.DeterministicKey
 import org.bitcoinj.crypto.HDKeyDerivation
-import org.bitcoinj.crypto.TransactionSignature
 import org.bitcoinj.params.MainNetParams
-import org.bitcoinj.script.ScriptBuilder
 import org.bitcoinj.wallet.DeterministicSeed
 import org.bitcoinj.wallet.SendRequest
 import org.bitcoinj.wallet.Wallet
 import org.json.JSONObject
-import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.SecureRandom
@@ -228,11 +225,7 @@ class WalletManager(private val ctx: Context) {
                 prefs.edit().putFloat("last_price", price.toFloat()).commit()
                 return price
             } catch (e: Exception) {
-                if (attempt == 1) {
-                    e.printStackTrace()
-                } else {
-                    Thread.sleep(1000)
-                }
+                if (attempt == 1) e.printStackTrace() else Thread.sleep(1000)
             }
         }
         return if (lastPrice > 0) lastPrice else 0.0
@@ -255,127 +248,17 @@ class WalletManager(private val ctx: Context) {
         }
     }
 
-    // ====================== LẤY UTXO TỪ API ======================
-    private fun fetchUtxosFromApi(address: String): List<UTXO>? {
-        return try {
-            val url = URL("https://blockchain.info/unspent?active=$address")
-            val json = url.openStream().bufferedReader().readText()
-            val obj = JSONObject(json)
-            val unspentOutputs = obj.getJSONArray("unspent_outputs")
-            val utxos = mutableListOf<UTXO>()
-            for (i in 0 until unspentOutputs.length()) {
-                val out = unspentOutputs.getJSONObject(i)
-                val txHash = out.getString("tx_hash_big_endian")
-                val txIndex = out.getInt("tx_output_n")
-                val value = out.getLong("value")
-                val utxo = UTXO(
-                    Sha256Hash.wrap(txHash),
-                    txIndex,
-                    Coin.valueOf(value),
-                    0,
-                    false,
-                    null,
-                    null
-                )
-                utxos.add(utxo)
-            }
-            utxos
-        } catch (e: Exception) {
-            e.printStackTrace()
-            null
-        }
-    }
-
-    // ====================== TẠO VÀ KÝ GIAO DỊCH OFFLINE ======================
-    private fun createAndSignTransaction(
-        toAddress: String,
-        amountSat: Long,
-        feeRateSatVb: Int,
-        utxos: List<UTXO>
-    ): Transaction? {
-        return try {
-            val tx = Transaction(params)
-            val address = Address.fromString(params, toAddress)
-            tx.addOutput(Coin.valueOf(amountSat), address)
-
-            var totalInput = 0L
-            for (utxo in utxos) {
-                totalInput += utxo.value.value
-                val outPoint = TransactionOutPoint(params, utxo.index, utxo.hash)
-                val scriptPubKey = ScriptBuilder.createOutputScript(Address.fromString(params, getAddress()))
-                val input = TransactionInput(params, tx, scriptPubKey.program, outPoint)
-                tx.addInput(input)
-            }
-
-            // Sửa lỗi kiểu: chuyển size sang Long
-            val estimatedSize = tx.unsafeBitcoinSerialize().size.toLong() + utxos.size * 107L
-            val fee = (estimatedSize / 1000.0 * feeRateSatVb).toLong().coerceAtLeast(1000)
-            val change = totalInput - amountSat - fee
-            if (change > DUST_THRESHOLD) {
-                tx.addOutput(Coin.valueOf(change), Address.fromString(params, getAddress()))
-            }
-
-            val seedPhrase = cachedSeed ?: return null
-            val key = getPrivateKeyForAddress(seedPhrase, 0)
-
-            for (i in 0 until tx.inputs.size) {
-                val input = tx.inputs[i]
-                val redeemScript = ScriptBuilder.createOutputScript(Address.fromString(params, getAddress()))
-                // Sử dụng đúng API: hashForSignatureWitness nhận ByteArray scriptPubKey
-                val sighash = tx.hashForSignatureWitness(i, redeemScript.program, Transaction.SigHash.ALL, false)
-                val sig = key.sign(sighash)
-                val sigWithHashType = TransactionSignature(sig, Transaction.SigHash.ALL, false).encodeToBitcoin()
-                val witness = TransactionWitness(2)
-                witness.setPush(0, sigWithHashType)
-                witness.setPush(1, key.pubKey)
-                input.setWitness(witness)
-                input.scriptSig = ScriptBuilder.createEmpty()
-            }
-            tx
-        } catch (e: Exception) {
-            e.printStackTrace()
-            null
-        }
-    }
-
-    private fun getPrivateKeyForAddress(seedPhrase: String, index: Int): ECKey {
-        val seed = DeterministicSeed(seedPhrase.split(" "), null, "", 0L)
-        val seedBytes = seed.seedBytes!!
-        var key = HDKeyDerivation.createMasterPrivateKey(seedBytes)
-        val path = listOf(
-            ChildNumber(84, true),
-            ChildNumber(0, true),
-            ChildNumber(0, true),
-            ChildNumber(0, false),
-            ChildNumber(index, false)
-        )
-        for (p in path) key = HDKeyDerivation.deriveChildKey(key, p)
-        return ECKey.fromPrivate(key.privKey)
-    }
-
-    private fun broadcastTxViaApi(hex: String): Boolean {
-        return try {
-            val url = URL("https://mempool.space/api/tx")
-            val conn = url.openConnection() as HttpURLConnection
-            conn.requestMethod = "POST"
-            conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
-            conn.doOutput = true
-            OutputStreamWriter(conn.outputStream).use { writer ->
-                writer.write("tx=$hex")
-                writer.flush()
-            }
-            val responseCode = conn.responseCode
-            responseCode == 200
-        } catch (e: Exception) {
-            e.printStackTrace()
-            false
-        }
-    }
-
-    // ====================== GỬI BTC LINH HOẠT ======================
     fun send(to: String, amountBTC: Double, feeRateSatVb: Int): String {
         if (feeRateSatVb < 1 || feeRateSatVb > 500) {
             throw Exception("Fee rate không hợp lệ (1-500 sat/vB)")
+        }
+        if (!isWalletSynced()) {
+            throw Exception("Ví chưa đồng bộ blockchain, vui lòng đợi")
+        }
+        val wallet = getWallet() ?: throw Exception("Wallet chưa sẵn sàng")
+        val peerGroup = getPeerGroup() ?: throw Exception("PeerGroup null, chưa kết nối mạng")
+        if (peerGroup.connectedPeers.isEmpty()) {
+            throw Exception("Chưa kết nối peer nào, không thể broadcast")
         }
 
         val amountSat = (amountBTC * 1e8).toLong()
@@ -383,66 +266,37 @@ class WalletManager(private val ctx: Context) {
             throw Exception("Số tiền quá nhỏ (dưới 546 satoshi)")
         }
 
-        // Nếu SPV đã đồng bộ, dùng SPV
-        if (isWalletSynced()) {
-            val wallet = getWallet() ?: throw Exception("Wallet chưa sẵn sàng")
-            val peerGroup = getPeerGroup() ?: throw Exception("PeerGroup null, chưa kết nối mạng")
-            if (peerGroup.connectedPeers.isEmpty()) {
-                throw Exception("Chưa kết nối peer nào, không thể broadcast")
-            }
-            val coin = Coin.valueOf(amountSat)
-            val address = Address.fromString(params, to)
-            val req = SendRequest.to(address, coin)
-            req.feePerKb = Coin.valueOf(feeRateSatVb * 1000L)
-            req.ensureMinRequiredFee = true
-            req.signInputs = true
-            req.shuffleOutputs = true
-            req.changeAddress = wallet.currentReceiveAddress()
+        val coin = Coin.valueOf(amountSat)
+        val address = Address.fromString(params, to)
+        val req = SendRequest.to(address, coin)
 
-            try {
-                wallet.completeTx(req)
-            } catch (e: InsufficientMoneyException) {
-                val missing = e.missing?.value ?: 0
-                throw Exception("Không đủ BTC để gửi (thiếu ${missing / 1e8} BTC)")
-            } catch (e: Exception) {
-                throw Exception("Không tạo được transaction: ${e.message}")
-            }
+        req.feePerKb = Coin.valueOf(feeRateSatVb * 1000L)
+        req.ensureMinRequiredFee = true
+        req.signInputs = true
+        req.shuffleOutputs = true
+        req.changeAddress = wallet.currentReceiveAddress()
 
-            try {
-                wallet.commitTx(req.tx)
-            } catch (_: Exception) {}
-
-            try {
-                val broadcastFuture = peerGroup.broadcastTransaction(req.tx)
-                broadcastFuture.future().get()
-            } catch (e: Exception) {
-                throw Exception("Broadcast lỗi: ${e.message}")
-            }
-            return req.tx.getHashAsString()
+        try {
+            wallet.completeTx(req)
+        } catch (e: InsufficientMoneyException) {
+            val missing = e.missing?.value ?: 0
+            throw Exception("Không đủ BTC để gửi (thiếu ${missing / 1e8} BTC)")
+        } catch (e: Exception) {
+            throw Exception("Không tạo được transaction: ${e.message}")
         }
 
-        // SPV chưa đồng bộ: dùng API
-        val address = getAddress()
-        if (address.isEmpty()) throw Exception("Địa chỉ ví không hợp lệ")
+        try {
+            wallet.commitTx(req.tx)
+        } catch (_: Exception) {}
 
-        val utxos = fetchUtxosFromApi(address)
-        if (utxos == null || utxos.isEmpty()) {
-            throw Exception("Không lấy được UTXO từ API (có thể không có đủ số dư)")
+        try {
+            val broadcastFuture = peerGroup.broadcastTransaction(req.tx)
+            broadcastFuture.future().get()
+        } catch (e: Exception) {
+            throw Exception("Broadcast lỗi: ${e.message}")
         }
 
-        val totalBalance = utxos.fold(0L) { acc, utxo -> acc + utxo.value.value }
-        if (totalBalance < amountSat) {
-            throw Exception("Số dư không đủ (cần ${amountSat / 1e8} BTC, có ${totalBalance / 1e8} BTC)")
-        }
-
-        val tx = createAndSignTransaction(to, amountSat, feeRateSatVb, utxos)
-        if (tx == null) throw Exception("Không thể tạo và ký giao dịch")
-
-        val hex = tx.bitcoinSerialize().joinToString("") { "%02x".format(it) }
-        val success = broadcastTxViaApi(hex)
-        if (!success) throw Exception("Broadcast qua API thất bại")
-
-        return tx.getHashAsString()
+        return req.tx.getHashAsString()
     }
 
     private fun getAddressAtIndex(seedPhrase: String, index: Int): String {
