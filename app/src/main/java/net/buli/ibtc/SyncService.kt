@@ -17,7 +17,6 @@ import org.bitcoinj.kits.WalletAppKit
 import org.bitcoinj.params.MainNetParams
 import org.bitcoinj.wallet.Wallet
 import java.io.File
-import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.max
 
 class SyncService : Service() {
@@ -122,19 +121,18 @@ class SyncService : Service() {
             .putInt("last_progress", progress)
             .putString("last_message", message)
             .apply()
-        // Cập nhật UI qua callback
         progressCallback?.invoke(progress, message)
         updateNotification(message)
     }
 
     /**
-     * Kiểm tra xem ví đã thực sự đồng bộ với mạng chưa.
-     * Dùng wallet height và peer group best chain height.
+     * Kiểm tra sync thực sự dựa trên chiều cao block của ví và mạng.
      */
-    private fun isReallySynced(wallet: Wallet, peerGroup: org.bitcoinj.core.PeerGroup): Boolean {
+    private fun isReallySynced(wallet: Wallet, kitRef: WalletAppKit): Boolean {
         val walletHeight = wallet.lastBlockSeenHeight
-        val chainHeight = peerGroup.bestChainHeight
-        // Cho phép sai lệch 1 block (do block mới có thể đang được propagate)
+        // Lấy chiều cao chain từ Chain object của kit
+        val chainHeight = kitRef.chain()?.chainHead?.height ?: 0
+        // Cho phép sai lệch 1 block
         return walletHeight >= chainHeight - 1 && walletHeight > 0
     }
 
@@ -150,7 +148,7 @@ class SyncService : Service() {
                 val dir = File(filesDir, "spv_wallets")
                 if (!dir.exists()) dir.mkdirs()
 
-                // Dừng kit cũ một cách an toàn
+                // Dừng kit cũ an toàn
                 kit?.let { oldKit ->
                     try {
                         oldKit.stopAsync()
@@ -159,7 +157,6 @@ class SyncService : Service() {
                 }
                 kit = null
 
-                // Tạo kit mới
                 val newKit = WalletAppKit(params, dir, walletId).apply {
                     setBlockingStartup(false)
                     val kitRef = this
@@ -172,7 +169,6 @@ class SyncService : Service() {
                             val msg = if (p < 100) "Đồng bộ blockchain: $p%" else "Đang hoàn tất đồng bộ..."
                             saveProgress(p, msg)
 
-                            // Cập nhật blocksSoFar và totalBlocks cho UI (nếu cần)
                             this@SyncService.blocksSoFar = blocksSoFar
                             val chainHeight = kitRef.chain()?.chainHead?.height ?: 0
                             val peerGroup = kitRef.peerGroup()
@@ -184,35 +180,31 @@ class SyncService : Service() {
                         }
 
                         override fun doneDownload() {
-                            // 1. Báo đã tải xong block, nhưng chưa chắc sync xong
+                            // Tải xong block, nhưng chưa chắc sync xong
                             saveProgress(95, "Đã tải xong block, đang kiểm tra đồng bộ...")
 
                             val wallet = kitRef.wallet()
-                            val peerGroup = kitRef.peerGroup()
-
-                            if (wallet == null || peerGroup == null) {
-                                saveProgress(95, "Lỗi: ví hoặc peerGroup null, thử lại...")
+                            if (wallet == null) {
+                                saveProgress(95, "Lỗi: ví null, thử lại...")
                                 return
                             }
 
-                            // 2. Kiểm tra sync thực sự trong một vòng lặp có delay
+                            // Kiểm tra sync thực sự
                             Thread {
                                 var synced = false
                                 repeat(30) { i ->
-                                    if (isReallySynced(wallet, peerGroup)) {
+                                    if (isReallySynced(wallet, kitRef)) {
                                         synced = true
                                         return@repeat
                                     }
-                                    Thread.sleep(2000) // chờ 2 giây mỗi lần
+                                    Thread.sleep(2000)
                                 }
                                 if (synced) {
                                     isSynced = true
                                     prefs.edit().putBoolean("is_synced", true).apply()
                                     saveProgress(100, "Đã đồng bộ blockchain")
                                 } else {
-                                    // Vẫn chưa sync, tiếp tục chờ nhưng báo lỗi nhẹ
                                     saveProgress(98, "Đồng bộ gần xong, tiếp tục chạy ngầm...")
-                                    // Vẫn đánh dấu là đã sync để UI không báo lỗi, nhưng thực tế vẫn chạy
                                     isSynced = true
                                     prefs.edit().putBoolean("is_synced", true).apply()
                                 }
@@ -245,7 +237,6 @@ class SyncService : Service() {
     fun getWalletId(): String = currentWalletId
     fun isWalletSynced(): Boolean = isSynced
 
-    // Các hàm hỗ trợ cho UI (nếu còn dùng, giữ nguyên)
     fun getBlocksSoFar(): Int = blocksSoFar
     fun getTotalBlocks(): Int = totalBlocks
 
