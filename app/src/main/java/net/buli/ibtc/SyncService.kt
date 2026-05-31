@@ -37,9 +37,11 @@ class SyncService : Service() {
     // Watchdog & sync loop control
     @Volatile private var isWatchdogRunning = false
     @Volatile private var isSyncLoopRunning = true
+    @Volatile private var syncCompleted = false   // tránh tạo nhiều syncLoopThread
     private var watchdogThread: Thread? = null
     private var syncLoopThread: Thread? = null
     private var lastWalletHeight = 0
+    private var lastChainHeight = 0   // theo dõi chain height để phát hiện stuck
     private var lastUpdateTime = 0L
 
     companion object {
@@ -137,6 +139,7 @@ class SyncService : Service() {
         return walletHeight >= chainHeight - 1 && walletHeight > 0
     }
 
+    // Watchdog cải tiến: phát hiện stuck dựa trên chain height và wallet height
     private fun startWatchdog(kitRef: WalletAppKit) {
         if (isWatchdogRunning) return
         isWatchdogRunning = true
@@ -149,14 +152,18 @@ class SyncService : Service() {
 
                     val peerGroup = kitRef.peerGroup()
                     val walletHeight = wallet.lastBlockSeenHeight
+                    val chainHeight = kitRef.chain()?.chainHead?.height ?: 0
                     val peers = peerGroup?.connectedPeers?.size ?: 0
                     val timeNow = System.currentTimeMillis()
 
-                    val stuckHeight = (walletHeight == lastWalletHeight) && (lastWalletHeight > 0)
+                    val chainStuck = (chainHeight == lastChainHeight) && chainHeight > 0
+                    val walletStuck = (walletHeight == lastWalletHeight) && walletHeight > 0
+                    val stuck = chainStuck || walletStuck
+
                     val stuckTime = (timeNow - lastUpdateTime) > 30000
                     val inDangerZone = lastProgress in 95..99
 
-                    if (inDangerZone && (peers == 0 || stuckHeight || stuckTime)) {
+                    if (inDangerZone && (peers == 0 || stuck || stuckTime)) {
                         saveProgress(lastProgress, "Mất kết nối peer hoặc đồng bộ đứng, đang khôi phục...")
                         reconnectPeers(kitRef)
                         lastUpdateTime = timeNow
@@ -168,22 +175,42 @@ class SyncService : Service() {
                     }
 
                     lastWalletHeight = walletHeight
+                    lastChainHeight = chainHeight
                     lastUpdateTime = timeNow
                 }
             } catch (_: Exception) { }
         }.apply { start() }
     }
 
+    // Reconnect mạnh: clear discovery cache, restart, ping peers
     private fun reconnectPeers(kitRef: WalletAppKit) {
         try {
             val peerGroup = kitRef.peerGroup() ?: return
+            // 1. stop hoàn toàn
             peerGroup.stopAsync()
-            // Không dùng awaitTerminated để tránh lỗi compile, thay bằng sleep
             Thread.sleep(2000)
+
+            // 2. clear peer discovery cache nếu có
+            try {
+                peerGroup.peerDiscovery?.shutdown()
+            } catch (_: Exception) {}
+
+            // 3. restart sạch
             peerGroup.startAsync()
-            saveProgress(lastProgress, "Đã kết nối lại peer thành công")
+            Thread.sleep(2000)
+
+            // 4. force ping lại các peer (cố gắng)
+            try {
+                peerGroup.peers.forEach { peer ->
+                    try {
+                        peer.ping().get()
+                    } catch (_: Exception) {}
+                }
+            } catch (_: Exception) {}
+
+            saveProgress(lastProgress, "Rebuild peer network OK")
         } catch (e: Exception) {
-            saveProgress(lastProgress, "Lỗi reconnect peer: ${e.message}")
+            saveProgress(lastProgress, "Reconnect failed: ${e.message}")
         }
     }
 
@@ -192,6 +219,7 @@ class SyncService : Service() {
             try {
                 isSynced = false
                 isSyncLoopRunning = true
+                syncCompleted = false
                 prefs.edit().putBoolean("is_synced", false).apply()
 
                 val params = MainNetParams.get()
@@ -218,7 +246,7 @@ class SyncService : Service() {
                             var p = pct.toInt()
                             if (p < 0) p = 0
                             if (p > 100) p = 100
-                            val msg = if (p < 100) "Đồng bộ blockchain: $p%" else "Đang hoàn tất đồng bộ..."
+                            val msg = if (p < 95) "Đồng bộ blockchain: $p%" else "Đang hoàn tất đồng bộ..."
                             saveProgress(p, msg)
 
                             this@SyncService.blocksSoFar = blocksSoFar
@@ -240,22 +268,27 @@ class SyncService : Service() {
                                 return
                             }
 
-                            // Vòng lặp kiểm tra sync tiến trình
+                            // Chỉ tạo sync loop nếu chưa có
+                            if (syncCompleted) return
+                            if (syncLoopThread?.isAlive == true) return
+
                             syncLoopThread = Thread {
                                 var lastPercent = 95
-                                while (isSyncLoopRunning) {
+                                while (isSyncLoopRunning && !syncCompleted) {
                                     if (isReallySynced(wallet, kitRef)) {
                                         isSynced = true
+                                        syncCompleted = true
                                         prefs.edit().putBoolean("is_synced", true).apply()
                                         saveProgress(100, "Đã đồng bộ blockchain")
                                         break
                                     } else {
                                         val chainHeight = kitRef.chain()?.chainHead?.height ?: 0
                                         val walletHeight = wallet.lastBlockSeenHeight
-                                        val percent = if (chainHeight > 0) {
-                                            ((walletHeight.toDouble() / chainHeight) * 100).toInt().coerceIn(95, 99)
-                                        } else {
-                                            95
+                                        // Logic percent mới: không dùng tuyến tính ở 95-99
+                                        val percent = when {
+                                            isReallySynced(wallet, kitRef) -> 100
+                                            walletHeight > chainHeight - 50 -> 97  // gần đến đích
+                                            else -> lastProgress.coerceIn(0, 94)   // giữ nguyên progress từ download listener
                                         }
                                         if (percent != lastPercent) {
                                             lastPercent = percent
@@ -304,6 +337,7 @@ class SyncService : Service() {
         super.onDestroy()
         isSyncLoopRunning = false
         isWatchdogRunning = false
+        syncCompleted = true
         syncLoopThread?.interrupt()
         watchdogThread?.interrupt()
         try {
