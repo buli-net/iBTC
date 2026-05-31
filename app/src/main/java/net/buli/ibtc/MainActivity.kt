@@ -183,45 +183,59 @@ class MainActivity : AppCompatActivity() {
                 var dailyPrice = prefsDaily.getFloat("daily_price", -1f).toDouble()
                 var dailyTimestamp = prefsDaily.getLong("daily_timestamp", 0L)
 
-                if (dailyTimestamp != todayStart || dailyUsd < 0 || dailyPrice < 0) {
-                    dailyUsd = currentUsd
-                    dailyPrice = currentPrice
-                    prefsDaily.edit()
-                        .putFloat("daily_usd", dailyUsd.toFloat())
-                        .putFloat("daily_price", dailyPrice.toFloat())
-                        .putLong("daily_timestamp", todayStart)
-                        .apply()
-                }
-
-                val usdChange = currentUsd - dailyUsd
-                val usdChangePercent = if (dailyUsd > 0) (usdChange / dailyUsd) * 100 else 0.0
-                val usdArrow = when {
-                    usdChange > 0.01 -> "▲"
-                    usdChange < -0.01 -> "▼"
-                    else -> "●"
-                }
-                val usdColor = when {
-                    usdChange > 0.01 -> Color.parseColor("#00C853")
-                    usdChange < -0.01 -> Color.parseColor("#D50000")
-                    else -> Color.GRAY
-                }
-
-                val priceChange = currentPrice - dailyPrice
-                val priceChangePercent = if (dailyPrice > 0) (priceChange / dailyPrice) * 100 else 0.0
-                val priceArrow = when {
-                    priceChange > 0.01 -> "▲"
-                    priceChange < -0.01 -> "▼"
-                    else -> "●"
-                }
-                val priceColor = when {
-                    priceChange > 0.01 -> Color.parseColor("#00C853")
-                    priceChange < -0.01 -> Color.parseColor("#D50000")
-                    else -> Color.GRAY
-                }
+                // Nếu không có giá hoặc giá = 0 (mất mạng), hiển thị màu xám
+                val hasPrice = currentPrice > 0
 
                 runOnUiThread {
                     if (!viewsReady) return@runOnUiThread
                     balanceText.text = String.format(Locale.US, "%.8f BTC", bal)
+
+                    if (!hasPrice) {
+                        // Mất kết nối hoặc không lấy được giá
+                        balanceUsdText.text = "≈ $---"
+                        balanceUsdText.setTextColor(Color.GRAY)
+                        rateText.text = "BTC ---"
+                        rateText.setTextColor(Color.GRAY)
+                        isSyncing = false
+                        return@runOnUiThread
+                    }
+
+                    // Có giá, xử lý màu sắc theo biến động so với đầu ngày
+                    if (dailyTimestamp != todayStart || dailyUsd < 0 || dailyPrice < 0) {
+                        dailyUsd = currentUsd
+                        dailyPrice = currentPrice
+                        prefsDaily.edit()
+                            .putFloat("daily_usd", dailyUsd.toFloat())
+                            .putFloat("daily_price", dailyPrice.toFloat())
+                            .putLong("daily_timestamp", todayStart)
+                            .apply()
+                    }
+
+                    val usdChange = currentUsd - dailyUsd
+                    val usdChangePercent = if (dailyUsd > 0) (usdChange / dailyUsd) * 100 else 0.0
+                    val usdArrow = when {
+                        usdChange > 0.01 -> "▲"
+                        usdChange < -0.01 -> "▼"
+                        else -> "●"
+                    }
+                    val usdColor = when {
+                        usdChange > 0.01 -> Color.parseColor("#00C853")   // xanh
+                        usdChange < -0.01 -> Color.parseColor("#D50000")   // đỏ
+                        else -> Color.parseColor("#F7931A")                // cam (không đổi)
+                    }
+
+                    val priceChange = currentPrice - dailyPrice
+                    val priceChangePercent = if (dailyPrice > 0) (priceChange / dailyPrice) * 100 else 0.0
+                    val priceArrow = when {
+                        priceChange > 0.01 -> "▲"
+                        priceChange < -0.01 -> "▼"
+                        else -> "●"
+                    }
+                    val priceColor = when {
+                        priceChange > 0.01 -> Color.parseColor("#00C853")
+                        priceChange < -0.01 -> Color.parseColor("#D50000")
+                        else -> Color.parseColor("#F7931A")
+                    }
 
                     balanceUsdText.setTextColor(usdColor)
                     balanceUsdText.text = String.format(
@@ -262,6 +276,11 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread {
                     if (viewsReady) {
                         spvStatusText.text = "SPV: Lỗi cập nhật"
+                        // Nếu lỗi, hiển thị màu xám cho USD và BTC
+                        balanceUsdText.text = "≈ $---"
+                        balanceUsdText.setTextColor(Color.GRAY)
+                        rateText.text = "BTC ---"
+                        rateText.setTextColor(Color.GRAY)
                     }
                     isSyncing = false
                 }
@@ -1296,7 +1315,7 @@ class MainActivity : AppCompatActivity() {
     private fun showInfo() {
         AlertDialog.Builder(this)
             .setTitle("iBTC v4.7")
-            .setMessage("Build: 2026-05-30\n• SPV 100%\n• Foreground service\n• Gửi BTC\n• Biểu đồ giá nhỏ real-time (xanh/đỏ theo xu hướng)")
+            .setMessage("Build: 2026-05-30\n• SPV 100%\n• Foreground service\n• Gửi BTC\n• Biểu đồ giá nhỏ real-time (xanh/đỏ/cam theo xu hướng)")
             .setPositiveButton("OK", null)
             .show()
     }
