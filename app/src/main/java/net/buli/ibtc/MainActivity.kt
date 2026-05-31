@@ -16,7 +16,6 @@ import android.os.Handler
 import android.os.Looper
 import android.text.InputType
 import android.text.method.PasswordTransformationMethod
-import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -29,8 +28,8 @@ import com.github.mikephil.charting.data.*
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
 import com.journeyapps.barcodescanner.ScanContract
-import org.json.JSONObject
 import org.json.JSONArray
+import org.json.JSONObject
 import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.*
@@ -64,15 +63,43 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var sparkline: LineChart
 
+    private var currentBalanceBtc = 0.0
+    private var currentBtcPrice = 0.0
+
     private val qrScanLauncher = registerForActivityResult(ScanContract()) { result ->
         result.contents?.let { raw ->
-            val cleanAddress = raw
-                .removePrefix("bitcoin:")
-                .substringBefore("?")
-                .substringBefore("&")
+            val cleanAddress = raw.removePrefix("bitcoin:").substringBefore("?")
             pendingAddressInput?.setText(cleanAddress)
             toast("Đã quét: ${cleanAddress.take(10)}...")
         }
+    }
+
+    private fun getColorForProgress(progress: Int): Int {
+        val p = progress.coerceIn(0, 100)
+        val r: Float
+        val g: Float
+        val b: Float
+        when {
+            p <= 50 -> {
+                val factor = p / 50f
+                r = factor * 255f
+                g = 255f
+                b = 0f
+            }
+            p <= 75 -> {
+                val factor = (p - 50) / 25f
+                r = 255f
+                g = 255f - factor * (255f - 165f)
+                b = 0f
+            }
+            else -> {
+                val factor = (p - 75) / 25f
+                r = 255f
+                g = 165f - factor * 165f
+                b = 0f
+            }
+        }
+        return Color.rgb(r.toInt(), g.toInt(), b.toInt())
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -102,18 +129,19 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        
         if (viewsReady) {
             SyncService.getInstance()?.setProgressCallback { pct, txt ->
                 runOnUiThread {
                     if (viewsReady) {
                         spvStatusText.text = "SPV: $txt"
                         spvProgressBar.progress = pct
+                        spvProgressBar.progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(pct))
+                        fetchAndUpdatePrice()
+                        updateSyncProgress()
                     }
                 }
             }
         }
-        
         if (walletManager.isLocked()) {
             try {
                 if (walletManager.getActiveId() != null || walletManager.hasWallets()) {
@@ -155,252 +183,167 @@ class MainActivity : AppCompatActivity() {
         return calendar.timeInMillis
     }
 
-    // ============= API FALLBACK (cải tiến lịch sử giao dịch) =============
-    private fun fetchBalanceFromApi(address: String): Double? {
-        if (address.isEmpty()) return null
-        // Thử blockchain.info trước
-        try {
-            val url = URL("https://blockchain.info/q/addressbalance/$address")
-            val balanceSat = url.readText().trim().toLong()
-            return balanceSat / 1e8
-        } catch (e: Exception) {
-            // Nếu lỗi, thử mempool.space
-            try {
-                val url = URL("https://mempool.space/api/address/$address")
-                val json = url.readText()
-                val obj = JSONObject(json)
-                val chainStats = obj.getJSONObject("chain_stats")
-                val funded = chainStats.getLong("funded_txo_sum")
-                val spent = chainStats.getLong("spent_txo_sum")
-                val balanceSat = funded - spent
-                return balanceSat / 1e8
-            } catch (e2: Exception) {
-                Log.e("iBTC", "fetchBalanceFromApi: both APIs failed", e2)
-                return null
+    private fun fetchAndUpdatePrice() {
+        Thread {
+            val price = walletManager.price()
+            runOnUiThread {
+                if (viewsReady) updatePriceUI(price)
             }
-        }
+        }.start()
     }
 
-    private fun fetchTransactionsFromApi(address: String): List<TransactionInfo>? {
-        if (address.isEmpty()) return null
-        
-        // 1. Thử mempool.space (lấy toàn bộ lịch sử qua /txs/chain)
-        try {
-            val url = URL("https://mempool.space/api/address/$address/txs/chain")
-            val json = url.readText()
-            val txsArray = JSONArray(json)
-            val list = mutableListOf<TransactionInfo>()
-            for (i in 0 until txsArray.length()) {
-                val tx = txsArray.getJSONObject(i)
-                val hash = tx.getString("txid")
-                val time = tx.getLong("received") * 1000
-                var amount = 0.0
-                val vout = tx.getJSONArray("vout")
-                var isReceive = false
-                for (j in 0 until vout.length()) {
-                    val out = vout.getJSONObject(j)
-                    val scriptpubkey = out.getJSONObject("scriptpubkey")
-                    val outAddr = scriptpubkey.optString("address")
-                    if (outAddr == address) {
-                        amount += out.getLong("value") / 1e8
-                        isReceive = true
+    private fun updatePriceUI(price: Double) {
+        currentBtcPrice = price
+        val hasPrice = price > 0
+        if (!hasPrice) {
+            rateText.text = "BTC ---"
+            rateText.setTextColor(Color.GRAY)
+            balanceUsdText.text = "≈ $---"
+            balanceUsdText.setTextColor(Color.GRAY)
+            return
+        }
+
+        val prefsDaily = getSharedPreferences("daily_mark", Context.MODE_PRIVATE)
+        val todayStart = getTodayUtcStart()
+        var dailyPrice = prefsDaily.getFloat("daily_price", -1f).toDouble()
+        var dailyTimestamp = prefsDaily.getLong("daily_timestamp", 0L)
+
+        if (dailyTimestamp != todayStart || dailyPrice < 0) {
+            dailyPrice = price
+            prefsDaily.edit()
+                .putFloat("daily_price", dailyPrice.toFloat())
+                .putLong("daily_timestamp", todayStart)
+                .apply()
+        }
+
+        val priceChange = price - dailyPrice
+        val priceChangePercent = if (dailyPrice > 0) (priceChange / dailyPrice) * 100 else 0.0
+        val priceArrow = when {
+            priceChange > 0.01 -> "▲"
+            priceChange < -0.01 -> "▼"
+            else -> "●"
+        }
+        val priceColor = when {
+            priceChange > 0.01 -> Color.parseColor("#00C853")
+            priceChange < -0.01 -> Color.parseColor("#D50000")
+            else -> Color.parseColor("#F7931A")
+        }
+
+        rateText.setTextColor(priceColor)
+        rateText.text = String.format(Locale.US, "BTC $%,.2f %s %+.2f%% (%+.2f$)", price, priceArrow, priceChangePercent, priceChange)
+
+        val currentUsd = currentBalanceBtc * price
+        var dailyUsd = prefsDaily.getFloat("daily_usd", -1f).toDouble()
+        if (dailyTimestamp != todayStart || dailyUsd < 0) {
+            dailyUsd = currentUsd
+            prefsDaily.edit().putFloat("daily_usd", dailyUsd.toFloat()).apply()
+        }
+
+        val usdChange = currentUsd - dailyUsd
+        val usdChangePercent = when {
+            dailyUsd == 0.0 && currentUsd > 0 -> 100.0
+            dailyUsd == 0.0 && currentUsd == 0.0 -> 0.0
+            else -> (usdChange / dailyUsd) * 100
+        }
+        val usdArrow = when {
+            usdChange > 0.01 -> "▲"
+            usdChange < -0.01 -> "▼"
+            else -> "●"
+        }
+        val usdColor = when {
+            usdChange > 0.01 -> Color.parseColor("#00C853")
+            usdChange < -0.01 -> Color.parseColor("#D50000")
+            else -> Color.parseColor("#F7931A")
+        }
+        balanceUsdText.setTextColor(usdColor)
+        balanceUsdText.text = String.format(Locale.US, "≈ $%,.2f %s %+.2f%% (%+.2f$)", currentUsd, usdArrow, usdChangePercent, usdChange)
+    }
+
+    private fun fetchBalanceAndTxFromApi(address: String, callback: (Double, List<TransactionInfo>) -> Unit) {
+        Thread {
+            try {
+                val url = URL("https://blockchain.info/address/$address?format=json")
+                val json = url.openStream().bufferedReader().readText()
+                val obj = JSONObject(json)
+                val finalBalance = obj.getLong("final_balance") / 1e8
+                val txsArray = obj.getJSONArray("txs")
+                val transactions = mutableListOf<TransactionInfo>()
+                for (i in 0 until txsArray.length()) {
+                    val txObj = txsArray.getJSONObject(i)
+                    val txHash = txObj.getString("hash")
+                    val time = txObj.getLong("time") * 1000
+                    val inputs = txObj.getJSONArray("inputs")
+                    val outputs = txObj.getJSONArray("out")
+                    var amount = 0.0
+                    var type = ""
+                    var isSend = false
+                    for (j in 0 until inputs.length()) {
+                        val prevOut = inputs.getJSONObject(j).optJSONObject("prev_out")
+                        if (prevOut != null && prevOut.optString("addr") == address) {
+                            isSend = true
+                            break
+                        }
                     }
-                }
-                if (!isReceive) {
-                    val vin = tx.getJSONArray("vin")
-                    for (j in 0 until vin.length()) {
-                        val inp = vin.getJSONObject(j)
-                        val prevout = inp.optJSONObject("prevout")
-                        if (prevout != null) {
-                            val scriptpubkey = prevout.getJSONObject("scriptpubkey")
-                            val inpAddr = scriptpubkey.optString("address")
-                            if (inpAddr == address) {
-                                amount -= prevout.getLong("value") / 1e8
+                    if (isSend) {
+                        var sent = 0.0
+                        for (j in 0 until outputs.length()) {
+                            val out = outputs.getJSONObject(j)
+                            if (out.optString("addr") != address) {
+                                sent += out.getLong("value") / 1e8
                             }
                         }
-                    }
-                }
-                val type = if (amount > 0) "RECEIVE" else "SEND"
-                if (kotlin.math.abs(amount) > 0) { // bỏ qua giao dịch 0 BTC
-                    list.add(TransactionInfo(hash, kotlin.math.abs(amount), type, Date(time)))
-                }
-            }
-            if (list.isNotEmpty()) {
-                return list.sortedByDescending { it.time }
-            }
-        } catch (e: Exception) {
-            Log.e("iBTC", "mempool.space txs failed", e)
-        }
-
-        // 2. Fallback sang blockchain.info
-        try {
-            val url = URL("https://blockchain.info/rawaddr/$address")
-            val json = url.readText()
-            val obj = JSONObject(json)
-            val txsArray = obj.getJSONArray("txs")
-            val list = mutableListOf<TransactionInfo>()
-            for (i in 0 until txsArray.length()) {
-                val tx = txsArray.getJSONObject(i)
-                val hash = tx.getString("hash")
-                val time = tx.getLong("time") * 1000
-                var amount = 0.0
-                val outputs = tx.getJSONArray("out")
-                var isReceive = false
-                for (j in 0 until outputs.length()) {
-                    val out = outputs.getJSONObject(j)
-                    val outAddr = out.optJSONObject("addr")?.optString("addr") ?: continue
-                    if (outAddr == address) {
-                        amount += out.getLong("value") / 1e8
-                        isReceive = true
-                    }
-                }
-                if (!isReceive) {
-                    val inputs = tx.getJSONArray("inputs")
-                    for (j in 0 until inputs.length()) {
-                        val inp = inputs.getJSONObject(j)
-                        val prevOut = inp.getJSONObject("prev_out")
-                        val inpAddr = prevOut.optString("addr")
-                        if (inpAddr == address) {
-                            amount -= prevOut.getLong("value") / 1e8
+                        amount = sent
+                        type = "SEND"
+                    } else {
+                        var received = 0.0
+                        for (j in 0 until outputs.length()) {
+                            val out = outputs.getJSONObject(j)
+                            if (out.optString("addr") == address) {
+                                received += out.getLong("value") / 1e8
+                            }
                         }
+                        amount = received
+                        type = "RECEIVE"
+                    }
+                    if (amount > 0) {
+                        transactions.add(TransactionInfo(txHash, amount, type, Date(time)))
                     }
                 }
-                val type = if (amount > 0) "RECEIVE" else "SEND"
-                if (kotlin.math.abs(amount) > 0) {
-                    list.add(TransactionInfo(hash, kotlin.math.abs(amount), type, Date(time)))
-                }
+                transactions.sortByDescending { it.time }
+                callback(finalBalance, transactions)
+            } catch (e: Exception) {
+                e.printStackTrace()
+                callback(0.0, emptyList())
             }
-            if (list.isNotEmpty()) {
-                return list.sortedByDescending { it.time }
-            }
-        } catch (e: Exception) {
-            Log.e("iBTC", "blockchain.info txs failed", e)
-        }
-
-        // 3. Fallback cuối: trả về null (không có dữ liệu)
-        return null
+        }.start()
     }
-
-    private fun fetchPriceFromApi(): Double? {
-        return try {
-            val url = URL("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT")
-            val json = url.readText()
-            JSONObject(json).getString("price").toDouble()
-        } catch (e: Exception) {
-            null
-        }
-    }
-    // ========================================================
 
     private fun refreshWalletFromSPV() {
-        if (isSyncing) return
-        
+        runOnUiThread {
+            if (viewsReady) {
+                addressText.text = "Địa chỉ: ${walletManager.getAddress()}"
+            }
+        }
+        fetchAndUpdatePrice()
+
         val isSynced = walletManager.isWalletSynced()
-        val address = walletManager.getAddress()
-        
-        // Nếu SPV chưa sync hoặc address rỗng -> dùng API
-        if (!isSynced || address.isEmpty()) {
+
+        if (!isSynced) {
             runOnUiThread {
-                if (viewsReady) {
-                    spvStatusText.text = if (address.isEmpty()) "SPV: Chưa có địa chỉ (đang chờ khởi tạo)..." else "SPV: Đang đồng bộ (hiển thị tạm từ API)..."
-                }
+                if (viewsReady) spvStatusText.text = "SPV: Đang đồng bộ (hiển thị dữ liệu từ API)..."
             }
-            if (address.isEmpty()) {
-                runOnUiThread {
-                    if (viewsReady) {
-                        balanceText.text = "--- BTC"
-                        balanceUsdText.text = "≈ $---"
-                        rateText.text = "BTC ---"
-                        txListView.adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_list_item_1, listOf("Chưa có địa chỉ ví"))
-                    }
-                }
-                return
-            }
-            
-            Thread {
-                try {
-                    val balanceApi = fetchBalanceFromApi(address)
-                    val txsApi = fetchTransactionsFromApi(address)
-                    val priceApi = fetchPriceFromApi()
-                    val currentPrice = priceApi ?: walletManager.price()
-                    val currentUsd = (balanceApi ?: 0.0) * currentPrice
-
-                    // Lấy daily change từ SharedPreferences
-                    val prefsDaily = getSharedPreferences("daily_mark", Context.MODE_PRIVATE)
-                    val todayStart = getTodayUtcStart()
-                    var dailyUsd = prefsDaily.getFloat("daily_usd", -1f).toDouble()
-                    var dailyPrice = prefsDaily.getFloat("daily_price", -1f).toDouble()
-                    var dailyTimestamp = prefsDaily.getLong("daily_timestamp", 0L)
-
-                    if (dailyTimestamp != todayStart || dailyUsd < 0 || dailyPrice < 0) {
-                        dailyUsd = currentUsd
-                        dailyPrice = currentPrice
-                        prefsDaily.edit()
-                            .putFloat("daily_usd", dailyUsd.toFloat())
-                            .putFloat("daily_price", dailyPrice.toFloat())
-                            .putLong("daily_timestamp", todayStart)
-                            .apply()
-                    }
-
-                    val usdChange = currentUsd - dailyUsd
-                    val usdChangePercent = if (dailyUsd > 0) (usdChange / dailyUsd) * 100 else 0.0
-                    val usdArrow = when {
-                        usdChange > 0.01 -> "▲"
-                        usdChange < -0.01 -> "▼"
-                        else -> "●"
-                    }
-                    val usdColor = when {
-                        usdChange > 0.01 -> Color.parseColor("#00C853")
-                        usdChange < -0.01 -> Color.parseColor("#D50000")
-                        else -> Color.GRAY
-                    }
-
-                    val priceChange = currentPrice - dailyPrice
-                    val priceChangePercent = if (dailyPrice > 0) (priceChange / dailyPrice) * 100 else 0.0
-                    val priceArrow = when {
-                        priceChange > 0.01 -> "▲"
-                        priceChange < -0.01 -> "▼"
-                        else -> "●"
-                    }
-                    val priceColor = when {
-                        priceChange > 0.01 -> Color.parseColor("#00C853")
-                        priceChange < -0.01 -> Color.parseColor("#D50000")
-                        else -> Color.GRAY
-                    }
-
+            val address = walletManager.getAddress()
+            if (address.isNotEmpty()) {
+                fetchBalanceAndTxFromApi(address) { balance, transactions ->
                     runOnUiThread {
-                        if (!viewsReady) return@runOnUiThread
-
-                        if (balanceApi != null) {
-                            balanceText.text = String.format(Locale.US, "%.8f BTC", balanceApi)
-                        } else {
-                            balanceText.text = "--- BTC"
-                        }
-
-                        balanceUsdText.setTextColor(usdColor)
-                        balanceUsdText.text = if (balanceApi != null) {
-                            String.format(
-                                Locale.US,
-                                "≈ $%,.2f %s %+.2f%% (%+.2f$)",
-                                currentUsd, usdArrow, usdChangePercent, usdChange
-                            )
-                        } else {
-                            "≈ $---"
-                        }
-
-                        rateText.setTextColor(priceColor)
-                        rateText.text = String.format(
-                            Locale.US,
-                            "BTC $%,.2f %s %+.2f%% (%+.2f$)",
-                            currentPrice, priceArrow, priceChangePercent, priceChange
-                        )
-
-                        // Hiển thị lịch sử giao dịch
-                        if (txsApi != null && txsApi.isNotEmpty()) {
-                            val adapter = object : ArrayAdapter<String>(this@MainActivity, android.R.layout.simple_list_item_2, android.R.id.text1, txsApi.map { "" }) {
+                        if (viewsReady) {
+                            currentBalanceBtc = balance
+                            balanceText.text = String.format(Locale.US, "%.8f BTC", balance)
+                            if (currentBtcPrice > 0) updatePriceUI(currentBtcPrice)
+                            val adapter = object : ArrayAdapter<String>(this@MainActivity, android.R.layout.simple_list_item_2, android.R.id.text1, transactions.map { "" }) {
                                 override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
                                     val view = super.getView(position, convertView, parent)
-                                    val tx = txsApi[position]
+                                    val tx = transactions[position]
                                     val text1 = view.findViewById<TextView>(android.R.id.text1)
                                     val text2 = view.findViewById<TextView>(android.R.id.text2)
                                     val isDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
@@ -414,102 +357,28 @@ class MainActivity : AppCompatActivity() {
                                 }
                             }
                             txListView.adapter = adapter
-                        } else {
-                            // Nếu không có giao dịch, hiển thị thông báo thân thiện
-                            txListView.adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_list_item_1, listOf("Chưa có giao dịch nào"))
-                        }
-                    }
-                } catch (e: Exception) {
-                    Log.e("iBTC", "API fallback error", e)
-                    runOnUiThread {
-                        if (viewsReady) {
-                            balanceText.text = "--- BTC"
-                            balanceUsdText.text = "≈ $---"
-                            rateText.text = "BTC ---"
-                            txListView.adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_list_item_1, listOf("Lỗi kết nối mạng"))
                         }
                     }
                 }
-            }.start()
+            }
             return
         }
-        
-        // SPV đã sync -> dùng dữ liệu từ walletManager
+
+        if (isSyncing) return
         isSyncing = true
         runOnUiThread {
-            if (viewsReady) {
-                spvStatusText.text = "SPV: Đang cập nhật số dư..."
-            }
+            if (viewsReady) spvStatusText.text = "SPV: Đang cập nhật số dư..."
         }
         Thread {
             try {
                 val bal = walletManager.getBalance()
                 val txs = walletManager.getTransactions()
-                val currentPrice = walletManager.price()
-                val currentUsd = bal * currentPrice
-
-                val prefsDaily = getSharedPreferences("daily_mark", Context.MODE_PRIVATE)
-                val todayStart = getTodayUtcStart()
-                var dailyUsd = prefsDaily.getFloat("daily_usd", -1f).toDouble()
-                var dailyPrice = prefsDaily.getFloat("daily_price", -1f).toDouble()
-                var dailyTimestamp = prefsDaily.getLong("daily_timestamp", 0L)
-
-                if (dailyTimestamp != todayStart || dailyUsd < 0 || dailyPrice < 0) {
-                    dailyUsd = currentUsd
-                    dailyPrice = currentPrice
-                    prefsDaily.edit()
-                        .putFloat("daily_usd", dailyUsd.toFloat())
-                        .putFloat("daily_price", dailyPrice.toFloat())
-                        .putLong("daily_timestamp", todayStart)
-                        .apply()
-                }
-
-                val usdChange = currentUsd - dailyUsd
-                val usdChangePercent = if (dailyUsd > 0) (usdChange / dailyUsd) * 100 else 0.0
-                val usdArrow = when {
-                    usdChange > 0.01 -> "▲"
-                    usdChange < -0.01 -> "▼"
-                    else -> "●"
-                }
-                val usdColor = when {
-                    usdChange > 0.01 -> Color.parseColor("#00C853")
-                    usdChange < -0.01 -> Color.parseColor("#D50000")
-                    else -> Color.GRAY
-                }
-
-                val priceChange = currentPrice - dailyPrice
-                val priceChangePercent = if (dailyPrice > 0) (priceChange / dailyPrice) * 100 else 0.0
-                val priceArrow = when {
-                    priceChange > 0.01 -> "▲"
-                    priceChange < -0.01 -> "▼"
-                    else -> "●"
-                }
-                val priceColor = when {
-                    priceChange > 0.01 -> Color.parseColor("#00C853")
-                    priceChange < -0.01 -> Color.parseColor("#D50000")
-                    else -> Color.GRAY
-                }
-
                 runOnUiThread {
                     if (!viewsReady) return@runOnUiThread
+                    currentBalanceBtc = bal
                     balanceText.text = String.format(Locale.US, "%.8f BTC", bal)
+                    if (currentBtcPrice > 0) updatePriceUI(currentBtcPrice)
 
-                    balanceUsdText.setTextColor(usdColor)
-                    balanceUsdText.text = String.format(
-                        Locale.US,
-                        "≈ $%,.2f %s %+.2f%% (%+.2f$)",
-                        currentUsd, usdArrow, usdChangePercent, usdChange
-                    )
-
-                    rateText.setTextColor(priceColor)
-                    rateText.text = String.format(
-                        Locale.US,
-                        "BTC $%,.2f %s %+.2f%% (%+.2f$)",
-                        currentPrice, priceArrow, priceChangePercent, priceChange
-                    )
-
-                    val addr = walletManager.getAddress()
-                    addressText.text = "Địa chỉ: $addr"
                     val adapter = object : ArrayAdapter<String>(this@MainActivity, android.R.layout.simple_list_item_2, android.R.id.text1, txs.map { "" }) {
                         override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
                             val view = super.getView(position, convertView, parent)
@@ -531,9 +400,7 @@ class MainActivity : AppCompatActivity() {
                 }
             } catch (e: Exception) {
                 runOnUiThread {
-                    if (viewsReady) {
-                        spvStatusText.text = "SPV: Lỗi cập nhật"
-                    }
+                    if (viewsReady) spvStatusText.text = "SPV: Lỗi cập nhật"
                     isSyncing = false
                 }
             }
@@ -545,7 +412,7 @@ class MainActivity : AppCompatActivity() {
         autoRefreshStarted = true
         handler.postDelayed(object : Runnable {
             override fun run() {
-                if (walletManager.getActive() != null && !isSyncing && !isFinishing && !isDestroyed) {
+                if (walletManager.getActive() != null && !isFinishing && !isDestroyed) {
                     refreshWalletFromSPV()
                 }
                 if (!isFinishing && !isDestroyed) {
@@ -558,16 +425,22 @@ class MainActivity : AppCompatActivity() {
     private fun fetchBlockUpdate() {
         Thread {
             try {
-                val json = URL("https://mempool.space/api/v1/blocks").openStream().bufferedReader().readText()
-                val height = Regex("\"height\":(\\d+)").find(json)?.groupValues?.get(1)?.toInt() ?: 0
-                val lastTime = Regex("\"timestamp\":(\\d+)").find(json)?.groupValues?.get(1)?.toLong() ?: 0L
+                val url = URL("https://mempool.space/api/v1/blocks")
+                val json = url.openStream().bufferedReader().readText()
+                val jsonArray = JSONArray(json)
+                if (jsonArray.length() == 0) throw Exception("Empty array")
+                val obj = jsonArray.getJSONObject(0)
+                val height = obj.getInt("height")
+                val lastTime = obj.getLong("timestamp")
                 val nextHeight = height + 1
                 val elapsed = (System.currentTimeMillis() / 1000 - lastTime).coerceAtLeast(0)
-                val percent = ((elapsed * 100) / 600).toInt()
+                var percent = ((elapsed * 100) / 600).toInt()
+                if (percent > 100) percent = 100
                 val remain = 600 - elapsed
                 runOnUiThread {
                     if (viewsReady) {
-                        blockProgressBar.progress = percent.coerceAtMost(100)
+                        blockProgressBar.progress = percent
+                        blockProgressBar.progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(percent))
                         if (remain >= 0) {
                             val mins = remain / 60
                             val secs = remain % 60
@@ -581,10 +454,12 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             } catch (e: Exception) {
+                e.printStackTrace()
                 runOnUiThread {
                     if (viewsReady) {
                         blockText.text = "Lỗi pool - tự thử lại"
                         blockProgressBar.progress = 0
+                        blockProgressBar.progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(0))
                     }
                 }
             }
@@ -595,51 +470,124 @@ class MainActivity : AppCompatActivity() {
         Thread {
             try {
                 val height = URL("https://mempool.space/api/blocks/tip/height").readText().trim().toInt()
+
                 val halvings = height / 210000
+                val totalHalvings = 32
+                val halvingProgress = (halvings.toFloat() / totalHalvings * 100).toInt()
+
                 val reward = 50.0 / Math.pow(2.0, halvings.toDouble())
+                val rewardPct = ((reward / 50.0) * 100).toInt()
+
                 val nextHalving = (halvings + 1) * 210000
                 val blocksToHalving = nextHalving - height
+                val daysRemaining = if (blocksToHalving > 0) blocksToHalving / 144 else 0
+                val halvingProgressValue = if (blocksToHalving <= 0) 100 else ((1 - blocksToHalving / 210000.0) * 100).toInt()
+                val nextHalvingNumber = halvings + 1
+                val halvingText = if (blocksToHalving <= 0) {
+                    "Halving #$nextHalvingNumber đã diễn ra (100%)"
+                } else {
+                    "Halving #$nextHalvingNumber: còn $blocksToHalving blocks (~$daysRemaining ngày) - ${halvingProgressValue}%"
+                }
+
                 val totalSats = URL("https://blockchain.info/q/totalbc").readText().trim().toLong()
                 val totalMined = totalSats / 100000000.0
+                val minedPct = ((totalMined / 21000000.0) * 100).toInt()
+
                 val diffJson = URL("https://mempool.space/api/v1/difficulty-adjustment").readText()
-                val diffProgress = Regex("\"progressPercent\":([\\d.]+)").find(diffJson)?.groupValues?.get(1)?.toFloat() ?: 0f
+                val diffObj = JSONObject(diffJson)
+                val diffProgress = diffObj.getDouble("progressPercent").toFloat()
+
                 val mempoolJson = URL("https://mempool.space/api/mempool").readText()
-                val mempoolCount = Regex("\"count\":(\\d+)").find(mempoolJson)?.groupValues?.get(1)?.toInt() ?: 0
+                val mempoolObj = JSONObject(mempoolJson)
+                val mempoolCount = mempoolObj.getInt("count")
+                val mempoolPct = (mempoolCount / 300000.0 * 100).toInt().coerceAtMost(100)
+
                 val feesJson = URL("https://mempool.space/api/v1/fees/recommended").readText()
-                val feeFast = Regex("\"fastestFee\":(\\d+)").find(feesJson)?.groupValues?.get(1)?.toInt() ?: 0
+                val feesObj = JSONObject(feesJson)
+                val feeFast = feesObj.getInt("fastestFee")
+                val feePct = feeFast.coerceAtMost(100)
+
                 val hashJson = URL("https://mempool.space/api/v1/mining/hashrate/1w").readText()
-                val currentHash = Regex("\"currentHashrate\":([\\d.]+)").find(hashJson)?.groupValues?.get(1)?.toDouble() ?: 0.0
+                val hashObj = JSONObject(hashJson)
+                val currentHash = hashObj.getDouble("currentHashrate")
+                val hashEh = currentHash / 1e18
+
+                val blocksToday = height % 144
+                val todayPct = (blocksToday * 100 / 144)
+                val heightPct = height % 100
+
                 runOnUiThread {
                     if (viewsReady) {
-                        val minedPct = ((totalMined / 21000000.0) * 100).toInt()
-                        statBars["mined"]?.progress = minedPct
+                        statBars["mined"]?.apply {
+                            progress = minedPct
+                            progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(minedPct))
+                        }
                         statTexts["mined"]?.text = "Đã khai thác: ${String.format("%.2f", totalMined)} / 21M BTC ($minedPct%)"
-                        val halvingPct = ((1 - blocksToHalving / 210000.0) * 100).toInt()
-                        statBars["halving"]?.progress = halvingPct
-                        statTexts["halving"]?.text = "Halving #${halvings + 1}: còn $blocksToHalving blocks (~${blocksToHalving / 144} ngày)"
-                        val rewardPct = ((reward / 50.0) * 100).toInt()
-                        statBars["reward"]?.progress = rewardPct
+
+                        statBars["halvingCount"]?.apply {
+                            progress = halvingProgress
+                            progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(halvingProgress))
+                        }
+                        statTexts["halvingCount"]?.text = "Halving count: $halvings / $totalHalvings ($halvingProgress%)"
+
+                        statBars["halving"]?.apply {
+                            progress = halvingProgressValue
+                            progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(halvingProgressValue))
+                        }
+                        statTexts["halving"]?.text = halvingText
+
+                        statBars["reward"]?.apply {
+                            progress = rewardPct
+                            progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(rewardPct))
+                        }
                         statTexts["reward"]?.text = "Thưởng block: $reward BTC (ban đầu 50 BTC)"
-                        statBars["diff"]?.progress = diffProgress.toInt()
+
+                        statBars["diff"]?.apply {
+                            progress = diffProgress.toInt()
+                            progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(diffProgress.toInt()))
+                        }
                         statTexts["diff"]?.text = "Difficulty adj: ${String.format("%.1f", diffProgress)}%"
-                        val mempoolPct = (mempoolCount / 300000.0 * 100).toInt().coerceAtMost(100)
-                        statBars["mempool"]?.progress = mempoolPct
+
+                        statBars["mempool"]?.apply {
+                            progress = mempoolPct
+                            progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(mempoolPct))
+                        }
                         statTexts["mempool"]?.text = "Mempool: $mempoolCount tx chờ"
-                        val hashEh = currentHash / 1e18
-                        statBars["hash"]?.progress = 70
+
+                        statBars["hash"]?.apply {
+                            progress = 70
+                            progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(70))
+                        }
                         statTexts["hash"]?.text = "Hashrate: ${String.format("%.0f", hashEh)} EH/s"
-                        statBars["fee"]?.progress = feeFast.coerceAtMost(100)
+
+                        statBars["fee"]?.apply {
+                            progress = feePct
+                            progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(feePct))
+                        }
                         statTexts["fee"]?.text = "Phí nhanh: $feeFast sat/vB"
-                        val blocksToday = height % 144
-                        statBars["today"]?.progress = (blocksToday * 100 / 144)
+
+                        statBars["today"]?.apply {
+                            progress = todayPct
+                            progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(todayPct))
+                        }
                         statTexts["today"]?.text = "Block hôm nay: $blocksToday / 144"
-                        statBars["supply"]?.progress = minedPct
+
+                        statBars["supply"]?.apply {
+                            progress = minedPct
+                            progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(minedPct))
+                        }
                         statTexts["supply"]?.text = "Cung lưu thông: ${String.format("%.2f", totalMined / 1000000)}M BTC"
-                        statBars["height"]?.progress = height % 100
+
+                        statBars["height"]?.apply {
+                            progress = heightPct
+                            progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(heightPct))
+                        }
                         statTexts["height"]?.text = "Block height: #$height"
                     }
                 }
-            } catch (_: Exception) {}
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }.start()
     }
 
@@ -691,10 +639,7 @@ class MainActivity : AppCompatActivity() {
     private fun updateSparkline(closePrices: List<Float>) {
         if (!viewsReady) return
         if (closePrices.isEmpty()) return
-
         val entries = closePrices.mapIndexed { index, price -> Entry(index.toFloat(), price) }
-        val dataSet = LineDataSet(entries, "")
-
         val firstPrice = closePrices.first()
         val lastPrice = closePrices.last()
         val trendColor = when {
@@ -702,8 +647,7 @@ class MainActivity : AppCompatActivity() {
             lastPrice < firstPrice -> Color.parseColor("#D50000")
             else -> Color.parseColor("#F7931A")
         }
-
-        dataSet.apply {
+        val dataSet = LineDataSet(entries, "").apply {
             color = trendColor
             setCircleColor(Color.TRANSPARENT)
             lineWidth = 2f
@@ -714,13 +658,12 @@ class MainActivity : AppCompatActivity() {
             fillAlpha = 50
             mode = LineDataSet.Mode.CUBIC_BEZIER
         }
-
         sparkline.data = LineData(dataSet)
         sparkline.invalidate()
     }
 
     private fun fetchSparkline() {
-        BitcoinChartService.fetchKlines("1h", 30) { klines ->
+        BitcoinChartService.fetchKlines("1h", 24) { klines ->
             if (klines != null && klines.isNotEmpty()) {
                 val closePrices = klines.map { it.close.toFloat() }
                 runOnUiThread { updateSparkline(closePrices) }
@@ -729,6 +672,18 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun dpToPx(dp: Int): Int = (dp * resources.displayMetrics.density).toInt()
+
+    // Hàm cập nhật 1 thanh progress duy nhất (thay thế micro+macro cũ)
+    private fun updateSyncProgress() {
+        val syncService = SyncService.getInstance() ?: return
+        val blocksSoFar = syncService.getBlocksSoFar()
+        val totalBlocks = syncService.getTotalBlocks()
+        if (totalBlocks <= 0) return
+
+        val percent = (blocksSoFar.toDouble() / totalBlocks * 100).toInt().coerceIn(0, 100)
+        spvProgressBar.progress = percent
+        spvProgressBar.progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(percent))
+    }
 
     private fun showWelcome() {
         rootLayout.removeAllViews()
@@ -961,9 +916,9 @@ class MainActivity : AppCompatActivity() {
         spvProgressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100
             progress = 0
-            progressTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#F7931A"))
             scaleY = 2f
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = 4; bottomMargin = 8 }
+            progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(0))
         }
         addressText = TextView(this).apply {
             textSize = 12f
@@ -983,6 +938,7 @@ class MainActivity : AppCompatActivity() {
             max = 100
             progress = 0
             scaleY = 0.7f
+            progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(0))
         }
 
         val btnRow1 = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; weightSum = 2f }
@@ -1045,13 +1001,14 @@ class MainActivity : AppCompatActivity() {
         rootLayout.addView(txListView)
 
         addStat("mined", "Đã khai thác", mainColor)
+        addStat("halvingCount", "Halving count", mainColor)
         addStat("halving", "Halving", mainColor)
-        addStat("reward", "Phần thưởng", mainColor)
+        addStat("reward", "Thưởng block", mainColor)
         addStat("diff", "Difficulty", mainColor)
         addStat("mempool", "Mempool", mainColor)
         addStat("hash", "Hashrate", mainColor)
         addStat("fee", "Phí", mainColor)
-        addStat("today", "Hôm nay", mainColor)
+        addStat("today", "Block hôm nay", mainColor)
         addStat("supply", "Cung", mainColor)
         addStat("height", "Height", mainColor)
 
@@ -1063,6 +1020,7 @@ class MainActivity : AppCompatActivity() {
             fetchBtcStats()
             SyncService.getInstance()?.refreshProgress()
             fetchSparkline()
+            updateSyncProgress()
             toast("Đang làm mới...")
         }
         btnSettings.setOnClickListener { showSettings() }
@@ -1072,6 +1030,8 @@ class MainActivity : AppCompatActivity() {
                 if (viewsReady) {
                     spvStatusText.text = "SPV: $txt"
                     spvProgressBar.progress = pct
+                    spvProgressBar.progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(pct))
+                    updateSyncProgress()
                 }
             }
         }
@@ -1080,6 +1040,9 @@ class MainActivity : AppCompatActivity() {
                 if (viewsReady) {
                     spvStatusText.text = "SPV: $txt"
                     spvProgressBar.progress = pct
+                    spvProgressBar.progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(pct))
+                    fetchAndUpdatePrice()
+                    updateSyncProgress()
                 }
             }
         }
@@ -1089,6 +1052,7 @@ class MainActivity : AppCompatActivity() {
         startAutoRefresh()
         startBlockProgress()
         fetchSparkline()
+        fetchAndUpdatePrice()
     }
 
     private fun showReceiveDialog() {
@@ -1189,6 +1153,14 @@ class MainActivity : AppCompatActivity() {
         val feeEstimateTv = TextView(this).apply { text = "Ước tính phí: -"; setPadding(0,20,0,0) }
         val totalEstimateTv = TextView(this).apply { text = "Tổng (gửi + phí): -" }
 
+        val modeWarningTv = TextView(this).apply {
+            text = ""
+            textSize = 12f
+            setTextColor(Color.parseColor("#FF9800"))
+            setPadding(0,10,0,0)
+            visibility = View.GONE
+        }
+
         layout.addView(toInput)
         layout.addView(scanBtn)
         layout.addView(amountInput)
@@ -1199,6 +1171,7 @@ class MainActivity : AppCompatActivity() {
         layout.addView(customFeeInput)
         layout.addView(feeEstimateTv)
         layout.addView(totalEstimateTv)
+        layout.addView(modeWarningTv)
 
         var priceUsd = 60000.0
         var currentBalance = 0.0
@@ -1225,13 +1198,12 @@ class MainActivity : AppCompatActivity() {
                     else -> feeRates.normal
                 }
 
+                isSpvSynced = walletManager.isWalletSynced()
                 if (!isSpvSynced) {
-                    btn.isEnabled = false
-                    warningTv.text = "⚠️ Ví đang đồng bộ SPV, vui lòng đợi hoàn tất."
-                    warningTv.visibility = View.VISIBLE
-                    feeEstimateTv.text = ""
-                    totalEstimateTv.text = ""
-                    return
+                    modeWarningTv.text = "⚠️ SPV chưa đồng bộ. Vui lòng đợi đồng bộ xong để gửi BTC."
+                    modeWarningTv.visibility = View.VISIBLE
+                } else {
+                    modeWarningTv.visibility = View.GONE
                 }
 
                 if (to.isEmpty() || to.length < 26 || amt <= 0.0) {
@@ -1282,7 +1254,8 @@ class MainActivity : AppCompatActivity() {
 
             Thread {
                 currentBalance = walletManager.getBalance()
-                isSpvSynced = walletManager.isWalletSynced()
+                priceUsd = walletManager.price()
+                if (priceUsd <= 0) priceUsd = 60000.0
                 runOnUiThread {
                     balanceTv.text = "Số dư: ${"%.8f".format(currentBalance)} BTC"
                     updateUI()
@@ -1329,6 +1302,10 @@ class MainActivity : AppCompatActivity() {
                     toast("Địa chỉ BTC không hợp lệ")
                     return@setOnClickListener
                 }
+                if (!isSpvSynced) {
+                    toast("Ví chưa đồng bộ, vui lòng đợi SPV hoàn tất")
+                    return@setOnClickListener
+                }
                 val fee = when (feeGroup.checkedRadioButtonId) {
                     1 -> feeRates.slow
                     3 -> feeRates.fast
@@ -1337,20 +1314,28 @@ class MainActivity : AppCompatActivity() {
                 }
                 val estFee = walletManager.estimateFee(to, amt, fee)
                 dialog.dismiss()
-                confirmSend(to, amt, fee, estFee)
+                confirmSend(to, amt, fee, estFee, false)
             }
             updateUI()
         }
         dialog.show()
     }
 
-    private fun confirmSend(to: String, amt: Double, feeRate: Int, estFee: Double) {
+    private fun confirmSend(to: String, amt: Double, feeRate: Int, estFee: Double, isApiMode: Boolean = false) {
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(30)
         }
         val summary = TextView(this).apply {
-            text = "Gửi: $amt BTC\nĐến: $to\nPhí: ~$estFee BTC\nTổng: ${amt + estFee} BTC"
+            text = buildString {
+                append("Gửi: $amt BTC\n")
+                append("Đến: $to\n")
+                append("Phí: ~$estFee BTC\n")
+                append("Tổng: ${amt + estFee} BTC")
+                if (isApiMode) {
+                    append("\n\n⚠️ LƯU Ý: SPV chưa đồng bộ. Giao dịch sẽ được gửi qua API (vẫn an toàn và riêng tư).")
+                }
+            }
             setPadding(0,0,0,20)
         }
         val passInput = EditText(this).apply {
@@ -1359,23 +1344,21 @@ class MainActivity : AppCompatActivity() {
         }
         layout.addView(summary)
         layout.addView(passInput)
+
         AlertDialog.Builder(this)
             .setTitle("Xác nhận gửi")
             .setView(layout)
             .setPositiveButton("Xác nhận") { _, _ ->
                 val pass = passInput.text.toString()
                 val id = walletManager.getActiveId() ?: return@setPositiveButton
-                
                 if (pass.isEmpty()) {
                     toast("Nhập mật khẩu")
                     return@setPositiveButton
                 }
-                
-                if (!walletManager.checkPassword(pass)) {
+                if (!walletManager.unlock(id, pass)) {
                     toast("Sai mật khẩu")
                     return@setPositiveButton
                 }
-                
                 val delayLayout = LinearLayout(this).apply {
                     orientation = LinearLayout.VERTICAL
                     setPadding(40,30,40,30)
@@ -1464,7 +1447,7 @@ class MainActivity : AppCompatActivity() {
             .setView(pass)
             .setPositiveButton("Xem") { _, _ ->
                 val id = walletManager.getActiveId()?: return@setPositiveButton
-                if (walletManager.checkPassword(pass.text.toString())) {
+                if (walletManager.unlock(id, pass.text.toString())) {
                     val seed = walletManager.getSeed()
                     val tv = TextView(this).apply {
                         text = seed
@@ -1557,7 +1540,7 @@ class MainActivity : AppCompatActivity() {
             .setView(pass)
             .setPositiveButton("XÓA") { _, _ ->
                 val id = walletManager.getActiveId()?: return@setPositiveButton
-                if (walletManager.checkPassword(pass.text.toString())) {
+                if (walletManager.unlock(id, pass.text.toString())) {
                     walletManager.delete(id)
                     showWelcome()
                     toast("Đã xóa")
@@ -1570,7 +1553,7 @@ class MainActivity : AppCompatActivity() {
     private fun showInfo() {
         AlertDialog.Builder(this)
             .setTitle("iBTC v4.7")
-            .setMessage("Build: 2026-05-30\n• SPV 100%\n• Foreground service\n• Gửi BTC\n• Biểu đồ giá nhỏ real-time (xanh/đỏ theo xu hướng)")
+            .setMessage("Build: 2026-05-31\n• SPV 100%\n• Foreground service\n• Gửi BTC\n• Biểu đồ giá 24h\n• Progress bar macro + micro đổi màu\n• Halving tự động\n• Thống kê Bitcoin")
             .setPositiveButton("OK", null)
             .show()
     }
