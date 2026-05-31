@@ -28,6 +28,8 @@ import com.github.mikephil.charting.data.*
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
 import com.journeyapps.barcodescanner.ScanContract
+import org.json.JSONObject
+import org.json.JSONArray
 import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.*
@@ -152,18 +154,138 @@ class MainActivity : AppCompatActivity() {
         return calendar.timeInMillis
     }
 
+    // ============= API FALLBACK KHI SPV CHƯA SYNC =============
+    private fun fetchBalanceFromApi(address: String): Double? {
+        return try {
+            val url = URL("https://blockchain.info/q/addressbalance/$address")
+            val balanceSat = url.readText().trim().toLong()
+            balanceSat / 1e8
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun fetchTransactionsFromApi(address: String): List<TransactionInfo>? {
+        return try {
+            val url = URL("https://blockchain.info/rawaddr/$address")
+            val json = url.readText()
+            val obj = JSONObject(json)
+            val txsArray = obj.getJSONArray("txs")
+            val list = mutableListOf<TransactionInfo>()
+            for (i in 0 until txsArray.length()) {
+                val tx = txsArray.getJSONObject(i)
+                val hash = tx.getString("hash")
+                val time = tx.getLong("time") * 1000
+                var amount = 0.0
+                val inputs = tx.getJSONArray("inputs")
+                val outputs = tx.getJSONArray("out")
+                var isReceive = false
+                for (j in 0 until outputs.length()) {
+                    val out = outputs.getJSONObject(j)
+                    val outAddr = out.optJSONObject("addr")?.optString("addr") ?: continue
+                    if (outAddr == address) {
+                        amount += out.getLong("value") / 1e8
+                        isReceive = true
+                    }
+                }
+                if (!isReceive) {
+                    for (j in 0 until inputs.length()) {
+                        val inp = inputs.getJSONObject(j)
+                        val prevOut = inp.getJSONObject("prev_out")
+                        val inpAddr = prevOut.optString("addr")
+                        if (inpAddr == address) {
+                            amount -= prevOut.getLong("value") / 1e8
+                        }
+                    }
+                }
+                val type = if (amount > 0) "RECEIVE" else "SEND"
+                list.add(TransactionInfo(hash, kotlin.math.abs(amount), type, Date(time)))
+            }
+            list.sortedByDescending { it.time }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun fetchPriceFromApi(): Double? {
+        return try {
+            val url = URL("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT")
+            val json = url.readText()
+            JSONObject(json).getString("price").toDouble()
+        } catch (e: Exception) {
+            null
+        }
+    }
+    // ========================================================
+
     private fun refreshWalletFromSPV() {
         if (isSyncing) return
         
-        if (!walletManager.isWalletSynced()) {
+        val isSynced = walletManager.isWalletSynced()
+        val address = walletManager.getAddress()
+        
+        // Nếu SPV chưa sync hoặc address rỗng -> dùng API
+        if (!isSynced || address.isEmpty()) {
             runOnUiThread {
                 if (viewsReady) {
-                    spvStatusText.text = "SPV: Đang đồng bộ blockchain..."
+                    spvStatusText.text = "SPV: Đang đồng bộ (hiển thị tạm từ API)..."
                 }
             }
+            Thread {
+                try {
+                    val balanceApi = fetchBalanceFromApi(address)
+                    val txsApi = fetchTransactionsFromApi(address)
+                    val priceApi = fetchPriceFromApi()
+                    val currentPrice = priceApi ?: walletManager.price()
+                    val currentUsd = (balanceApi ?: 0.0) * currentPrice
+                    
+                    runOnUiThread {
+                        if (!viewsReady) return@runOnUiThread
+                        if (balanceApi != null) {
+                            balanceText.text = String.format(Locale.US, "%.8f BTC", balanceApi)
+                            balanceUsdText.text = "≈ $${String.format("%,.2f", currentUsd)}"
+                        } else {
+                            balanceText.text = "--- BTC"
+                            balanceUsdText.text = "≈ $---"
+                        }
+                        rateText.text = "BTC $${String.format("%,.2f", currentPrice)}"
+                        if (txsApi != null) {
+                            val adapter = object : ArrayAdapter<String>(this@MainActivity, android.R.layout.simple_list_item_2, android.R.id.text1, txsApi.map { "" }) {
+                                override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                                    val view = super.getView(position, convertView, parent)
+                                    val tx = txsApi[position]
+                                    val text1 = view.findViewById<TextView>(android.R.id.text1)
+                                    val text2 = view.findViewById<TextView>(android.R.id.text2)
+                                    val isDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+                                    val mainColor = if (isDark) Color.WHITE else Color.BLACK
+                                    text1.setTextColor(mainColor)
+                                    text1.text = "${if (tx.type == "RECEIVE") "⬇" else "⬆"} ${tx.type} ${String.format(Locale.US, "%.8f", tx.amount)} BTC"
+                                    text2.text = SimpleDateFormat("dd/MM HH:mm", Locale.getDefault()).format(tx.time) + " • " + tx.txId.take(12)
+                                    text2.setTextColor(mainColor)
+                                    text2.textSize = 11f
+                                    return view
+                                }
+                            }
+                            txListView.adapter = adapter
+                        } else {
+                            txListView.adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_list_item_1, listOf("Không thể tải lịch sử"))
+                        }
+                    }
+                } catch (e: Exception) {
+                    runOnUiThread {
+                        if (viewsReady) {
+                            balanceText.text = "--- BTC"
+                            balanceUsdText.text = "≈ $---"
+                            rateText.text = "BTC ---"
+                            txListView.adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_list_item_1, listOf("Lỗi kết nối"))
+                        }
+                    }
+                }
+            }.start()
             return
         }
         
+        // SPV đã sync -> dùng dữ liệu từ walletManager
         isSyncing = true
         runOnUiThread {
             if (viewsReady) {
