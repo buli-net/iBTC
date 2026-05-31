@@ -11,6 +11,8 @@ import org.bitcoinj.wallet.DeterministicSeed
 import org.bitcoinj.wallet.SendRequest
 import org.bitcoinj.wallet.Wallet
 import org.json.JSONObject
+import java.io.BufferedReader
+import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.SecureRandom
@@ -87,9 +89,6 @@ class WalletManager(private val ctx: Context) {
         locked = true
         cachedSeed = null
         cachedPassword = null
-        try {
-            ctx.stopService(Intent(ctx, SyncService::class.java))
-        } catch (_: Exception) {}
     }
 
     fun create(name: String, password: String): WalletInfo {
@@ -168,11 +167,7 @@ class WalletManager(private val ctx: Context) {
             .remove("${id}_seed")
             .remove("${id}_attempts")
             .remove("${id}_address")
-            .apply()
-        if (active?.id == id) {
-            prefs.edit().remove("active_wallet_id").apply()
-            active = null
-        }
+            .commit()
     }
 
     fun getSeed(): String = cachedSeed ?: ""
@@ -183,7 +178,6 @@ class WalletManager(private val ctx: Context) {
     }
 
     private fun getWallet(): Wallet? = SyncService.getInstance()?.getWallet()
-    private fun getPeerGroup() = SyncService.getInstance()?.getPeerGroup()
 
     fun getBalance(): Double {
         val wallet = getWallet() ?: return 0.0
@@ -211,24 +205,21 @@ class WalletManager(private val ctx: Context) {
     }
 
     fun price(): Double {
-        repeat(2) { attempt ->
-            try {
-                val url = URL("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT")
-                val conn = url.openConnection() as HttpURLConnection
-                conn.requestMethod = "GET"
-                conn.connectTimeout = 5000
-                conn.readTimeout = 5000
-                val response = conn.inputStream.bufferedReader().readText()
-                conn.disconnect()
-                val price = JSONObject(response).getString("price").toDouble()
-                lastPrice = price
-                prefs.edit().putFloat("last_price", price.toFloat()).commit()
-                return price
-            } catch (e: Exception) {
-                if (attempt == 1) e.printStackTrace() else Thread.sleep(1000)
-            }
+        return try {
+            val url = URL("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT")
+            val conn = url.openConnection() as HttpURLConnection
+            conn.requestMethod = "GET"
+            conn.connectTimeout = 5000
+            conn.readTimeout = 5000
+            val response = conn.inputStream.bufferedReader().readText()
+            conn.disconnect()
+            val price = JSONObject(response).getString("price").toDouble()
+            lastPrice = price
+            prefs.edit().putFloat("last_price", price.toFloat()).commit()
+            price
+        } catch (e: Exception) {
+            if (lastPrice > 0) lastPrice else 0.0
         }
-        return if (lastPrice > 0) lastPrice else 0.0
     }
 
     fun getFeeRates(): FeeRates = FeeRates(5, 10, 20)
@@ -252,11 +243,10 @@ class WalletManager(private val ctx: Context) {
         if (feeRateSatVb < 1 || feeRateSatVb > 500) {
             throw Exception("Fee rate không hợp lệ (1-500 sat/vB)")
         }
-        if (!isWalletSynced()) {
-            throw Exception("Ví chưa đồng bộ blockchain, vui lòng đợi")
-        }
-        val wallet = getWallet() ?: throw Exception("Wallet chưa sẵn sàng")
-        val peerGroup = getPeerGroup() ?: throw Exception("PeerGroup null, chưa kết nối mạng")
+        val wallet = getWallet() ?: throw Exception("Wallet chưa sẵn sàng, vui lòng đợi đồng bộ")
+        val peerGroup = SyncService.getInstance()?.getPeerGroup()
+            ?: throw Exception("PeerGroup null, chưa kết nối mạng")
+
         if (peerGroup.connectedPeers.isEmpty()) {
             throw Exception("Chưa kết nối peer nào, không thể broadcast")
         }
@@ -267,6 +257,11 @@ class WalletManager(private val ctx: Context) {
         }
 
         val coin = Coin.valueOf(amountSat)
+        val balance = wallet.getBalance(Wallet.BalanceType.AVAILABLE_SPENDABLE)
+        if (balance.isLessThan(coin)) {
+            throw Exception("Không đủ số dư (cần ${amountBTC} BTC, có ${balance.value / 1e8} BTC)")
+        }
+
         val address = Address.fromString(params, to)
         val req = SendRequest.to(address, coin)
 
@@ -278,22 +273,21 @@ class WalletManager(private val ctx: Context) {
 
         try {
             wallet.completeTx(req)
-        } catch (e: InsufficientMoneyException) {
-            val missing = e.missing?.value ?: 0
-            throw Exception("Không đủ BTC để gửi (thiếu ${missing / 1e8} BTC)")
         } catch (e: Exception) {
             throw Exception("Không tạo được transaction: ${e.message}")
         }
-
-        try {
-            wallet.commitTx(req.tx)
-        } catch (_: Exception) {}
 
         try {
             val broadcastFuture = peerGroup.broadcastTransaction(req.tx)
             broadcastFuture.future().get()
         } catch (e: Exception) {
             throw Exception("Broadcast lỗi: ${e.message}")
+        }
+
+        try {
+            wallet.commitTx(req.tx)
+        } catch (e: Exception) {
+            throw Exception("Commit tx lỗi (giao dịch đã broadcast): ${e.message}")
         }
 
         return req.tx.getHashAsString()
@@ -343,7 +337,6 @@ class WalletManager(private val ctx: Context) {
             val newEnc = CryptoUtil.encrypt(seed, newPassword)
             prefs.edit().putString("${id}_seed", newEnc).commit()
             cachedPassword = newPassword.toCharArray()
-            cachedSeed = seed
             true
         } catch (e: Exception) { false }
     }
