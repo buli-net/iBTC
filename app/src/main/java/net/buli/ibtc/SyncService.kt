@@ -17,6 +17,7 @@ import org.bitcoinj.kits.WalletAppKit
 import org.bitcoinj.params.MainNetParams
 import org.bitcoinj.wallet.Wallet
 import java.io.File
+import kotlin.math.max
 
 class SyncService : Service() {
 
@@ -121,6 +122,17 @@ class SyncService : Service() {
             .apply()
     }
 
+    // Cập nhật totalBlocks dựa trên peerGroup và wallet
+    private fun updateTotalBlocks() {
+        val peerGroup = kit?.peerGroup()
+        val wallet = kit?.wallet()
+        if (peerGroup != null && wallet != null) {
+            val mostCommonHeight = peerGroup.mostCommonChainHeight
+            val walletHeight = wallet.lastBlockSeenHeight
+            totalBlocks = max(mostCommonHeight, walletHeight)
+        }
+    }
+
     private fun startBitcoinSync(walletId: String, seedPhrase: String) {
         Thread {
             try {
@@ -152,26 +164,38 @@ class SyncService : Service() {
                             updateNotification(lastMessage)
                             progressCallback?.invoke(lastProgress, lastMessage)
 
-                            // Lưu số block
+                            // Cập nhật blocksSoFar và totalBlocks
                             this@SyncService.blocksSoFar = blocksSoFar
-                            val chainHeight = kitRef.chain()?.chainHead?.height ?: 0
-                            val commonHeight = kitRef.peerGroup()?.mostCommonChainHeight ?: chainHeight
-                            totalBlocks = maxOf(chainHeight, commonHeight)
+                            updateTotalBlocks()
                         }
 
                         override fun doneDownload() {
+                            // Kiểm tra xem wallet có thực sự đạt chain head hay không
                             val wallet = kitRef.wallet()
                             val peerGroup = kitRef.peerGroup()
                             val isReallySynced = wallet != null &&
-                                    wallet.lastBlockSeenHeight > 0 &&
                                     peerGroup != null &&
+                                    wallet.lastBlockSeenHeight >= peerGroup.mostCommonChainHeight &&
                                     peerGroup.connectedPeers.isNotEmpty()
-                            isSynced = isReallySynced
-                            prefs.edit().putBoolean("is_synced", isSynced).apply()
-                            val msg = if (isSynced) "Đã đồng bộ blockchain" else "Đồng bộ hoàn tất nhưng chưa có peer"
-                            saveProgress(100, msg)
-                            updateNotification(lastMessage)
-                            progressCallback?.invoke(lastProgress, lastMessage)
+                            if (isReallySynced) {
+                                isSynced = true
+                                prefs.edit().putBoolean("is_synced", true).apply()
+                                saveProgress(100, "Đã đồng bộ blockchain")
+                                updateNotification(lastMessage)
+                                progressCallback?.invoke(lastProgress, lastMessage)
+                            } else {
+                                // Nếu chưa thực sự đạt chain head, tiếp tục chờ
+                                // Đặt lại progress về 99 và tiếp tục update
+                                saveProgress(99, "Đang hoàn thiện đồng bộ...")
+                                progressCallback?.invoke(lastProgress, lastMessage)
+                                // Force update lại totalBlocks và gọi lại progress
+                                updateTotalBlocks()
+                                val newPct = (blocksSoFar.toDouble() / totalBlocks * 100).toInt()
+                                if (newPct < 100 && newPct > 99) {
+                                    saveProgress(newPct, "Đang đồng bộ: $newPct%")
+                                    progressCallback?.invoke(lastProgress, lastMessage)
+                                }
+                            }
                         }
                     })
                     startAsync()
@@ -179,6 +203,8 @@ class SyncService : Service() {
                 }
                 kit = newKit
                 progressCallback?.invoke(lastProgress, lastMessage)
+                // Khởi tạo totalBlocks lần đầu
+                updateTotalBlocks()
             } catch (e: Exception) {
                 saveProgress(lastProgress, "Lỗi sync: ${e.message}")
                 updateNotification(lastMessage)
@@ -202,7 +228,6 @@ class SyncService : Service() {
     fun getWalletId(): String = currentWalletId
     fun isWalletSynced(): Boolean = isSynced
 
-    // Các phương thức mới cho tiến độ chi tiết
     fun getBlocksSoFar(): Int = blocksSoFar
     fun getTotalBlocks(): Int = totalBlocks
 
