@@ -154,19 +154,35 @@ class MainActivity : AppCompatActivity() {
         return calendar.timeInMillis
     }
 
-    // ============= API FALLBACK KHI SPV CHƯA SYNC =============
+    // ============= API FALLBACK (cải tiến với nhiều nguồn) =============
     private fun fetchBalanceFromApi(address: String): Double? {
-        return try {
+        if (address.isEmpty()) return null
+        // Thử blockchain.info trước
+        try {
             val url = URL("https://blockchain.info/q/addressbalance/$address")
             val balanceSat = url.readText().trim().toLong()
-            balanceSat / 1e8
+            return balanceSat / 1e8
         } catch (e: Exception) {
-            null
+            // Nếu lỗi, thử mempool.space
+            try {
+                val url = URL("https://mempool.space/api/address/$address")
+                val json = url.readText()
+                val obj = JSONObject(json)
+                val chainStats = obj.getJSONObject("chain_stats")
+                val funded = chainStats.getLong("funded_txo_sum")
+                val spent = chainStats.getLong("spent_txo_sum")
+                val balanceSat = funded - spent
+                return balanceSat / 1e8
+            } catch (e2: Exception) {
+                return null
+            }
         }
     }
 
     private fun fetchTransactionsFromApi(address: String): List<TransactionInfo>? {
-        return try {
+        if (address.isEmpty()) return null
+        // Thử blockchain.info trước
+        try {
             val url = URL("https://blockchain.info/rawaddr/$address")
             val json = url.readText()
             val obj = JSONObject(json)
@@ -201,9 +217,51 @@ class MainActivity : AppCompatActivity() {
                 val type = if (amount > 0) "RECEIVE" else "SEND"
                 list.add(TransactionInfo(hash, kotlin.math.abs(amount), type, Date(time)))
             }
-            list.sortedByDescending { it.time }
+            return list.sortedByDescending { it.time }
         } catch (e: Exception) {
-            null
+            // Thử mempool.space
+            try {
+                val url = URL("https://mempool.space/api/address/$address/txs")
+                val json = url.readText()
+                val txsArray = JSONArray(json)
+                val list = mutableListOf<TransactionInfo>()
+                for (i in 0 until txsArray.length()) {
+                    val tx = txsArray.getJSONObject(i)
+                    val hash = tx.getString("txid")
+                    val time = tx.getLong("received") * 1000
+                    var amount = 0.0
+                    val vout = tx.getJSONArray("vout")
+                    var isReceive = false
+                    for (j in 0 until vout.length()) {
+                        val out = vout.getJSONObject(j)
+                        val scriptpubkey = out.getJSONObject("scriptpubkey")
+                        val outAddr = scriptpubkey.optString("address")
+                        if (outAddr == address) {
+                            amount += out.getLong("value") / 1e8
+                            isReceive = true
+                        }
+                    }
+                    if (!isReceive) {
+                        val vin = tx.getJSONArray("vin")
+                        for (j in 0 until vin.length()) {
+                            val inp = vin.getJSONObject(j)
+                            val prevout = inp.optJSONObject("prevout")
+                            if (prevout != null) {
+                                val scriptpubkey = prevout.getJSONObject("scriptpubkey")
+                                val inpAddr = scriptpubkey.optString("address")
+                                if (inpAddr == address) {
+                                    amount -= prevout.getLong("value") / 1e8
+                                }
+                            }
+                        }
+                    }
+                    val type = if (amount > 0) "RECEIVE" else "SEND"
+                    list.add(TransactionInfo(hash, kotlin.math.abs(amount), type, Date(time)))
+                }
+                return list.sortedByDescending { it.time }
+            } catch (e2: Exception) {
+                return null
+            }
         }
     }
 
@@ -228,9 +286,22 @@ class MainActivity : AppCompatActivity() {
         if (!isSynced || address.isEmpty()) {
             runOnUiThread {
                 if (viewsReady) {
-                    spvStatusText.text = "SPV: Đang đồng bộ (hiển thị tạm từ API)..."
+                    spvStatusText.text = if (address.isEmpty()) "SPV: Chưa có địa chỉ (đang chờ khởi tạo)..." else "SPV: Đang đồng bộ (hiển thị tạm từ API)..."
                 }
             }
+            // Nếu không có địa chỉ, không thể gọi API
+            if (address.isEmpty()) {
+                runOnUiThread {
+                    if (viewsReady) {
+                        balanceText.text = "--- BTC"
+                        balanceUsdText.text = "≈ $---"
+                        rateText.text = "BTC ---"
+                        txListView.adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_list_item_1, listOf("Chưa có địa chỉ ví"))
+                    }
+                }
+                return
+            }
+            
             Thread {
                 try {
                     val balanceApi = fetchBalanceFromApi(address)
@@ -285,14 +356,12 @@ class MainActivity : AppCompatActivity() {
                     runOnUiThread {
                         if (!viewsReady) return@runOnUiThread
 
-                        // Số dư BTC
                         if (balanceApi != null) {
                             balanceText.text = String.format(Locale.US, "%.8f BTC", balanceApi)
                         } else {
                             balanceText.text = "--- BTC"
                         }
 
-                        // Số dư USD kèm biến động
                         balanceUsdText.setTextColor(usdColor)
                         balanceUsdText.text = if (balanceApi != null) {
                             String.format(
@@ -304,7 +373,6 @@ class MainActivity : AppCompatActivity() {
                             "≈ $---"
                         }
 
-                        // Giá BTC kèm biến động
                         rateText.setTextColor(priceColor)
                         rateText.text = String.format(
                             Locale.US,
@@ -312,8 +380,7 @@ class MainActivity : AppCompatActivity() {
                             currentPrice, priceArrow, priceChangePercent, priceChange
                         )
 
-                        // Lịch sử giao dịch
-                        if (txsApi != null) {
+                        if (txsApi != null && txsApi.isNotEmpty()) {
                             val adapter = object : ArrayAdapter<String>(this@MainActivity, android.R.layout.simple_list_item_2, android.R.id.text1, txsApi.map { "" }) {
                                 override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
                                     val view = super.getView(position, convertView, parent)
@@ -332,7 +399,7 @@ class MainActivity : AppCompatActivity() {
                             }
                             txListView.adapter = adapter
                         } else {
-                            txListView.adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_list_item_1, listOf("Không thể tải lịch sử"))
+                            txListView.adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_list_item_1, listOf("Không thể tải lịch sử giao dịch"))
                         }
                     }
                 } catch (e: Exception) {
@@ -341,7 +408,7 @@ class MainActivity : AppCompatActivity() {
                             balanceText.text = "--- BTC"
                             balanceUsdText.text = "≈ $---"
                             rateText.text = "BTC ---"
-                            txListView.adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_list_item_1, listOf("Lỗi kết nối"))
+                            txListView.adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_list_item_1, listOf("Lỗi kết nối mạng"))
                         }
                     }
                 }
