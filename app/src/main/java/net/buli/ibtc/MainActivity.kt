@@ -1063,40 +1063,7 @@ class MainActivity : AppCompatActivity() {
         fetchAndUpdatePrice()
     }
 
-    private fun showReceiveDialog() {
-        val address = walletManager.getAddress()
-        if (address.isEmpty()) { toast("Ví chưa sẵn sàng"); return }
-        val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; setPadding(40) }
-        val imageView = ImageView(this).apply { layoutParams = LinearLayout.LayoutParams(512, 512).apply { bottomMargin = 20 } }
-        Thread {
-            try {
-                val writer = QRCodeWriter()
-                val bitMatrix = writer.encode(address, BarcodeFormat.QR_CODE, 512, 512)
-                val bmp = Bitmap.createBitmap(512, 512, Bitmap.Config.RGB_565)
-                for (x in 0 until 512) for (y in 0 until 512) bmp.setPixel(x, y, if (bitMatrix[x, y]) Color.BLACK else Color.WHITE)
-                runOnUiThread { imageView.setImageBitmap(bmp) }
-            } catch (e: Exception) { runOnUiThread { toast("Lỗi tạo QR: ${e.message}") } }
-        }.start()
-        val addressView = TextView(this).apply {
-            text = address
-            textSize = 13f
-            gravity = Gravity.CENTER
-            setTextIsSelectable(true)
-            setPadding(0, 10, 0, 20)
-        }
-        val copyBtn = Button(this).apply { text = "Copy địa chỉ" }
-        copyBtn.setOnClickListener {
-            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            cm.setPrimaryClip(ClipData.newPlainText("btc_address", address))
-            toast("Đã copy - sẽ tự xóa sau 30 giây")
-            handler.postDelayed({ try { cm.clearPrimaryClip() } catch (_: Exception) {} }, 30000)
-        }
-        layout.addView(imageView)
-        layout.addView(addressView)
-        layout.addView(copyBtn)
-        AlertDialog.Builder(this).setTitle("Nhận Bitcoin").setView(layout).setPositiveButton("Đóng", null).show()
-    }
-
+    // ====================== SHOW SEND DIALOG (CÓ CẢNH BÁO) ======================
     private fun showSendDialog() {
         if (isSyncing) {
             toast("Đang cập nhật SPV, vui lòng đợi")
@@ -1161,6 +1128,14 @@ class MainActivity : AppCompatActivity() {
         val feeEstimateTv = TextView(this).apply { text = "Ước tính phí: -"; setPadding(0,20,0,0) }
         val totalEstimateTv = TextView(this).apply { text = "Tổng (gửi + phí): -" }
 
+        val modeWarningTv = TextView(this).apply {
+            text = ""
+            textSize = 12f
+            setTextColor(Color.parseColor("#FF9800"))
+            setPadding(0,10,0,0)
+            visibility = View.GONE
+        }
+
         layout.addView(toInput)
         layout.addView(scanBtn)
         layout.addView(amountInput)
@@ -1171,6 +1146,7 @@ class MainActivity : AppCompatActivity() {
         layout.addView(customFeeInput)
         layout.addView(feeEstimateTv)
         layout.addView(totalEstimateTv)
+        layout.addView(modeWarningTv)
 
         var priceUsd = 60000.0
         var currentBalance = 0.0
@@ -1197,13 +1173,12 @@ class MainActivity : AppCompatActivity() {
                     else -> feeRates.normal
                 }
 
+                isSpvSynced = walletManager.isWalletSynced()
                 if (!isSpvSynced) {
-                    btn.isEnabled = false
-                    warningTv.text = "⚠️ Ví đang đồng bộ SPV, vui lòng đợi hoàn tất."
-                    warningTv.visibility = View.VISIBLE
-                    feeEstimateTv.text = ""
-                    totalEstimateTv.text = ""
-                    return
+                    modeWarningTv.text = "⚠️ SPV chưa đồng bộ. Giao dịch sẽ được gửi qua API (vẫn an toàn và riêng tư)."
+                    modeWarningTv.visibility = View.VISIBLE
+                } else {
+                    modeWarningTv.visibility = View.GONE
                 }
 
                 if (to.isEmpty() || to.length < 26 || amt <= 0.0) {
@@ -1254,7 +1229,8 @@ class MainActivity : AppCompatActivity() {
 
             Thread {
                 currentBalance = walletManager.getBalance()
-                isSpvSynced = walletManager.isWalletSynced()
+                priceUsd = walletManager.price()
+                if (priceUsd <= 0) priceUsd = 60000.0
                 runOnUiThread {
                     balanceTv.text = "Số dư: ${"%.8f".format(currentBalance)} BTC"
                     updateUI()
@@ -1309,20 +1285,29 @@ class MainActivity : AppCompatActivity() {
                 }
                 val estFee = walletManager.estimateFee(to, amt, fee)
                 dialog.dismiss()
-                confirmSend(to, amt, fee, estFee)
+                confirmSend(to, amt, fee, estFee, !isSpvSynced)
             }
             updateUI()
         }
         dialog.show()
     }
 
-    private fun confirmSend(to: String, amt: Double, feeRate: Int, estFee: Double) {
+    // ====================== CONFIRM SEND (CÓ CẢNH BÁO CHẾ ĐỘ API) ======================
+    private fun confirmSend(to: String, amt: Double, feeRate: Int, estFee: Double, isApiMode: Boolean = false) {
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(30)
         }
         val summary = TextView(this).apply {
-            text = "Gửi: $amt BTC\nĐến: $to\nPhí: ~$estFee BTC\nTổng: ${amt + estFee} BTC"
+            text = buildString {
+                append("Gửi: $amt BTC\n")
+                append("Đến: $to\n")
+                append("Phí: ~$estFee BTC\n")
+                append("Tổng: ${amt + estFee} BTC")
+                if (isApiMode) {
+                    append("\n\n⚠️ LƯU Ý: SPV chưa đồng bộ. Giao dịch sẽ được gửi qua API (vẫn an toàn và riêng tư).")
+                }
+            }
             setPadding(0,0,0,20)
         }
         val passInput = EditText(this).apply {
@@ -1331,6 +1316,7 @@ class MainActivity : AppCompatActivity() {
         }
         layout.addView(summary)
         layout.addView(passInput)
+
         AlertDialog.Builder(this)
             .setTitle("Xác nhận gửi")
             .setView(layout)
@@ -1339,6 +1325,10 @@ class MainActivity : AppCompatActivity() {
                 val id = walletManager.getActiveId() ?: return@setPositiveButton
                 if (pass.isEmpty()) {
                     toast("Nhập mật khẩu")
+                    return@setPositiveButton
+                }
+                if (!walletManager.unlock(id, pass)) {
+                    toast("Sai mật khẩu")
                     return@setPositiveButton
                 }
                 val delayLayout = LinearLayout(this).apply {
@@ -1397,6 +1387,40 @@ class MainActivity : AppCompatActivity() {
             }
             .setNegativeButton("Hủy", null)
             .show()
+    }
+
+    private fun showReceiveDialog() {
+        val address = walletManager.getAddress()
+        if (address.isEmpty()) { toast("Ví chưa sẵn sàng"); return }
+        val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; setPadding(40) }
+        val imageView = ImageView(this).apply { layoutParams = LinearLayout.LayoutParams(512, 512).apply { bottomMargin = 20 } }
+        Thread {
+            try {
+                val writer = QRCodeWriter()
+                val bitMatrix = writer.encode(address, BarcodeFormat.QR_CODE, 512, 512)
+                val bmp = Bitmap.createBitmap(512, 512, Bitmap.Config.RGB_565)
+                for (x in 0 until 512) for (y in 0 until 512) bmp.setPixel(x, y, if (bitMatrix[x, y]) Color.BLACK else Color.WHITE)
+                runOnUiThread { imageView.setImageBitmap(bmp) }
+            } catch (e: Exception) { runOnUiThread { toast("Lỗi tạo QR: ${e.message}") } }
+        }.start()
+        val addressView = TextView(this).apply {
+            text = address
+            textSize = 13f
+            gravity = Gravity.CENTER
+            setTextIsSelectable(true)
+            setPadding(0, 10, 0, 20)
+        }
+        val copyBtn = Button(this).apply { text = "Copy địa chỉ" }
+        copyBtn.setOnClickListener {
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            cm.setPrimaryClip(ClipData.newPlainText("btc_address", address))
+            toast("Đã copy - sẽ tự xóa sau 30 giây")
+            handler.postDelayed({ try { cm.clearPrimaryClip() } catch (_: Exception) {} }, 30000)
+        }
+        layout.addView(imageView)
+        layout.addView(addressView)
+        layout.addView(copyBtn)
+        AlertDialog.Builder(this).setTitle("Nhận Bitcoin").setView(layout).setPositiveButton("Đóng", null).show()
     }
 
     private fun showSettings() {
