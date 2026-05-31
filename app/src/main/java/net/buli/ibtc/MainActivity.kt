@@ -55,7 +55,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var statsContainer: LinearLayout
     private lateinit var spvStatusText: TextView
     private lateinit var spvProgressBar: ProgressBar       // Macro
-    private lateinit var spvMicroProgressBar: ProgressBar  // Micro (mới)
+    private lateinit var spvMicroProgressBar: ProgressBar  // Micro
     private val statBars = mutableMapOf<String, ProgressBar>()
     private val statTexts = mutableMapOf<String, TextView>()
     private var isSyncing = false
@@ -64,6 +64,10 @@ class MainActivity : AppCompatActivity() {
     private var viewsReady = false
 
     private lateinit var sparkline: LineChart
+
+    // Biến lưu giá và số dư hiện tại
+    private var currentBalanceBtc = 0.0
+    private var currentBtcPrice = 0.0
 
     private val qrScanLauncher = registerForActivityResult(ScanContract()) { result ->
         result.contents?.let { raw ->
@@ -183,6 +187,7 @@ class MainActivity : AppCompatActivity() {
         return calendar.timeInMillis
     }
 
+    // ================= Cập nhật tỷ giá và USD =================
     private fun fetchAndUpdatePrice() {
         Thread {
             val price = walletManager.price()
@@ -193,6 +198,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updatePriceUI(price: Double) {
+        currentBtcPrice = price
         val hasPrice = price > 0
         if (!hasPrice) {
             rateText.text = "BTC ---"
@@ -231,8 +237,7 @@ class MainActivity : AppCompatActivity() {
         rateText.setTextColor(priceColor)
         rateText.text = String.format(Locale.US, "BTC $%,.2f %s %+.2f%% (%+.2f$)", price, priceArrow, priceChangePercent, priceChange)
 
-        val bal = if (walletManager.isWalletSynced()) walletManager.getBalance() else 0.0
-        val currentUsd = bal * price
+        val currentUsd = currentBalanceBtc * price
         var dailyUsd = prefsDaily.getFloat("daily_usd", -1f).toDouble()
         if (dailyTimestamp != todayStart || dailyUsd < 0) {
             dailyUsd = currentUsd
@@ -254,6 +259,7 @@ class MainActivity : AppCompatActivity() {
         balanceUsdText.text = String.format(Locale.US, "≈ $%,.2f %s %+.2f%% (%+.2f$)", currentUsd, usdArrow, usdChangePercent, usdChange)
     }
 
+    // ================= Lấy dữ liệu từ API blockchain.info =================
     private fun fetchBalanceAndTxFromApi(address: String, callback: (Double, List<TransactionInfo>) -> Unit) {
         Thread {
             try {
@@ -313,6 +319,7 @@ class MainActivity : AppCompatActivity() {
         }.start()
     }
 
+    // ================= Làm mới số dư và lịch sử giao dịch =================
     private fun refreshWalletFromSPV() {
         runOnUiThread {
             if (viewsReady) {
@@ -332,7 +339,9 @@ class MainActivity : AppCompatActivity() {
                 fetchBalanceAndTxFromApi(address) { balance, transactions ->
                     runOnUiThread {
                         if (viewsReady) {
+                            currentBalanceBtc = balance
                             balanceText.text = String.format(Locale.US, "%.8f BTC", balance)
+                            if (currentBtcPrice > 0) updatePriceUI(currentBtcPrice)
                             val adapter = object : ArrayAdapter<String>(this@MainActivity, android.R.layout.simple_list_item_2, android.R.id.text1, transactions.map { "" }) {
                                 override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
                                     val view = super.getView(position, convertView, parent)
@@ -368,33 +377,9 @@ class MainActivity : AppCompatActivity() {
                 val txs = walletManager.getTransactions()
                 runOnUiThread {
                     if (!viewsReady) return@runOnUiThread
+                    currentBalanceBtc = bal
                     balanceText.text = String.format(Locale.US, "%.8f BTC", bal)
-
-                    val price = walletManager.price()
-                    if (price > 0) {
-                        val prefsDaily = getSharedPreferences("daily_mark", Context.MODE_PRIVATE)
-                        val todayStart = getTodayUtcStart()
-                        var dailyUsd = prefsDaily.getFloat("daily_usd", -1f).toDouble()
-                        if (prefsDaily.getLong("daily_timestamp", 0L) != todayStart || dailyUsd < 0) {
-                            dailyUsd = bal * price
-                            prefsDaily.edit().putFloat("daily_usd", dailyUsd.toFloat()).apply()
-                        }
-                        val currentUsd = bal * price
-                        val usdChange = currentUsd - dailyUsd
-                        val usdChangePercent = if (dailyUsd > 0) (usdChange / dailyUsd) * 100 else 0.0
-                        val usdArrow = when {
-                            usdChange > 0.01 -> "▲"
-                            usdChange < -0.01 -> "▼"
-                            else -> "●"
-                        }
-                        val usdColor = when {
-                            usdChange > 0.01 -> Color.parseColor("#00C853")
-                            usdChange < -0.01 -> Color.parseColor("#D50000")
-                            else -> Color.parseColor("#F7931A")
-                        }
-                        balanceUsdText.setTextColor(usdColor)
-                        balanceUsdText.text = String.format(Locale.US, "≈ $%,.2f %s %+.2f%% (%+.2f$)", currentUsd, usdArrow, usdChangePercent, usdChange)
-                    }
+                    if (currentBtcPrice > 0) updatePriceUI(currentBtcPrice)
 
                     val adapter = object : ArrayAdapter<String>(this@MainActivity, android.R.layout.simple_list_item_2, android.R.id.text1, txs.map { "" }) {
                         override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
@@ -439,6 +424,7 @@ class MainActivity : AppCompatActivity() {
         }, 45000)
     }
 
+    // ================= Cập nhật block =================
     private fun fetchBlockUpdate() {
         Thread {
             try {
@@ -483,6 +469,7 @@ class MainActivity : AppCompatActivity() {
         }.start()
     }
 
+    // ================= Cập nhật thống kê Bitcoin =================
     private fun fetchBtcStats() {
         Thread {
             try {
@@ -637,6 +624,7 @@ class MainActivity : AppCompatActivity() {
         statBars[key] = pb
     }
 
+    // ================= Sparkline =================
     private fun setupSparkline() {
         sparkline = LineChart(this).apply {
             layoutParams = LinearLayout.LayoutParams(dpToPx(120), dpToPx(40))
@@ -697,11 +685,8 @@ class MainActivity : AppCompatActivity() {
         val totalBlocks = syncService.getTotalBlocks()
         if (totalBlocks <= 0) return
 
-        // Macro percent = (blocksSoFar / totalBlocks) * 100
         val macroPercent = (blocksSoFar.toDouble() / totalBlocks * 100).toInt().coerceIn(0, 100)
-        // Số block tương ứng 1% macro
         val blockPerPercent = totalBlocks.toDouble() / 100.0
-        // Micro: phần dư trong block hiện tại của 1% macro
         val currentBlockInPercent = (blocksSoFar % blockPerPercent).toInt()
         val microPercent = (currentBlockInPercent / blockPerPercent * 100).toInt().coerceIn(0, 100)
 
@@ -940,7 +925,6 @@ class MainActivity : AppCompatActivity() {
             setTextColor(mainColor)
             setPadding(0, 4, 0, 4)
         }
-        // Thanh macro
         spvProgressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100
             progress = 0
@@ -948,7 +932,6 @@ class MainActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = 4; bottomMargin = 4 }
             progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(0))
         }
-        // Thanh micro
         spvMicroProgressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100
             progress = 0
@@ -1024,8 +1007,8 @@ class MainActivity : AppCompatActivity() {
         rootLayout.addView(balanceUsdText)
         rootLayout.addView(rateText)
         rootLayout.addView(spvStatusText)
-        rootLayout.addView(spvProgressBar)      // macro
-        rootLayout.addView(spvMicroProgressBar) // micro
+        rootLayout.addView(spvProgressBar)
+        rootLayout.addView(spvMicroProgressBar)
         rootLayout.addView(addressText)
         rootLayout.addView(Space(this).apply { layoutParams = LinearLayout.LayoutParams(1, 20) })
         rootLayout.addView(btnRow1)
@@ -1091,7 +1074,7 @@ class MainActivity : AppCompatActivity() {
         fetchAndUpdatePrice()
     }
 
-    // ================= Các hàm dialog (giữ nguyên code cũ, chỉ để placeholder) =================
+    // ================= Các hàm dialog, gửi/nhận, cài đặt (giữ nguyên) =================
     private fun showReceiveDialog() {
         val address = walletManager.getAddress()
         if (address.isEmpty()) { toast("Ví chưa sẵn sàng"); return }
