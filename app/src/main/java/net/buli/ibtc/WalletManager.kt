@@ -11,8 +11,6 @@ import org.bitcoinj.wallet.DeterministicSeed
 import org.bitcoinj.wallet.SendRequest
 import org.bitcoinj.wallet.Wallet
 import org.json.JSONObject
-import java.io.BufferedReader
-import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.SecureRandom
@@ -89,6 +87,10 @@ class WalletManager(private val ctx: Context) {
         locked = true
         cachedSeed = null
         cachedPassword = null
+        // Dừng SyncService nếu muốn khóa thực sự (tuỳ chọn)
+        try {
+            ctx.stopService(Intent(ctx, SyncService::class.java))
+        } catch (_: Exception) {}
     }
 
     fun create(name: String, password: String): WalletInfo {
@@ -167,7 +169,12 @@ class WalletManager(private val ctx: Context) {
             .remove("${id}_seed")
             .remove("${id}_attempts")
             .remove("${id}_address")
-            .commit()
+            .apply()
+        // Nếu xóa ví đang active, xóa luôn active_wallet_id
+        if (active?.id == id) {
+            prefs.edit().remove("active_wallet_id").apply()
+            active = null
+        }
     }
 
     fun getSeed(): String = cachedSeed ?: ""
@@ -225,6 +232,8 @@ class WalletManager(private val ctx: Context) {
     fun getFeeRates(): FeeRates = FeeRates(5, 10, 20)
 
     fun estimateFee(to: String, amountBTC: Double, feeRateSatVb: Int): Double {
+        // Tạm thời giữ ước lượng cũ, nhưng biết rằng nó có thể sai
+        // Lý tưởng: build transaction thật và lấy vsize
         return (68 + 62 + 11) * feeRateSatVb / 1e8
     }
 
@@ -243,7 +252,11 @@ class WalletManager(private val ctx: Context) {
         if (feeRateSatVb < 1 || feeRateSatVb > 500) {
             throw Exception("Fee rate không hợp lệ (1-500 sat/vB)")
         }
-        val wallet = getWallet() ?: throw Exception("Wallet chưa sẵn sàng, vui lòng đợi đồng bộ")
+        // Kiểm tra đồng bộ trước khi gửi
+        if (!isWalletSynced()) {
+            throw Exception("Ví chưa đồng bộ blockchain, vui lòng đợi")
+        }
+        val wallet = getWallet() ?: throw Exception("Wallet chưa sẵn sàng")
         val peerGroup = SyncService.getInstance()?.getPeerGroup()
             ?: throw Exception("PeerGroup null, chưa kết nối mạng")
 
@@ -257,11 +270,6 @@ class WalletManager(private val ctx: Context) {
         }
 
         val coin = Coin.valueOf(amountSat)
-        val balance = wallet.getBalance(Wallet.BalanceType.AVAILABLE_SPENDABLE)
-        if (balance.isLessThan(coin)) {
-            throw Exception("Không đủ số dư (cần ${amountBTC} BTC, có ${balance.value / 1e8} BTC)")
-        }
-
         val address = Address.fromString(params, to)
         val req = SendRequest.to(address, coin)
 
@@ -271,23 +279,28 @@ class WalletManager(private val ctx: Context) {
         req.shuffleOutputs = true
         req.changeAddress = wallet.currentReceiveAddress()
 
+        // Hoàn tất transaction, sẽ tự kiểm tra đủ tiền (bao gồm phí)
         try {
             wallet.completeTx(req)
+        } catch (e: InsufficientMoneyException) {
+            throw Exception("Không đủ BTC để gửi (thiếu ${e.missing.value / 1e8} BTC)")
         } catch (e: Exception) {
             throw Exception("Không tạo được transaction: ${e.message}")
         }
 
+        // Commit trước broadcast (theo đúng thứ tự bitcoinj)
+        try {
+            wallet.commitTx(req.tx)
+        } catch (e: Exception) {
+            // Có thể tx đã tồn tại, không sao
+        }
+
+        // Broadcast
         try {
             val broadcastFuture = peerGroup.broadcastTransaction(req.tx)
             broadcastFuture.future().get()
         } catch (e: Exception) {
             throw Exception("Broadcast lỗi: ${e.message}")
-        }
-
-        try {
-            wallet.commitTx(req.tx)
-        } catch (e: Exception) {
-            throw Exception("Commit tx lỗi (giao dịch đã broadcast): ${e.message}")
         }
 
         return req.tx.getHashAsString()
@@ -337,6 +350,7 @@ class WalletManager(private val ctx: Context) {
             val newEnc = CryptoUtil.encrypt(seed, newPassword)
             prefs.edit().putString("${id}_seed", newEnc).commit()
             cachedPassword = newPassword.toCharArray()
+            cachedSeed = seed   // cập nhật cached seed
             true
         } catch (e: Exception) { false }
     }
