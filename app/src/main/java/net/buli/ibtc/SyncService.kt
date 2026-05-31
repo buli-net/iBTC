@@ -30,6 +30,10 @@ class SyncService : Service() {
     private var kit: WalletAppKit? = null
     private lateinit var prefs: SharedPreferences
 
+    // Biến cho tiến độ chi tiết
+    private var blocksSoFar = 0
+    private var totalBlocks = 0
+
     companion object {
         private var instance: SyncService? = null
         fun getInstance(): SyncService? = instance
@@ -147,6 +151,12 @@ class SyncService : Service() {
                             saveProgress(p, msg)
                             updateNotification(lastMessage)
                             progressCallback?.invoke(lastProgress, lastMessage)
+
+                            // Lưu số block
+                            this@SyncService.blocksSoFar = blocksSoFar
+                            val chainHeight = kitRef.chain()?.chainHead?.height ?: 0
+                            val commonHeight = kitRef.peerGroup()?.mostCommonChainHeight ?: chainHeight
+                            totalBlocks = maxOf(chainHeight, commonHeight)
                         }
 
                         override fun doneDownload() {
@@ -191,6 +201,10 @@ class SyncService : Service() {
     fun getPeerGroup() = try { kit?.peerGroup() } catch (_: Exception) { null }
     fun getWalletId(): String = currentWalletId
     fun isWalletSynced(): Boolean = isSynced
+
+    // Các phương thức mới cho tiến độ chi tiết
+    fun getBlocksSoFar(): Int = blocksSoFar
+    fun getTotalBlocks(): Int = totalBlocks
 
     override fun onDestroy() {
         super.onDestroy()
