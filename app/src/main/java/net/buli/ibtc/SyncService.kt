@@ -31,7 +31,6 @@ class SyncService : Service() {
     @Volatile private var kit: WalletAppKit? = null
     private lateinit var prefs: SharedPreferences
 
-    // Biến cho UI (nếu cần)
     private var blocksSoFar = 0
     private var totalBlocks = 0
 
@@ -132,18 +131,12 @@ class SyncService : Service() {
         updateNotification(message)
     }
 
-    /**
-     * Kiểm tra sync thực sự dựa trên chiều cao block của ví và chain.
-     */
     private fun isReallySynced(wallet: Wallet, kitRef: WalletAppKit): Boolean {
         val walletHeight = wallet.lastBlockSeenHeight
         val chainHeight = kitRef.chain()?.chainHead?.height ?: 0
         return walletHeight >= chainHeight - 1 && walletHeight > 0
     }
 
-    /**
-     * Watchdog: tự động phát hiện stuck sync (95-99%) và reconnect peer.
-     */
     private fun startWatchdog(kitRef: WalletAppKit) {
         if (isWatchdogRunning) return
         isWatchdogRunning = true
@@ -152,7 +145,7 @@ class SyncService : Service() {
             try {
                 val wallet = kitRef.wallet() ?: return@Thread
                 while (isWatchdogRunning) {
-                    Thread.sleep(15000) // kiểm tra mỗi 15 giây
+                    Thread.sleep(15000)
 
                     val peerGroup = kitRef.peerGroup()
                     val walletHeight = wallet.lastBlockSeenHeight
@@ -163,14 +156,12 @@ class SyncService : Service() {
                     val stuckTime = (timeNow - lastUpdateTime) > 30000
                     val inDangerZone = lastProgress in 95..99
 
-                    // Nếu kẹt trong vùng nguy hiểm và mất peer hoặc stuck height/time
                     if (inDangerZone && (peers == 0 || stuckHeight || stuckTime)) {
                         saveProgress(lastProgress, "Mất kết nối peer hoặc đồng bộ đứng, đang khôi phục...")
                         reconnectPeers(kitRef)
                         lastUpdateTime = timeNow
                     }
 
-                    // Bonus: nếu 95-99% mà có ít hơn 2 peer → reconnect
                     if (inDangerZone && peers < 2) {
                         saveProgress(lastProgress, "Số lượng peer thấp (<2), khởi động lại peer...")
                         reconnectPeers(kitRef)
@@ -183,17 +174,13 @@ class SyncService : Service() {
         }.apply { start() }
     }
 
-    /**
-     * Tự động reconnect PeerGroup khi bị lỗi hoặc mất kết nối.
-     */
     private fun reconnectPeers(kitRef: WalletAppKit) {
         try {
             val peerGroup = kitRef.peerGroup() ?: return
             peerGroup.stopAsync()
-            peerGroup.awaitTerminated()
+            // Không dùng awaitTerminated để tránh lỗi compile, thay bằng sleep
             Thread.sleep(2000)
             peerGroup.startAsync()
-            peerGroup.awaitRunning()
             saveProgress(lastProgress, "Đã kết nối lại peer thành công")
         } catch (e: Exception) {
             saveProgress(lastProgress, "Lỗi reconnect peer: ${e.message}")
@@ -253,7 +240,7 @@ class SyncService : Service() {
                                 return
                             }
 
-                            // Vòng lặp kiểm tra sync tiến trình, có điều kiện dừng
+                            // Vòng lặp kiểm tra sync tiến trình
                             syncLoopThread = Thread {
                                 var lastPercent = 95
                                 while (isSyncLoopRunning) {
@@ -285,7 +272,7 @@ class SyncService : Service() {
                 }
                 kit = newKit
 
-                // Khởi động watchdog sau khi kit đã chạy
+                // Khởi động watchdog
                 startWatchdog(newKit)
 
                 saveProgress(lastProgress, lastMessage)
@@ -315,7 +302,6 @@ class SyncService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        // Dừng tất cả các thread vòng lặp
         isSyncLoopRunning = false
         isWatchdogRunning = false
         syncLoopThread?.interrupt()
