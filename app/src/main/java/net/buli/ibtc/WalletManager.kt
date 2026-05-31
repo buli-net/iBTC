@@ -87,7 +87,6 @@ class WalletManager(private val ctx: Context) {
         locked = true
         cachedSeed = null
         cachedPassword = null
-        // Dừng SyncService nếu muốn khóa thực sự (tuỳ chọn)
         try {
             ctx.stopService(Intent(ctx, SyncService::class.java))
         } catch (_: Exception) {}
@@ -170,7 +169,6 @@ class WalletManager(private val ctx: Context) {
             .remove("${id}_attempts")
             .remove("${id}_address")
             .apply()
-        // Nếu xóa ví đang active, xóa luôn active_wallet_id
         if (active?.id == id) {
             prefs.edit().remove("active_wallet_id").apply()
             active = null
@@ -232,8 +230,6 @@ class WalletManager(private val ctx: Context) {
     fun getFeeRates(): FeeRates = FeeRates(5, 10, 20)
 
     fun estimateFee(to: String, amountBTC: Double, feeRateSatVb: Int): Double {
-        // Tạm thời giữ ước lượng cũ, nhưng biết rằng nó có thể sai
-        // Lý tưởng: build transaction thật và lấy vsize
         return (68 + 62 + 11) * feeRateSatVb / 1e8
     }
 
@@ -252,7 +248,6 @@ class WalletManager(private val ctx: Context) {
         if (feeRateSatVb < 1 || feeRateSatVb > 500) {
             throw Exception("Fee rate không hợp lệ (1-500 sat/vB)")
         }
-        // Kiểm tra đồng bộ trước khi gửi
         if (!isWalletSynced()) {
             throw Exception("Ví chưa đồng bộ blockchain, vui lòng đợi")
         }
@@ -279,23 +274,22 @@ class WalletManager(private val ctx: Context) {
         req.shuffleOutputs = true
         req.changeAddress = wallet.currentReceiveAddress()
 
-        // Hoàn tất transaction, sẽ tự kiểm tra đủ tiền (bao gồm phí)
         try {
             wallet.completeTx(req)
         } catch (e: InsufficientMoneyException) {
-            throw Exception("Không đủ BTC để gửi (thiếu ${e.missing.value / 1e8} BTC)")
+            // SỬA: dùng safe call .? và elvis
+            val missing = e.missing?.value ?: 0
+            throw Exception("Không đủ BTC để gửi (thiếu ${missing / 1e8} BTC)")
         } catch (e: Exception) {
             throw Exception("Không tạo được transaction: ${e.message}")
         }
 
-        // Commit trước broadcast (theo đúng thứ tự bitcoinj)
         try {
             wallet.commitTx(req.tx)
-        } catch (e: Exception) {
-            // Có thể tx đã tồn tại, không sao
+        } catch (_: Exception) {
+            // tx có thể đã tồn tại
         }
 
-        // Broadcast
         try {
             val broadcastFuture = peerGroup.broadcastTransaction(req.tx)
             broadcastFuture.future().get()
@@ -350,7 +344,7 @@ class WalletManager(private val ctx: Context) {
             val newEnc = CryptoUtil.encrypt(seed, newPassword)
             prefs.edit().putString("${id}_seed", newEnc).commit()
             cachedPassword = newPassword.toCharArray()
-            cachedSeed = seed   // cập nhật cached seed
+            cachedSeed = seed
             true
         } catch (e: Exception) { false }
     }
