@@ -277,7 +277,6 @@ class WalletManager(private val ctx: Context) {
         try {
             wallet.completeTx(req)
         } catch (e: InsufficientMoneyException) {
-            // SỬA: dùng safe call .? và elvis
             val missing = e.missing?.value ?: 0
             throw Exception("Không đủ BTC để gửi (thiếu ${missing / 1e8} BTC)")
         } catch (e: Exception) {
