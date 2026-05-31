@@ -8,7 +8,6 @@ import org.bitcoinj.crypto.DeterministicKey
 import org.bitcoinj.crypto.HDKeyDerivation
 import org.bitcoinj.crypto.TransactionSignature
 import org.bitcoinj.params.MainNetParams
-import org.bitcoinj.script.Script
 import org.bitcoinj.script.ScriptBuilder
 import org.bitcoinj.wallet.DeterministicSeed
 import org.bitcoinj.wallet.SendRequest
@@ -269,15 +268,13 @@ class WalletManager(private val ctx: Context) {
                 val txHash = out.getString("tx_hash_big_endian")
                 val txIndex = out.getInt("tx_output_n")
                 val value = out.getLong("value")
-                val scriptHex = out.getString("script")
-                // Tạo UTXO từ dữ liệu
                 val utxo = UTXO(
                     Sha256Hash.wrap(txHash),
                     txIndex,
                     Coin.valueOf(value),
                     0,
                     false,
-                    ScriptBuilder().build(),
+                    null,
                     null
                 )
                 utxos.add(utxo)
@@ -289,7 +286,7 @@ class WalletManager(private val ctx: Context) {
         }
     }
 
-    // ====================== TẠO VÀ KÝ GIAO DỊCH OFFLINE ======================
+    // ====================== TẠO VÀ KÝ GIAO DỊCH OFFLINE (ĐÃ SỬA LỖI) ======================
     private fun createAndSignTransaction(
         toAddress: String,
         amountSat: Long,
@@ -303,13 +300,17 @@ class WalletManager(private val ctx: Context) {
 
             var totalInput = 0L
             for (utxo in utxos) {
-                val outPoint = TransactionOutPoint(params, utxo.index, utxo.hash)
-                val input = tx.addInput(outPoint)
                 totalInput += utxo.value.value
+                // Tạo outPoint từ UTXO
+                val outPoint = TransactionOutPoint(params, utxo.index, utxo.hash)
+                // Script mặc định (sẽ được ký sau)
+                val scriptPubKey = ScriptBuilder.createOutputScript(Address.fromString(params, getAddress()))
+                val input = TransactionInput(params, tx, scriptPubKey.program, outPoint)
+                tx.addInput(input)
             }
 
-            // Tính phí dựa trên kích thước tx (ước lượng)
-            val estimatedSize = tx.unsafeBitcoinSerialize().size + utxos.size * 107 // ước lượng
+            // Tính phí ước lượng (đơn giản)
+            val estimatedSize = tx.unsafeBitcoinSerialize().size + utxos.size * 107
             val fee = (estimatedSize / 1000.0 * feeRateSatVb).toLong().coerceAtLeast(1000)
             val change = totalInput - amountSat - fee
             if (change > DUST_THRESHOLD) {
@@ -353,7 +354,6 @@ class WalletManager(private val ctx: Context) {
         return ECKey.fromPrivate(key.privKey)
     }
 
-    // ====================== BROADCAST QUA API ======================
     private fun broadcastTxViaApi(hex: String): Boolean {
         return try {
             val url = URL("https://mempool.space/api/tx")
@@ -431,7 +431,7 @@ class WalletManager(private val ctx: Context) {
             throw Exception("Không lấy được UTXO từ API (có thể không có đủ số dư)")
         }
 
-        val totalBalance = utxos.sumOf { it.value.value }
+        val totalBalance = utxos.fold(0L) { acc, utxo -> acc + utxo.value.value }
         if (totalBalance < amountSat) {
             throw Exception("Số dư không đủ (cần ${amountSat / 1e8} BTC, có ${totalBalance / 1e8} BTC)")
         }
