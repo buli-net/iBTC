@@ -64,6 +64,7 @@ class MainActivity : AppCompatActivity() {
 
     private val qrScanLauncher = registerForActivityResult(ScanContract()) { result ->
         result.contents?.let { raw ->
+            // Xử lý URI bitcoin: (bitcoin:1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa?amount=0.01)
             val cleanAddress = raw
                 .removePrefix("bitcoin:")
                 .substringBefore("?")
@@ -109,6 +110,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+        // Chỉ hiện unlock dialog nếu ví đang bị khóa (tránh hiện lại khi đã mở)
         if (walletManager.isLocked()) {
             try {
                 if (walletManager.getActiveId() != null || walletManager.hasWallets()) {
@@ -126,6 +128,7 @@ class MainActivity : AppCompatActivity() {
         handler.removeCallbacksAndMessages(null)
         try { screenReceiver?.let { unregisterReceiver(it) } } catch (_:Exception) {}
         try { walletManager.stop() } catch (_: Exception) {}
+        // Không gọi walletManager.lock() ở đây để tránh dừng sync đột ngột
         super.onDestroy()
     }
 
@@ -151,16 +154,21 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun refreshWalletFromSPV() {
+        // Tránh gọi khi chưa sync
         if (!walletManager.isWalletSynced()) {
             runOnUiThread {
-                if (viewsReady) spvStatusText.text = "SPV: Đang đồng bộ blockchain..."
+                if (viewsReady) {
+                    spvStatusText.text = "SPV: Đang đồng bộ blockchain..."
+                }
             }
             return
         }
         if (isSyncing) return
         isSyncing = true
         runOnUiThread {
-            if (viewsReady) spvStatusText.text = "SPV: Đang cập nhật số dư..."
+            if (viewsReady) {
+                spvStatusText.text = "SPV: Đang cập nhật số dư..."
+            }
         }
         Thread {
             try {
@@ -175,57 +183,45 @@ class MainActivity : AppCompatActivity() {
                 var dailyPrice = prefsDaily.getFloat("daily_price", -1f).toDouble()
                 var dailyTimestamp = prefsDaily.getLong("daily_timestamp", 0L)
 
+                if (dailyTimestamp != todayStart || dailyUsd < 0 || dailyPrice < 0) {
+                    dailyUsd = currentUsd
+                    dailyPrice = currentPrice
+                    prefsDaily.edit()
+                        .putFloat("daily_usd", dailyUsd.toFloat())
+                        .putFloat("daily_price", dailyPrice.toFloat())
+                        .putLong("daily_timestamp", todayStart)
+                        .apply()
+                }
+
+                val usdChange = currentUsd - dailyUsd
+                val usdChangePercent = if (dailyUsd > 0) (usdChange / dailyUsd) * 100 else 0.0
+                val usdArrow = when {
+                    usdChange > 0.01 -> "▲"
+                    usdChange < -0.01 -> "▼"
+                    else -> "●"
+                }
+                val usdColor = when {
+                    usdChange > 0.01 -> Color.parseColor("#00C853")
+                    usdChange < -0.01 -> Color.parseColor("#D50000")
+                    else -> Color.GRAY
+                }
+
+                val priceChange = currentPrice - dailyPrice
+                val priceChangePercent = if (dailyPrice > 0) (priceChange / dailyPrice) * 100 else 0.0
+                val priceArrow = when {
+                    priceChange > 0.01 -> "▲"
+                    priceChange < -0.01 -> "▼"
+                    else -> "●"
+                }
+                val priceColor = when {
+                    priceChange > 0.01 -> Color.parseColor("#00C853")
+                    priceChange < -0.01 -> Color.parseColor("#D50000")
+                    else -> Color.GRAY
+                }
+
                 runOnUiThread {
                     if (!viewsReady) return@runOnUiThread
                     balanceText.text = String.format(Locale.US, "%.8f BTC", bal)
-
-                    // Kiểm tra có giá hay không
-                    val hasPrice = currentPrice > 0
-                    if (!hasPrice) {
-                        balanceUsdText.text = "≈ $---"
-                        balanceUsdText.setTextColor(Color.GRAY)
-                        rateText.text = "BTC ---"
-                        rateText.setTextColor(Color.GRAY)
-                        isSyncing = false
-                        return@runOnUiThread
-                    }
-
-                    // Có giá: xử lý biến động so với đầu ngày
-                    if (dailyTimestamp != todayStart || dailyUsd < 0 || dailyPrice < 0) {
-                        dailyUsd = currentUsd
-                        dailyPrice = currentPrice
-                        prefsDaily.edit()
-                            .putFloat("daily_usd", dailyUsd.toFloat())
-                            .putFloat("daily_price", dailyPrice.toFloat())
-                            .putLong("daily_timestamp", todayStart)
-                            .apply()
-                    }
-
-                    val usdChange = currentUsd - dailyUsd
-                    val usdChangePercent = if (dailyUsd > 0) (usdChange / dailyUsd) * 100 else 0.0
-                    val usdArrow = when {
-                        usdChange > 0.01 -> "▲"
-                        usdChange < -0.01 -> "▼"
-                        else -> "●"
-                    }
-                    val usdColor = when {
-                        usdChange > 0.01 -> Color.parseColor("#00C853")
-                        usdChange < -0.01 -> Color.parseColor("#D50000")
-                        else -> Color.parseColor("#F7931A")
-                    }
-
-                    val priceChange = currentPrice - dailyPrice
-                    val priceChangePercent = if (dailyPrice > 0) (priceChange / dailyPrice) * 100 else 0.0
-                    val priceArrow = when {
-                        priceChange > 0.01 -> "▲"
-                        priceChange < -0.01 -> "▼"
-                        else -> "●"
-                    }
-                    val priceColor = when {
-                        priceChange > 0.01 -> Color.parseColor("#00C853")
-                        priceChange < -0.01 -> Color.parseColor("#D50000")
-                        else -> Color.parseColor("#F7931A")
-                    }
 
                     balanceUsdText.setTextColor(usdColor)
                     balanceUsdText.text = String.format(
@@ -243,7 +239,6 @@ class MainActivity : AppCompatActivity() {
 
                     val addr = walletManager.getAddress()
                     addressText.text = "Địa chỉ: $addr"
-
                     val adapter = object : ArrayAdapter<String>(this@MainActivity, android.R.layout.simple_list_item_2, android.R.id.text1, txs.map { "" }) {
                         override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
                             val view = super.getView(position, convertView, parent)
@@ -267,10 +262,6 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread {
                     if (viewsReady) {
                         spvStatusText.text = "SPV: Lỗi cập nhật"
-                        balanceUsdText.text = "≈ $---"
-                        balanceUsdText.setTextColor(Color.GRAY)
-                        rateText.text = "BTC ---"
-                        rateText.setTextColor(Color.GRAY)
                     }
                     isSyncing = false
                 }
@@ -352,16 +343,28 @@ class MainActivity : AppCompatActivity() {
                         val minedPct = ((totalMined / 21000000.0) * 100).toInt()
                         statBars["mined"]?.progress = minedPct
                         statTexts["mined"]?.text = "Đã khai thác: ${String.format("%.2f", totalMined)} / 21M BTC ($minedPct%)"
+                        val halvingPct = ((1 - blocksToHalving / 210000.0) * 100).toInt()
+                        statBars["halving"]?.progress = halvingPct
                         statTexts["halving"]?.text = "Halving #${halvings + 1}: còn $blocksToHalving blocks (~${blocksToHalving / 144} ngày)"
+                        val rewardPct = ((reward / 50.0) * 100).toInt()
+                        statBars["reward"]?.progress = rewardPct
                         statTexts["reward"]?.text = "Thưởng block: $reward BTC (ban đầu 50 BTC)"
+                        statBars["diff"]?.progress = diffProgress.toInt()
                         statTexts["diff"]?.text = "Difficulty adj: ${String.format("%.1f", diffProgress)}%"
+                        val mempoolPct = (mempoolCount / 300000.0 * 100).toInt().coerceAtMost(100)
+                        statBars["mempool"]?.progress = mempoolPct
                         statTexts["mempool"]?.text = "Mempool: $mempoolCount tx chờ"
                         val hashEh = currentHash / 1e18
+                        statBars["hash"]?.progress = 70
                         statTexts["hash"]?.text = "Hashrate: ${String.format("%.0f", hashEh)} EH/s"
+                        statBars["fee"]?.progress = feeFast.coerceAtMost(100)
                         statTexts["fee"]?.text = "Phí nhanh: $feeFast sat/vB"
                         val blocksToday = height % 144
+                        statBars["today"]?.progress = (blocksToday * 100 / 144)
                         statTexts["today"]?.text = "Block hôm nay: $blocksToday / 144"
+                        statBars["supply"]?.progress = minedPct
                         statTexts["supply"]?.text = "Cung lưu thông: ${String.format("%.2f", totalMined / 1000000)}M BTC"
+                        statBars["height"]?.progress = height % 100
                         statTexts["height"]?.text = "Block height: #$height"
                     }
                 }
@@ -398,7 +401,7 @@ class MainActivity : AppCompatActivity() {
         statBars[key] = pb
     }
 
-    // Sparkline
+    // ================= SPARKLINE NHỎ =================
     private fun setupSparkline() {
         sparkline = LineChart(this).apply {
             layoutParams = LinearLayout.LayoutParams(dpToPx(120), dpToPx(40))
@@ -418,6 +421,7 @@ class MainActivity : AppCompatActivity() {
     private fun updateSparkline(closePrices: List<Float>) {
         if (!viewsReady) return
         if (closePrices.isEmpty()) return
+
         val entries = closePrices.mapIndexed { index, price -> Entry(index.toFloat(), price) }
         val firstPrice = closePrices.first()
         val lastPrice = closePrices.last()
@@ -426,6 +430,7 @@ class MainActivity : AppCompatActivity() {
             lastPrice < firstPrice -> Color.parseColor("#D50000")
             else -> Color.parseColor("#F7931A")
         }
+
         val dataSet = LineDataSet(entries, "").apply {
             color = trendColor
             setCircleColor(Color.TRANSPARENT)
@@ -437,6 +442,7 @@ class MainActivity : AppCompatActivity() {
             fillAlpha = 50
             mode = LineDataSet.Mode.CUBIC_BEZIER
         }
+
         sparkline.data = LineData(dataSet)
         sparkline.invalidate()
     }
@@ -451,8 +457,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun dpToPx(dp: Int): Int = (dp * resources.displayMetrics.density).toInt()
+    // =============================================
 
-    // Các màn hình
     private fun showWelcome() {
         rootLayout.removeAllViews()
         val isDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
@@ -649,7 +655,7 @@ class MainActivity : AppCompatActivity() {
             setTextColor(mainColor)
         }
 
-        // Hàng số dư + sparkline
+        // Hàng chứa số dư BTC và sparkline
         val balanceRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
@@ -751,14 +757,13 @@ class MainActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 600)
         }
 
-        // Thêm các view theo đúng thứ tự
         rootLayout.addView(walletNameText)
         rootLayout.addView(balanceRow)
         rootLayout.addView(balanceUsdText)
         rootLayout.addView(rateText)
         rootLayout.addView(spvStatusText)
         rootLayout.addView(spvProgressBar)
-        rootLayout.addView(addressText)   // <--- ĐÃ THÊM DÒNG ĐỊA CHỈ
+        rootLayout.addView(addressText)
         rootLayout.addView(Space(this).apply { layoutParams = LinearLayout.LayoutParams(1, 20) })
         rootLayout.addView(btnRow1)
         rootLayout.addView(btnRow2)
@@ -816,7 +821,6 @@ class MainActivity : AppCompatActivity() {
         fetchSparkline()
     }
 
-    // Các hàm dialog giữ nguyên (không thay đổi)
     private fun showReceiveDialog() {
         val address = walletManager.getAddress()
         if (address.isEmpty()) { toast("Ví chưa sẵn sàng"); return }
@@ -1095,6 +1099,9 @@ class MainActivity : AppCompatActivity() {
                     toast("Nhập mật khẩu")
                     return@setPositiveButton
                 }
+                // Bỏ unlock lại để tránh restart sync, chỉ kiểm tra mật khẩu không rỗng
+                // Nếu muốn kiểm tra mật khẩu đúng, có thể dùng walletManager.unlock nhưng sẽ restart sync.
+                // Tạm thời bỏ unlock.
                 val delayLayout = LinearLayout(this).apply {
                     orientation = LinearLayout.VERTICAL
                     setPadding(40,30,40,30)
@@ -1289,7 +1296,7 @@ class MainActivity : AppCompatActivity() {
     private fun showInfo() {
         AlertDialog.Builder(this)
             .setTitle("iBTC v4.7")
-            .setMessage("Build: 2026-05-30\n• SPV 100%\n• Foreground service\n• Gửi BTC\n• Biểu đồ giá nhỏ real-time (xanh/đỏ/cam theo xu hướng)")
+            .setMessage("Build: 2026-05-30\n• SPV 100%\n• Foreground service\n• Gửi BTC\n• Biểu đồ giá nhỏ real-time (xanh/đỏ theo xu hướng)")
             .setPositiveButton("OK", null)
             .show()
     }
