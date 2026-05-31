@@ -6,19 +6,20 @@ import org.bitcoinj.core.*
 import org.bitcoinj.crypto.ChildNumber
 import org.bitcoinj.crypto.DeterministicKey
 import org.bitcoinj.crypto.HDKeyDerivation
+import org.bitcoinj.crypto.TransactionSignature
 import org.bitcoinj.params.MainNetParams
+import org.bitcoinj.script.Script
 import org.bitcoinj.script.ScriptBuilder
-import org.bitcoinj.script.ScriptOpCodes
 import org.bitcoinj.wallet.DeterministicSeed
 import org.bitcoinj.wallet.SendRequest
 import org.bitcoinj.wallet.Wallet
-import org.json.JSONArray
 import org.json.JSONObject
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
 import java.security.SecureRandom
 import java.util.*
+import kotlin.math.abs
 
 data class WalletInfo(val id: String, val name: String)
 data class TransactionInfo(val txId: String, val amount: Double, val type: String, val time: Date)
@@ -269,6 +270,7 @@ class WalletManager(private val ctx: Context) {
                 val txIndex = out.getInt("tx_output_n")
                 val value = out.getLong("value")
                 val scriptHex = out.getString("script")
+                // Tạo UTXO từ dữ liệu
                 val utxo = UTXO(
                     Sha256Hash.wrap(txHash),
                     txIndex,
@@ -297,34 +299,34 @@ class WalletManager(private val ctx: Context) {
         return try {
             val tx = Transaction(params)
             val address = Address.fromString(params, toAddress)
-            val output = TransactionOutPoint(params, Coin.valueOf(amountSat), address)
-            // Thực tế cần tạo output đúng cách, nhưng BitcoinJ có API đơn giản:
-            // tx.addOutput(Coin.valueOf(amountSat), address)
             tx.addOutput(Coin.valueOf(amountSat), address)
 
             var totalInput = 0L
             for (utxo in utxos) {
                 val outPoint = TransactionOutPoint(params, utxo.index, utxo.hash)
-                val scriptPubKey = ScriptBuilder.createOutputScript(Address.fromString(params, getAddress()))
-                val input = tx.addInput(outPoint, scriptPubKey)
+                val input = tx.addInput(outPoint)
                 totalInput += utxo.value.value
             }
-            val fee = (tx.messageSize / 1000.0 * feeRateSatVb).toLong().coerceAtLeast(1000)
+
+            // Tính phí dựa trên kích thước tx (ước lượng)
+            val estimatedSize = tx.unsafeBitcoinSerialize().size + utxos.size * 107 // ước lượng
+            val fee = (estimatedSize / 1000.0 * feeRateSatVb).toLong().coerceAtLeast(1000)
             val change = totalInput - amountSat - fee
             if (change > DUST_THRESHOLD) {
                 tx.addOutput(Coin.valueOf(change), Address.fromString(params, getAddress()))
             }
 
-            // Ký từng input bằng private key
+            // Ký từng input
             val seedPhrase = cachedSeed ?: return null
-            val key = getPrivateKeyForAddress(seedPhrase, 0) // lấy key cho địa chỉ đầu tiên
+            val key = getPrivateKeyForAddress(seedPhrase, 0)
             for (i in 0 until tx.inputs.size) {
                 val input = tx.inputs[i]
-                val scriptPubKey = ScriptBuilder.createOutputScript(Address.fromString(params, getAddress()))
-                val sighash = tx.hashForSignatureWitness(i, scriptPubKey, Transaction.SigHash.ALL, false)
+                val redeemScript = ScriptBuilder.createOutputScript(Address.fromString(params, getAddress()))
+                val sighash = tx.hashForSignatureWitness(i, redeemScript, Transaction.SigHash.ALL, false)
                 val sig = key.sign(sighash)
+                val sigWithHashType = TransactionSignature(sig, Transaction.SigHash.ALL, false).encodeToBitcoin()
                 val witness = TransactionWitness(2)
-                witness.setPush(0, sig.encodeToBitcoin())
+                witness.setPush(0, sigWithHashType)
                 witness.setPush(1, key.pubKey)
                 input.setWitness(witness)
                 input.scriptSig = ScriptBuilder.createEmpty()
@@ -420,7 +422,7 @@ class WalletManager(private val ctx: Context) {
             return req.tx.getHashAsString()
         }
 
-        // SPV chưa đồng bộ: dùng API để lấy UTXO và broadcast
+        // SPV chưa đồng bộ: dùng API
         val address = getAddress()
         if (address.isEmpty()) throw Exception("Địa chỉ ví không hợp lệ")
 
@@ -429,7 +431,6 @@ class WalletManager(private val ctx: Context) {
             throw Exception("Không lấy được UTXO từ API (có thể không có đủ số dư)")
         }
 
-        // Tổng số dư từ UTXO
         val totalBalance = utxos.sumOf { it.value.value }
         if (totalBalance < amountSat) {
             throw Exception("Số dư không đủ (cần ${amountSat / 1e8} BTC, có ${totalBalance / 1e8} BTC)")
