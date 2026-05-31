@@ -129,17 +129,14 @@ class SyncService : Service() {
                 val dir = File(filesDir, "spv_wallets")
                 if (!dir.exists()) dir.mkdirs()
 
-                // Dừng kit cũ
                 try {
                     kit?.stopAsync()
                     kit?.awaitTerminated()
                 } catch (_: Exception) {}
                 kit = null
 
-                // Tạo kit mới
                 val newKit = WalletAppKit(params, dir, walletId).apply {
                     setBlockingStartup(false)
-                    // Lưu tham chiếu để dùng trong listener
                     val kitRef = this
                     setDownloadListener(object : DownloadProgressTracker() {
                         override fun progress(pct: Double, blocksSoFar: Int, date: java.util.Date?) {
@@ -153,7 +150,6 @@ class SyncService : Service() {
                         }
 
                         override fun doneDownload() {
-                            // Dùng kitRef thay vì this (vì this là DownloadProgressTracker)
                             val wallet = kitRef.wallet()
                             val peerGroup = kitRef.peerGroup()
                             val isReallySynced = wallet != null &&
