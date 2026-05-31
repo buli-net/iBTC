@@ -177,7 +177,6 @@ class MainActivity : AppCompatActivity() {
                 val hash = tx.getString("hash")
                 val time = tx.getLong("time") * 1000
                 var amount = 0.0
-                val inputs = tx.getJSONArray("inputs")
                 val outputs = tx.getJSONArray("out")
                 var isReceive = false
                 for (j in 0 until outputs.length()) {
@@ -189,6 +188,7 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
                 if (!isReceive) {
+                    val inputs = tx.getJSONArray("inputs")
                     for (j in 0 until inputs.length()) {
                         val inp = inputs.getJSONObject(j)
                         val prevOut = inp.getJSONObject("prev_out")
@@ -238,17 +238,81 @@ class MainActivity : AppCompatActivity() {
                     val priceApi = fetchPriceFromApi()
                     val currentPrice = priceApi ?: walletManager.price()
                     val currentUsd = (balanceApi ?: 0.0) * currentPrice
-                    
+
+                    // Lấy daily change từ SharedPreferences
+                    val prefsDaily = getSharedPreferences("daily_mark", Context.MODE_PRIVATE)
+                    val todayStart = getTodayUtcStart()
+                    var dailyUsd = prefsDaily.getFloat("daily_usd", -1f).toDouble()
+                    var dailyPrice = prefsDaily.getFloat("daily_price", -1f).toDouble()
+                    var dailyTimestamp = prefsDaily.getLong("daily_timestamp", 0L)
+
+                    if (dailyTimestamp != todayStart || dailyUsd < 0 || dailyPrice < 0) {
+                        dailyUsd = currentUsd
+                        dailyPrice = currentPrice
+                        prefsDaily.edit()
+                            .putFloat("daily_usd", dailyUsd.toFloat())
+                            .putFloat("daily_price", dailyPrice.toFloat())
+                            .putLong("daily_timestamp", todayStart)
+                            .apply()
+                    }
+
+                    val usdChange = currentUsd - dailyUsd
+                    val usdChangePercent = if (dailyUsd > 0) (usdChange / dailyUsd) * 100 else 0.0
+                    val usdArrow = when {
+                        usdChange > 0.01 -> "▲"
+                        usdChange < -0.01 -> "▼"
+                        else -> "●"
+                    }
+                    val usdColor = when {
+                        usdChange > 0.01 -> Color.parseColor("#00C853")
+                        usdChange < -0.01 -> Color.parseColor("#D50000")
+                        else -> Color.GRAY
+                    }
+
+                    val priceChange = currentPrice - dailyPrice
+                    val priceChangePercent = if (dailyPrice > 0) (priceChange / dailyPrice) * 100 else 0.0
+                    val priceArrow = when {
+                        priceChange > 0.01 -> "▲"
+                        priceChange < -0.01 -> "▼"
+                        else -> "●"
+                    }
+                    val priceColor = when {
+                        priceChange > 0.01 -> Color.parseColor("#00C853")
+                        priceChange < -0.01 -> Color.parseColor("#D50000")
+                        else -> Color.GRAY
+                    }
+
                     runOnUiThread {
                         if (!viewsReady) return@runOnUiThread
+
+                        // Số dư BTC
                         if (balanceApi != null) {
                             balanceText.text = String.format(Locale.US, "%.8f BTC", balanceApi)
-                            balanceUsdText.text = "≈ $${String.format("%,.2f", currentUsd)}"
                         } else {
                             balanceText.text = "--- BTC"
-                            balanceUsdText.text = "≈ $---"
                         }
-                        rateText.text = "BTC $${String.format("%,.2f", currentPrice)}"
+
+                        // Số dư USD kèm biến động
+                        balanceUsdText.setTextColor(usdColor)
+                        balanceUsdText.text = if (balanceApi != null) {
+                            String.format(
+                                Locale.US,
+                                "≈ $%,.2f %s %+.2f%% (%+.2f$)",
+                                currentUsd, usdArrow, usdChangePercent, usdChange
+                            )
+                        } else {
+                            "≈ $---"
+                        }
+
+                        // Giá BTC kèm biến động
+                        rateText.setTextColor(priceColor)
+                        rateText.text = String.format(
+                            Locale.US,
+                            "BTC $%,.2f %s %+.2f%% (%+.2f$)",
+                            currentPrice, priceArrow, priceChangePercent, priceChange
+                        )
+
+                        // Lịch sử giao dịch
                         if (txsApi != null) {
                             val adapter = object : ArrayAdapter<String>(this@MainActivity, android.R.layout.simple_list_item_2, android.R.id.text1, txsApi.map { "" }) {
                                 override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
