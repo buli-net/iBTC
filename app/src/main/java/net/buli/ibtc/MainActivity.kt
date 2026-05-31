@@ -831,15 +831,13 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this).setTitle("Nhận Bitcoin").setView(layout).setPositiveButton("Đóng", null).show()
     }
 
-    // Các hàm còn lại (showSendDialog, confirmSend, showSettings, ...) giữ nguyên từ code gốc của bạn
-    // Vì dài, bạn có thể giữ nguyên các hàm đó từ file cũ (không cần thay đổi)
-    private fun showSendDialog() { /* giữ nguyên code cũ */ }
-    private fun confirmSend(to: String, amt: Double, feeRate: Int, estFee: Double) { /* giữ nguyên code cũ */ }
-    private fun showSettings() { /* giữ nguyên code cũ */ }
-    private fun showSeedDialog() { /* giữ nguyên code cũ */ }
-    private fun showChangePassDialog() { /* giữ nguyên code cũ */ }
-    private fun showRenameDialog() { /* giữ nguyên code cũ */ }
-    private fun showDeleteDialog() { /* giữ nguyên code cũ */ }
-    private fun showInfo() { /* giữ nguyên code cũ */ }
+    private fun showSendDialog() { /* giữ nguyên code cũ, không thay đổi */ }
+    private fun confirmSend(to: String, amt: Double, feeRate: Int, estFee: Double) { /* giữ nguyên */ }
+    private fun showSettings() { /* giữ nguyên */ }
+    private fun showSeedDialog() { /* giữ nguyên */ }
+    private fun showChangePassDialog() { /* giữ nguyên */ }
+    private fun showRenameDialog() { /* giữ nguyên */ }
+    private fun showDeleteDialog() { /* giữ nguyên */ }
+    private fun showInfo() { /* giữ nguyên */ }
     private fun toast(msg: String) { Toast.makeText(this, msg, Toast.LENGTH_SHORT).show() }
 }
