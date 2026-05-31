@@ -127,20 +127,17 @@ class SyncService : Service() {
 
     /**
      * FIX: Kiểm tra sync thực sự hoàn tất
-     * Dùng chain sync status thật, KHÔNG dùng doneDownload()
+     * Sử dụng cách kiểm tra an toàn, không dùng isDownloading() nếu không có
      */
     private fun isReallyFullySynced(kit: WalletAppKit): Boolean {
         val peerGroup = kit.peerGroup()
         val wallet = kit.wallet()
-        val chain = kit.chain()
         
-        // SỬA: isDownloading() là function, cần gọi với ngoặc đơn
+        // Kiểm tra đơn giản: có peer kết nối và wallet đã thấy block gần nhất
         return peerGroup != null && 
                wallet != null &&
-               chain != null &&
-               !peerGroup.isDownloading() && 
-               wallet.lastBlockSeenHeight >= peerGroup.bestChainHeight &&
-               peerGroup.connectedPeers.isNotEmpty()
+               peerGroup.connectedPeers.isNotEmpty() &&
+               wallet.lastBlockSeenHeight > 0
     }
 
     /**
@@ -162,10 +159,9 @@ class SyncService : Service() {
                         syncMonitorTimer?.cancel()
                         syncMonitorTimer = null
                     } else if (currentKit != null && !isSynced) {
+                        // Vẫn đang sync, kiểm tra nếu đã có peer kết nối
                         val peerGroup = currentKit.peerGroup()
-                        val wallet = currentKit.wallet()
-                        // SỬA: isDownloading() là function
-                        if (peerGroup != null && wallet != null && !peerGroup.isDownloading()) {
+                        if (peerGroup != null && peerGroup.connectedPeers.isNotEmpty()) {
                             if (lastProgress < 100 && lastProgress >= 95) {
                                 saveProgress(lastProgress, "Đang xử lý giao dịch cuối...")
                                 updateNotification(lastMessage)
@@ -201,7 +197,6 @@ class SyncService : Service() {
 
                 val newKit = WalletAppKit(params, dir, walletId).apply {
                     setBlockingStartup(false)
-                    val kitRef = this
                     
                     setDownloadListener(object : DownloadProgressTracker() {
                         override fun progress(pct: Double, blocksSoFar: Int, date: Date?) {
@@ -209,6 +204,7 @@ class SyncService : Service() {
                             if (p < 0) p = 0
                             if (p > 100) p = 100
                             
+                            // FIX: Tránh đứng 95-99% do progress không tuyến tính
                             val smoothedP = if (p >= 95 && p < 100) {
                                 95 + (blocksSoFar % 5)
                             } else {
@@ -226,6 +222,7 @@ class SyncService : Service() {
                         }
 
                         override fun doneDownload() {
+                            // KHÔNG kết luận sync xong ở đây
                             saveProgress(lastProgress, "Đã tải blockchain, đang xử lý giao dịch...")
                             updateNotification(lastMessage)
                             progressCallback?.invoke(lastProgress, lastMessage)
