@@ -239,8 +239,13 @@ class MainActivity : AppCompatActivity() {
             dailyUsd = currentUsd
             prefsDaily.edit().putFloat("daily_usd", dailyUsd.toFloat()).apply()
         }
+
         val usdChange = currentUsd - dailyUsd
-        val usdChangePercent = if (dailyUsd > 0) (usdChange / dailyUsd) * 100 else 0.0
+        val usdChangePercent = when {
+            dailyUsd == 0.0 && currentUsd > 0 -> 100.0
+            dailyUsd == 0.0 && currentUsd == 0.0 -> 0.0
+            else -> (usdChange / dailyUsd) * 100
+        }
         val usdArrow = when {
             usdChange > 0.01 -> "▲"
             usdChange < -0.01 -> "▼"
@@ -1208,7 +1213,7 @@ class MainActivity : AppCompatActivity() {
 
                 isSpvSynced = walletManager.isWalletSynced()
                 if (!isSpvSynced) {
-                    modeWarningTv.text = "⚠️ SPV chưa đồng bộ. Giao dịch sẽ được gửi qua API (vẫn an toàn và riêng tư)."
+                    modeWarningTv.text = "⚠️ SPV chưa đồng bộ. Vui lòng đợi đồng bộ xong để gửi BTC."
                     modeWarningTv.visibility = View.VISIBLE
                 } else {
                     modeWarningTv.visibility = View.GONE
@@ -1310,6 +1315,10 @@ class MainActivity : AppCompatActivity() {
                     toast("Địa chỉ BTC không hợp lệ")
                     return@setOnClickListener
                 }
+                if (!isSpvSynced) {
+                    toast("Ví chưa đồng bộ, vui lòng đợi SPV hoàn tất")
+                    return@setOnClickListener
+                }
                 val fee = when (feeGroup.checkedRadioButtonId) {
                     1 -> feeRates.slow
                     3 -> feeRates.fast
@@ -1318,7 +1327,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 val estFee = walletManager.estimateFee(to, amt, fee)
                 dialog.dismiss()
-                confirmSend(to, amt, fee, estFee, !isSpvSynced)
+                confirmSend(to, amt, fee, estFee, false)
             }
             updateUI()
         }
@@ -1557,7 +1566,7 @@ class MainActivity : AppCompatActivity() {
     private fun showInfo() {
         AlertDialog.Builder(this)
             .setTitle("iBTC v4.7")
-            .setMessage("Build: 2026-05-31\n• SPV 100%\n• Foreground service\n• Gửi BTC linh hoạt (SPV hoặc API)\n• Biểu đồ giá 24h\n• Progress bar macro + micro đổi màu\n• Halving tự động\n• Thống kê Bitcoin")
+            .setMessage("Build: 2026-05-31\n• SPV 100%\n• Foreground service\n• Gửi BTC\n• Biểu đồ giá 24h\n• Progress bar macro + micro đổi màu\n• Halving tự động\n• Thống kê Bitcoin")
             .setPositiveButton("OK", null)
             .show()
     }
