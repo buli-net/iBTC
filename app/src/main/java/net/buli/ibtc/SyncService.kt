@@ -128,9 +128,11 @@ class SyncService : Service() {
             val mostCommonHeight = peerGroup.mostCommonChainHeight
             val walletHeight = wallet?.lastBlockSeenHeight ?: 0
             totalBlocks = max(mostCommonHeight, walletHeight)
-            if (totalBlocks == 0 && lastProgress > 0 && blocksSoFar > 0) {
+            if (totalBlocks == 0 && blocksSoFar > 0 && lastProgress > 0) {
                 totalBlocks = (blocksSoFar.toDouble() / (lastProgress / 100.0)).toInt()
             }
+            // Đảm bảo totalBlocks ít nhất bằng blocksSoFar
+            if (totalBlocks < blocksSoFar) totalBlocks = blocksSoFar
         }
     }
 
