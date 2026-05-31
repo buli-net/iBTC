@@ -321,7 +321,7 @@ class WalletManager(private val ctx: Context) {
             for (i in 0 until tx.inputs.size) {
                 val input = tx.inputs[i]
                 val redeemScript = ScriptBuilder.createOutputScript(Address.fromString(params, getAddress()))
-                // Sử dụng redeemScript.program (ByteArray) đúng API bitcoinj 0.16.3
+                // Sử dụng đúng API: hashForSignatureWitness nhận ByteArray scriptPubKey
                 val sighash = tx.hashForSignatureWitness(i, redeemScript.program, Transaction.SigHash.ALL, false)
                 val sig = key.sign(sighash)
                 val sigWithHashType = TransactionSignature(sig, Transaction.SigHash.ALL, false).encodeToBitcoin()
