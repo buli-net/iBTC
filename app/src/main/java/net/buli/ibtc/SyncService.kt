@@ -173,7 +173,6 @@ class SyncService : Service() {
                     saveProgress(lastProgress, "Added peer discovery (safe mode)")
                 }
             }
-            // Không cần ping peers vì không truy cập được private property
         } catch (e: Exception) {
             saveProgress(lastProgress, "Peer rotate error: ${e.message}")
         }
@@ -368,7 +367,10 @@ class SyncService : Service() {
     fun isWalletSynced(): Boolean = isSynced
 
     fun getBlocksSoFar(): Int = kit?.wallet()?.lastBlockSeenHeight ?: 0
-    fun getTotalBlocks(): Int = getBestChainHeight(kit ?: return 0)
+    fun getTotalBlocks(): Int {
+        val k = kit ?: return 0
+        return getBestChainHeight(k)
+    }
 
     override fun onDestroy() {
         super.onDestroy()
