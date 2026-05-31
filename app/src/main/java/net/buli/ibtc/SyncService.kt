@@ -31,7 +31,6 @@ class SyncService : Service() {
     @Volatile private var kit: WalletAppKit? = null
     private lateinit var prefs: SharedPreferences
 
-    // Biến hỗ trợ cho UI (có thể dùng hoặc không)
     private var blocksSoFar = 0
     private var totalBlocks = 0
 
@@ -65,7 +64,6 @@ class SyncService : Service() {
         val walletId = intent?.getStringExtra("wallet_id") ?: "default_wallet"
         currentWalletId = walletId
 
-        // Nếu đã có kit đang chạy và ví khớp, không khởi tạo lại
         if (kit != null && kit?.isRunning == true && kit?.wallet() != null) {
             setProgressCallback(progressCallback)
             return START_NOT_STICKY
@@ -125,14 +123,9 @@ class SyncService : Service() {
         updateNotification(message)
     }
 
-    /**
-     * Kiểm tra sync thực sự dựa trên chiều cao block của ví và mạng.
-     */
     private fun isReallySynced(wallet: Wallet, kitRef: WalletAppKit): Boolean {
         val walletHeight = wallet.lastBlockSeenHeight
-        // Lấy chiều cao chain từ Chain object của kit
         val chainHeight = kitRef.chain()?.chainHead?.height ?: 0
-        // Cho phép sai lệch 1 block
         return walletHeight >= chainHeight - 1 && walletHeight > 0
     }
 
@@ -148,7 +141,6 @@ class SyncService : Service() {
                 val dir = File(filesDir, "spv_wallets")
                 if (!dir.exists()) dir.mkdirs()
 
-                // Dừng kit cũ an toàn
                 kit?.let { oldKit ->
                     try {
                         oldKit.stopAsync()
@@ -180,33 +172,37 @@ class SyncService : Service() {
                         }
 
                         override fun doneDownload() {
-                            // Tải xong block, nhưng chưa chắc sync xong
-                            saveProgress(95, "Đã tải xong block, đang kiểm tra đồng bộ...")
+                            saveProgress(95, "Đã tải xong block, đang bắt kịp blockchain...")
 
                             val wallet = kitRef.wallet()
                             if (wallet == null) {
-                                saveProgress(95, "Lỗi: ví null, thử lại...")
+                                saveProgress(95, "Lỗi ví, thử lại sau...")
                                 return
                             }
 
-                            // Kiểm tra sync thực sự
+                            // Vòng lặp vô hạn kiểm tra đồng bộ, tự động tăng % đến 100
                             Thread {
-                                var synced = false
-                                repeat(30) { i ->
+                                var lastPercent = 95
+                                while (true) {
                                     if (isReallySynced(wallet, kitRef)) {
-                                        synced = true
-                                        return@repeat
+                                        isSynced = true
+                                        prefs.edit().putBoolean("is_synced", true).apply()
+                                        saveProgress(100, "Đã đồng bộ blockchain")
+                                        break
+                                    } else {
+                                        val chainHeight = kitRef.chain()?.chainHead?.height ?: 0
+                                        val walletHeight = wallet.lastBlockSeenHeight
+                                        val percent = if (chainHeight > 0) {
+                                            ((walletHeight.toDouble() / chainHeight) * 100).toInt().coerceIn(95, 99)
+                                        } else {
+                                            95
+                                        }
+                                        if (percent != lastPercent) {
+                                            lastPercent = percent
+                                            saveProgress(percent, "Đồng bộ: $percent% (đang bắt kịp blockchain)")
+                                        }
                                     }
                                     Thread.sleep(2000)
-                                }
-                                if (synced) {
-                                    isSynced = true
-                                    prefs.edit().putBoolean("is_synced", true).apply()
-                                    saveProgress(100, "Đã đồng bộ blockchain")
-                                } else {
-                                    saveProgress(98, "Đồng bộ gần xong, tiếp tục chạy ngầm...")
-                                    isSynced = true
-                                    prefs.edit().putBoolean("is_synced", true).apply()
                                 }
                             }.start()
                         }
