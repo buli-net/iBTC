@@ -195,7 +195,6 @@ class SyncService : Service() {
             if (peers == 0 || frozen) {
                 lastRecoveryTime = now
                 if (peers == 0) {
-                    // Chỉ thêm discovery mới, không stop/start
                     val discovery = DnsDiscovery(MainNetParams.get())
                     val key = "dns_recovery_${System.currentTimeMillis()}"
                     if (!discoverySet.contains(key)) {
@@ -250,7 +249,7 @@ class SyncService : Service() {
                     val chainHeight = getBestChainHeight(kitRef)
                     val peerHeight = peerGroup?.mostCommonChainHeight ?: 0
                     val hasBalance = wallet.getBalance().value > 0
-                    val hasTransactions = wallet.transactions.isNotEmpty()
+                    val hasTransactions = wallet.getTransactionsByTime().isNotEmpty()
 
                     // Freeze detection
                     if (isFrozen(peerHeight, walletHeight)) {
@@ -277,7 +276,7 @@ class SyncService : Service() {
                         if (shouldUpdateUi(100)) {
                             saveProgress(100, "Đã đồng bộ blockchain")
                         }
-                        // Lưu wallet xuống disk để đảm bảo dữ liệu được ghi
+                        // Lưu wallet xuống disk
                         try {
                             wallet.saveToFile(File(filesDir, "wallet_$currentWalletId"))
                         } catch (_: Exception) {}
@@ -336,7 +335,7 @@ class SyncService : Service() {
                     setBlockingStartup(false)
                 }
 
-                // Khôi phục ví từ seed phrase (phải gọi TRƯỚC startAsync)
+                // Khôi phục ví từ seed phrase
                 val words = seedPhrase.trim().split(Regex("\\s+"))
                 val seed = DeterministicSeed(words, null, "", System.currentTimeMillis() / 1000)
                 newKit.restoreWalletFromSeed(seed)
