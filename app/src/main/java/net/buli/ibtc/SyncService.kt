@@ -34,9 +34,20 @@ class SyncService : Service() {
     // Engine state
     @Volatile private var isEngineRunning = false
     private var engineThread: Thread? = null
-    private var lastBlockHeight = 0
-    private var lastProgressTime = 0L
-    private var lastRecoveryTime = 0L
+
+    // Freeze detection (thread-safe)
+    @Volatile private var lastStableHeight = 0
+    @Volatile private var lastStableTime = 0L
+
+    // Recovery cooldown
+    @Volatile private var lastRecoveryTime = 0L
+    @Volatile private var isRecovering = false
+
+    // Peer discovery deduplication
+    private val discoverySet = mutableSetOf<String>()
+
+    // UI throttling
+    @Volatile private var lastUiUpdate = 0L
 
     companion object {
         private var instance: SyncService? = null
@@ -127,54 +138,81 @@ class SyncService : Service() {
         updateNotification(message)
     }
 
-    private fun isFrozen(currentHeight: Int): Boolean {
+    // =============== FREEZE DETECTION (THREAD-SAFE) ===============
+    private fun isFrozen(height: Int): Boolean {
         val now = System.currentTimeMillis()
-        val stuck = currentHeight == lastBlockHeight
-        val timeout = (now - lastProgressTime) > 60000
-        lastBlockHeight = currentHeight
-        lastProgressTime = now
-        return stuck && timeout
+        if (height > lastStableHeight) {
+            lastStableHeight = height
+            lastStableTime = now
+            return false
+        }
+        return (now - lastStableTime) > 60000
     }
 
+    // =============== PEER ROTATION (NO RESTART, NO DUPLICATE) ===============
     private fun rotatePeers(kitRef: WalletAppKit) {
         try {
             val peerGroup = kitRef.peerGroup() ?: return
             if (peerGroup.connectedPeers.size < 2) {
-                peerGroup.stopAsync()
-                Thread.sleep(2000)
-                peerGroup.addPeerDiscovery(DnsDiscovery(MainNetParams.get()))
-                peerGroup.startAsync()
-                saveProgress(lastProgress, "Đã xoay peer, số lượng peer mới: ${peerGroup.connectedPeers.size}")
+                val discovery = DnsDiscovery(MainNetParams.get())
+                val key = "dns"
+                if (!discoverySet.contains(key)) {
+                    peerGroup.addPeerDiscovery(discovery)
+                    discoverySet.add(key)
+                    saveProgress(lastProgress, "Added peer discovery (safe mode)")
+                }
             }
         } catch (e: Exception) {
-            saveProgress(lastProgress, "Lỗi rotate peer: ${e.message}")
+            saveProgress(lastProgress, "Peer rotate error: ${e.message}")
         }
     }
 
+    // =============== SMART RECOVERY (WITH CONCURRENCY LOCK) ===============
     private fun smartRecovery(kitRef: WalletAppKit) {
         val now = System.currentTimeMillis()
         if (now - lastRecoveryTime < 60000) return
+        if (isRecovering) return
+        isRecovering = true
+        try {
+            val peerGroup = kitRef.peerGroup() ?: return
+            val wallet = kitRef.wallet() ?: return
+            val peers = peerGroup.connectedPeers.size
+            val walletHeight = wallet.lastBlockSeenHeight
+            val frozen = isFrozen(walletHeight)
 
-        val peerGroup = kitRef.peerGroup() ?: return
-        val peers = peerGroup.connectedPeers.size
-        val wallet = kitRef.wallet() ?: return
-        val walletHeight = wallet.lastBlockSeenHeight
-        val frozen = isFrozen(walletHeight)
-
-        if (peers == 0 || frozen) {
-            lastRecoveryTime = now
-            try {
+            if (peers == 0 || frozen) {
+                lastRecoveryTime = now
                 peerGroup.stopAsync()
                 Thread.sleep(3000)
                 peerGroup.addPeerDiscovery(DnsDiscovery(MainNetParams.get()))
                 peerGroup.startAsync()
-                saveProgress(lastProgress, "Auto recovery: đã khôi phục mạng peer")
-            } catch (e: Exception) {
-                saveProgress(lastProgress, "Auto recovery lỗi: ${e.message}")
+                saveProgress(lastProgress, "Auto recovery: network restored")
             }
+        } catch (e: Exception) {
+            saveProgress(lastProgress, "Auto recovery error: ${e.message}")
+        } finally {
+            isRecovering = false
         }
     }
 
+    // =============== PROGRESS CALCULATION (NO 95-99 FAKE) ===============
+    private fun calculateProgress(walletHeight: Int, chainHeight: Int): Int {
+        if (chainHeight <= 0) return 0
+        if (walletHeight >= chainHeight - 1) return 100
+        val raw = (walletHeight.toDouble() / chainHeight.toDouble()) * 100.0
+        // Không bao giờ vượt quá 94 cho đến khi thực sự synced
+        return if (raw > 94) 94 else raw.toInt()
+    }
+
+    // =============== UI THROTTLE ===============
+    private fun shouldUpdateUi(): Boolean {
+        val now = System.currentTimeMillis()
+        if (now - lastUiUpdate < 2500) return false
+        lastUiUpdate = now
+        return true
+    }
+
+    // =============== ENGINE LOOP (ADAPTIVE SLEEP + THROTTLED UI) ===============
     private fun startEngine(kitRef: WalletAppKit) {
         if (isEngineRunning) return
         isEngineRunning = true
@@ -188,33 +226,30 @@ class SyncService : Service() {
                     }
                     val peerGroup = kitRef.peerGroup()
                     val walletHeight = wallet.lastBlockSeenHeight
+                    val chainHeight = kitRef.chain()?.chainHead?.height ?: 0
 
-                    // 1. Detect freeze
+                    // Freeze detection & recovery
                     if (isFrozen(walletHeight)) {
                         smartRecovery(kitRef)
                     }
 
-                    // 2. Peer health check
+                    // Peer health (only add if needed)
                     if ((peerGroup?.connectedPeers?.size ?: 0) < 2) {
                         rotatePeers(kitRef)
                     }
 
-                    // 3. Tính toán trạng thái và progress chân thực
-                    val chainHeight = kitRef.chain()?.chainHead?.height ?: 0
+                    // Compute state and progress
                     val state = when {
                         walletHeight >= chainHeight - 1 -> "SYNCED"
                         chainHeight == 0 -> "CONNECTING"
                         else -> "SYNCING"
                     }
 
-                    val percent = if (state == "SYNCED") {
-                        if (!isSynced) {
-                            isSynced = true
-                            prefs.edit().putBoolean("is_synced", true).apply()
-                        }
-                        100
-                    } else {
-                        (walletHeight.toDouble() / max(1, chainHeight) * 100).toInt().coerceIn(1, 99)
+                    val percent = calculateProgress(walletHeight, chainHeight)
+
+                    if (state == "SYNCED" && !isSynced) {
+                        isSynced = true
+                        prefs.edit().putBoolean("is_synced", true).apply()
                     }
 
                     val statusText = when (state) {
@@ -222,11 +257,23 @@ class SyncService : Service() {
                         "CONNECTING" -> "Đang kết nối mạng..."
                         else -> "Đồng bộ blockchain: $percent%"
                     }
-                    saveProgress(percent, statusText)
 
-                    Thread.sleep(1000)
+                    // Update UI only when needed (throttle)
+                    if (shouldUpdateUi()) {
+                        saveProgress(percent, statusText)
+                    }
+
+                    // Adaptive sleep
+                    val peerCount = peerGroup?.connectedPeers?.size ?: 0
+                    val sleepTime = when {
+                        peerCount == 0 -> 2000L
+                        state == "SYNCED" -> 8000L
+                        else -> 5000L
+                    }
+                    Thread.sleep(sleepTime)
+
                 } catch (e: Exception) {
-                    saveProgress(lastProgress, "Engine lỗi: ${e.message}")
+                    saveProgress(lastProgress, "Engine error: ${e.message}")
                     Thread.sleep(5000)
                 }
             }
@@ -263,7 +310,8 @@ class SyncService : Service() {
                 }
                 kit = newKit
 
-                // Khởi động engine
+                // Khởi tạo discovery set (dns flag)
+                discoverySet.clear()
                 startEngine(newKit)
 
                 saveProgress(lastProgress, lastMessage)
