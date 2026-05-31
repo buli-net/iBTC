@@ -31,7 +31,6 @@ class SyncService : Service() {
     private var kit: WalletAppKit? = null
     private lateinit var prefs: SharedPreferences
 
-    // Biến cho tiến độ chi tiết
     private var blocksSoFar = 0
     private var totalBlocks = 0
 
@@ -122,14 +121,16 @@ class SyncService : Service() {
             .apply()
     }
 
-    // Cập nhật totalBlocks dựa trên peerGroup và wallet
     private fun updateTotalBlocks() {
         val peerGroup = kit?.peerGroup()
         val wallet = kit?.wallet()
-        if (peerGroup != null && wallet != null) {
+        if (peerGroup != null) {
             val mostCommonHeight = peerGroup.mostCommonChainHeight
-            val walletHeight = wallet.lastBlockSeenHeight
+            val walletHeight = wallet?.lastBlockSeenHeight ?: 0
             totalBlocks = max(mostCommonHeight, walletHeight)
+            if (totalBlocks == 0 && lastProgress > 0 && blocksSoFar > 0) {
+                totalBlocks = (blocksSoFar.toDouble() / (lastProgress / 100.0)).toInt()
+            }
         }
     }
 
@@ -164,13 +165,11 @@ class SyncService : Service() {
                             updateNotification(lastMessage)
                             progressCallback?.invoke(lastProgress, lastMessage)
 
-                            // Cập nhật blocksSoFar và totalBlocks
                             this@SyncService.blocksSoFar = blocksSoFar
                             updateTotalBlocks()
                         }
 
                         override fun doneDownload() {
-                            // Kiểm tra xem wallet có thực sự đạt chain head hay không
                             val wallet = kitRef.wallet()
                             val peerGroup = kitRef.peerGroup()
                             val isReallySynced = wallet != null &&
@@ -184,17 +183,9 @@ class SyncService : Service() {
                                 updateNotification(lastMessage)
                                 progressCallback?.invoke(lastProgress, lastMessage)
                             } else {
-                                // Nếu chưa thực sự đạt chain head, tiếp tục chờ
-                                // Đặt lại progress về 99 và tiếp tục update
                                 saveProgress(99, "Đang hoàn thiện đồng bộ...")
                                 progressCallback?.invoke(lastProgress, lastMessage)
-                                // Force update lại totalBlocks và gọi lại progress
                                 updateTotalBlocks()
-                                val newPct = (blocksSoFar.toDouble() / totalBlocks * 100).toInt()
-                                if (newPct < 100 && newPct > 99) {
-                                    saveProgress(newPct, "Đang đồng bộ: $newPct%")
-                                    progressCallback?.invoke(lastProgress, lastMessage)
-                                }
                             }
                         }
                     })
@@ -203,7 +194,6 @@ class SyncService : Service() {
                 }
                 kit = newKit
                 progressCallback?.invoke(lastProgress, lastMessage)
-                // Khởi tạo totalBlocks lần đầu
                 updateTotalBlocks()
             } catch (e: Exception) {
                 saveProgress(lastProgress, "Lỗi sync: ${e.message}")
