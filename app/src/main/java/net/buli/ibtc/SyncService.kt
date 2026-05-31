@@ -160,7 +160,7 @@ class SyncService : Service() {
         return (now - lastActivityTime) > 60000
     }
 
-    // =============== PEER ROTATION: không restart, chỉ thêm discovery + ping dead peers ===============
+    // =============== PEER ROTATION: không restart, chỉ thêm discovery ===============
     private fun rotatePeers(kitRef: WalletAppKit) {
         try {
             val peerGroup = kitRef.peerGroup() ?: return
@@ -173,22 +173,13 @@ class SyncService : Service() {
                     saveProgress(lastProgress, "Added peer discovery (safe mode)")
                 }
             }
-            // Dọn dẹp peer chết: ping tất cả peer, nếu lỗi thì peerGroup tự động loại bỏ
-            try {
-                peerGroup.peers.forEach { peer ->
-                    try {
-                        peer.ping().get()
-                    } catch (_: Exception) {
-                        // peer không phản hồi, peerGroup sẽ tự động xóa
-                    }
-                }
-            } catch (_: Exception) {}
+            // Không cần ping peers vì không truy cập được private property
         } catch (e: Exception) {
             saveProgress(lastProgress, "Peer rotate error: ${e.message}")
         }
     }
 
-    // =============== SMART RECOVERY (chỉ khi thực sự cần) ===============
+    // =============== SMART RECOVERY ===============
     private fun smartRecovery(kitRef: WalletAppKit) {
         val now = System.currentTimeMillis()
         if (now - lastRecoveryTime < 60000) return
@@ -262,9 +253,9 @@ class SyncService : Service() {
                         rotatePeers(kitRef)
                     }
 
-                    // Trạng thái thực tế: chỉ SYNCED khi wallet đã bắt kịp chain và có dữ liệu
+                    // Trạng thái thực tế
                     val state = when {
-                        walletHeight >= chainHeight - 1 && walletHeight > 0 && !wallet.pendingTransactions.isEmpty() -> "SYNCED"
+                        walletHeight >= chainHeight - 1 && walletHeight > 0 -> "SYNCED"
                         chainHeight == 0 -> "CONNECTING"
                         else -> "SYNCING"
                     }
@@ -274,7 +265,6 @@ class SyncService : Service() {
                     if (state == "SYNCED" && !isSynced) {
                         isSynced = true
                         prefs.edit().putBoolean("is_synced", true).apply()
-                        // Đảm bảo báo 100%
                         if (shouldUpdateUi(100)) {
                             saveProgress(100, "Đã đồng bộ blockchain")
                         }
@@ -333,7 +323,7 @@ class SyncService : Service() {
                     setBlockingStartup(false)
                 }
 
-                // Khôi phục ví từ seed phrase (bắt buộc)
+                // Khôi phục ví từ seed phrase
                 val words = seedPhrase.trim().split(Regex("\\s+"))
                 val seed = DeterministicSeed(words, null, "", System.currentTimeMillis() / 1000)
                 newKit.restoreWalletFromSeed(seed)
