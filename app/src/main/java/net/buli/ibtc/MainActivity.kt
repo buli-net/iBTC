@@ -28,6 +28,7 @@ import com.github.mikephil.charting.data.*
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
 import com.journeyapps.barcodescanner.ScanContract
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URL
 import java.text.SimpleDateFormat
@@ -78,21 +79,18 @@ class MainActivity : AppCompatActivity() {
         val b: Float
         when {
             p <= 50 -> {
-                // Xanh (0,255,0) đến Vàng (255,255,0)
                 val factor = p / 50f
                 r = factor * 255f
                 g = 255f
                 b = 0f
             }
             p <= 75 -> {
-                // Vàng (255,255,0) đến Cam (255,165,0)
                 val factor = (p - 50) / 25f
                 r = 255f
                 g = 255f - factor * (255f - 165f)
                 b = 0f
             }
             else -> {
-                // Cam (255,165,0) đến Đỏ (255,0,0)
                 val factor = (p - 75) / 25f
                 r = 255f
                 g = 165f - factor * 165f
@@ -186,9 +184,7 @@ class MainActivity : AppCompatActivity() {
         Thread {
             val price = walletManager.price()
             runOnUiThread {
-                if (viewsReady) {
-                    updatePriceUI(price)
-                }
+                if (viewsReady) updatePriceUI(price)
             }
         }.start()
     }
@@ -261,7 +257,6 @@ class MainActivity : AppCompatActivity() {
                 addressText.text = "Địa chỉ: ${walletManager.getAddress()}"
             }
         }
-
         fetchAndUpdatePrice()
 
         if (!walletManager.isWalletSynced()) {
@@ -355,9 +350,11 @@ class MainActivity : AppCompatActivity() {
     private fun fetchBlockUpdate() {
         Thread {
             try {
-                val json = URL("https://mempool.space/api/v1/blocks").openStream().bufferedReader().readText()
-                val firstBlockJson = json.substringAfter("[").substringBefore(",")
-                val obj = JSONObject(firstBlockJson)
+                val url = URL("https://mempool.space/api/v1/blocks")
+                val json = url.openStream().bufferedReader().readText()
+                val jsonArray = JSONArray(json)
+                if (jsonArray.length() == 0) throw Exception("Empty array")
+                val obj = jsonArray.getJSONObject(0)
                 val height = obj.getInt("height")
                 val lastTime = obj.getLong("timestamp")
                 val nextHeight = height + 1
@@ -382,6 +379,7 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             } catch (e: Exception) {
+                e.printStackTrace()
                 runOnUiThread {
                     if (viewsReady) {
                         blockText.text = "Lỗi pool - tự thử lại"
@@ -433,7 +431,6 @@ class MainActivity : AppCompatActivity() {
 
                 runOnUiThread {
                     if (viewsReady) {
-                        // Cập nhật progress và màu cho từng stat bar
                         statBars["mined"]?.apply {
                             progress = minedPct
                             progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(minedPct))
@@ -465,7 +462,7 @@ class MainActivity : AppCompatActivity() {
                         statTexts["mempool"]?.text = "Mempool: $mempoolCount tx chờ"
 
                         statBars["hash"]?.apply {
-                            progress = 70  // hashrate không có %, tạm đặt 70
+                            progress = 70
                             progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(70))
                         }
                         statTexts["hash"]?.text = "Hashrate: ${String.format("%.0f", hashEh)} EH/s"
@@ -949,7 +946,6 @@ class MainActivity : AppCompatActivity() {
         fetchAndUpdatePrice()
     }
 
-    // Các hàm dialog, settings (giữ nguyên từ bản gốc, đã có ở trên)
     private fun showReceiveDialog() {
         val address = walletManager.getAddress()
         if (address.isEmpty()) { toast("Ví chưa sẵn sàng"); return }
@@ -1422,7 +1418,7 @@ class MainActivity : AppCompatActivity() {
     private fun showInfo() {
         AlertDialog.Builder(this)
             .setTitle("iBTC v4.7")
-            .setMessage("Build: 2026-05-30\n• SPV 100%\n• Foreground service\n• Gửi BTC\n• Biểu đồ giá nhỏ real-time (xanh/đỏ/cam theo xu hướng)\n• Progress bar đổi màu theo tiến độ")
+            .setMessage("Build: 2026-05-30\n• SPV 100%\n• Foreground service\n• Gửi BTC\n• Biểu đồ giá nhỏ real-time\n• Progress bar đổi màu theo tiến độ")
             .setPositiveButton("OK", null)
             .show()
     }
