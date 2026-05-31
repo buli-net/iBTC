@@ -127,7 +127,6 @@ class SyncService : Service() {
         updateNotification(message)
     }
 
-    // Kiểm tra freeze: nếu block height không đổi trong hơn 60 giây
     private fun isFrozen(currentHeight: Int): Boolean {
         val now = System.currentTimeMillis()
         val stuck = currentHeight == lastBlockHeight
@@ -137,7 +136,6 @@ class SyncService : Service() {
         return stuck && timeout
     }
 
-    // Xoay vòng peer: nếu số lượng peer < 2, reset peer discovery
     private fun rotatePeers(kitRef: WalletAppKit) {
         try {
             val peerGroup = kitRef.peerGroup() ?: return
@@ -153,10 +151,9 @@ class SyncService : Service() {
         }
     }
 
-    // Smart recovery: chỉ khởi động lại peer nếu thực sự cần (cooldown 60s)
     private fun smartRecovery(kitRef: WalletAppKit) {
         val now = System.currentTimeMillis()
-        if (now - lastRecoveryTime < 60000) return // tránh recovery liên tục
+        if (now - lastRecoveryTime < 60000) return
 
         val peerGroup = kitRef.peerGroup() ?: return
         val peers = peerGroup.connectedPeers.size
@@ -178,14 +175,14 @@ class SyncService : Service() {
         }
     }
 
-    // Engine chính: một vòng lặp duy nhất quản lý tất cả
     private fun startEngine(kitRef: WalletAppKit) {
         if (isEngineRunning) return
         isEngineRunning = true
         engineThread = Thread {
             while (isEngineRunning) {
                 try {
-                    val wallet = kitRef.wallet() ?: run {
+                    val wallet = kitRef.wallet()
+                    if (wallet == null) {
                         Thread.sleep(2000)
                         continue
                     }
@@ -261,13 +258,12 @@ class SyncService : Service() {
 
                 val newKit = WalletAppKit(params, dir, walletId).apply {
                     setBlockingStartup(false)
-                    // Không cần download listener phức tạp, engine sẽ tính toán
                     startAsync()
                     awaitRunning()
                 }
                 kit = newKit
 
-                // Khởi động engine sau khi kit đã chạy
+                // Khởi động engine
                 startEngine(newKit)
 
                 saveProgress(lastProgress, lastMessage)
@@ -292,7 +288,6 @@ class SyncService : Service() {
     fun getWalletId(): String = currentWalletId
     fun isWalletSynced(): Boolean = isSynced
 
-    // Các hàm cũ giữ để tương thích (có thể không dùng nữa nhưng vẫn có)
     fun getBlocksSoFar(): Int = kit?.wallet()?.lastBlockSeenHeight ?: 0
     fun getTotalBlocks(): Int = kit?.chain()?.chainHead?.height ?: 0
 
