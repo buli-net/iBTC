@@ -36,7 +36,6 @@ import java.util.*
 
 class MainActivity : AppCompatActivity() {
 
-    // ================= Khai báo biến =================
     private lateinit var walletManager: WalletManager
     private val handler = Handler(Looper.getMainLooper())
     private val POOL_FONT = 13f
@@ -54,8 +53,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var walletNameText: TextView
     private lateinit var statsContainer: LinearLayout
     private lateinit var spvStatusText: TextView
-    private lateinit var spvProgressBar: ProgressBar       // Macro
-    private lateinit var spvMicroProgressBar: ProgressBar  // Micro
+    private lateinit var spvProgressBar: ProgressBar
+    private lateinit var spvMicroProgressBar: ProgressBar
     private val statBars = mutableMapOf<String, ProgressBar>()
     private val statTexts = mutableMapOf<String, TextView>()
     private var isSyncing = false
@@ -65,7 +64,6 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var sparkline: LineChart
 
-    // Biến lưu giá và số dư hiện tại
     private var currentBalanceBtc = 0.0
     private var currentBtcPrice = 0.0
 
@@ -77,7 +75,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // ================= Hàm tính màu theo phần trăm =================
     private fun getColorForProgress(progress: Int): Int {
         val p = progress.coerceIn(0, 100)
         val r: Float
@@ -187,7 +184,6 @@ class MainActivity : AppCompatActivity() {
         return calendar.timeInMillis
     }
 
-    // ================= Cập nhật tỷ giá và USD =================
     private fun fetchAndUpdatePrice() {
         Thread {
             val price = walletManager.price()
@@ -259,7 +255,6 @@ class MainActivity : AppCompatActivity() {
         balanceUsdText.text = String.format(Locale.US, "≈ $%,.2f %s %+.2f%% (%+.2f$)", currentUsd, usdArrow, usdChangePercent, usdChange)
     }
 
-    // ================= Lấy dữ liệu từ API blockchain.info =================
     private fun fetchBalanceAndTxFromApi(address: String, callback: (Double, List<TransactionInfo>) -> Unit) {
         Thread {
             try {
@@ -319,7 +314,6 @@ class MainActivity : AppCompatActivity() {
         }.start()
     }
 
-    // ================= Làm mới số dư và lịch sử giao dịch =================
     private fun refreshWalletFromSPV() {
         runOnUiThread {
             if (viewsReady) {
@@ -424,7 +418,6 @@ class MainActivity : AppCompatActivity() {
         }, 45000)
     }
 
-    // ================= Cập nhật block =================
     private fun fetchBlockUpdate() {
         Thread {
             try {
@@ -469,7 +462,6 @@ class MainActivity : AppCompatActivity() {
         }.start()
     }
 
-    // ================= Cập nhật thống kê Bitcoin =================
     private fun fetchBtcStats() {
         Thread {
             try {
@@ -624,7 +616,6 @@ class MainActivity : AppCompatActivity() {
         statBars[key] = pb
     }
 
-    // ================= Sparkline =================
     private fun setupSparkline() {
         sparkline = LineChart(this).apply {
             layoutParams = LinearLayout.LayoutParams(dpToPx(120), dpToPx(40))
@@ -678,7 +669,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun dpToPx(dp: Int): Int = (dp * resources.displayMetrics.density).toInt()
 
-    // ================= Cập nhật micro progress =================
     private fun updateMicroProgress() {
         val syncService = SyncService.getInstance() ?: return
         val blocksSoFar = syncService.getBlocksSoFar()
@@ -696,7 +686,6 @@ class MainActivity : AppCompatActivity() {
         spvMicroProgressBar.progressTintList = android.content.res.ColorStateList.valueOf(getColorForProgress(microPercent))
     }
 
-    // ================= Các màn hình =================
     private fun showWelcome() {
         rootLayout.removeAllViews()
         val isDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
@@ -1074,7 +1063,6 @@ class MainActivity : AppCompatActivity() {
         fetchAndUpdatePrice()
     }
 
-    // ================= Các hàm dialog, gửi/nhận, cài đặt (giữ nguyên) =================
     private fun showReceiveDialog() {
         val address = walletManager.getAddress()
         if (address.isEmpty()) { toast("Ví chưa sẵn sàng"); return }
@@ -1547,7 +1535,7 @@ class MainActivity : AppCompatActivity() {
     private fun showInfo() {
         AlertDialog.Builder(this)
             .setTitle("iBTC v4.7")
-            .setMessage("Build: 2026-05-31\n• SPV 100%\n• Foreground service\n• Gửi BTC\n• Biểu đồ giá 24h (1 giờ/điểm)\n• Progress bar đổi màu theo tiến độ\n• Halving count tự động cập nhật số thứ tự và %\n• Tự động lấy dữ liệu từ API khi SPV chưa đồng bộ\n• Thanh macro + micro progress")
+            .setMessage("Build: 2026-05-31\n• SPV 100%\n• Foreground service\n• Gửi BTC linh hoạt (SPV hoặc API)\n• Biểu đồ giá 24h\n• Progress bar macro + micro đổi màu\n• Halving tự động\n• Thống kê Bitcoin")
             .setPositiveButton("OK", null)
             .show()
     }
