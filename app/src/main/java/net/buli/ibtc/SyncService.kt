@@ -190,7 +190,11 @@ class SyncService : Service() {
         engineThread = Thread {
             while (isEngineRunning) {
                 try {
-                    val wallet = kitRef.wallet() ?: run { Thread.sleep(2000); continue }
+                    val wallet = kitRef.wallet()
+                    if (wallet == null) {
+                        Thread.sleep(2000)
+                        continue
+                    }
                     val peerGroup = kitRef.peerGroup()
                     val walletHeight = wallet.lastBlockSeenHeight
                     val chainHeight = getBestChainHeight(kitRef)
@@ -199,7 +203,6 @@ class SyncService : Service() {
                     if (isFrozen(peerHeight, walletHeight)) smartRecovery(kitRef)
                     if ((peerGroup?.connectedPeers?.size ?: 0) < 2) rotatePeers(kitRef)
 
-                    // Chỉ dùng height để xác định đồng bộ, không dùng balance hay transaction
                     val isReallySynced = walletHeight >= chainHeight - 1 && walletHeight > 0
                     val percent = if (isReallySynced) 100 else {
                         if (chainHeight <= 0) 0 else {
@@ -217,7 +220,6 @@ class SyncService : Service() {
                         val statusText = if (chainHeight == 0) "Đang kết nối mạng..." else "Đồng bộ blockchain: $percent%"
                         if (shouldUpdateUi(percent)) saveProgress(percent, statusText)
                     } else if (isReallySynced && !isSynced) {
-                        // Fallback: báo 100% nếu chưa báo
                         if (shouldUpdateUi(100)) {
                             isSynced = true
                             prefs.edit().putBoolean("is_synced", true).apply()
