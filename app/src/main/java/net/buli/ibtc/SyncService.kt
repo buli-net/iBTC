@@ -40,6 +40,7 @@ class SyncService : Service() {
         instance = this
         prefs = getSharedPreferences("sync_state", Context.MODE_PRIVATE)
 
+        // Khôi phục trạng thái sync từ bộ nhớ
         isSynced = prefs.getBoolean("is_synced", false)
         lastProgress = prefs.getInt("last_progress", 0)
         lastMessage = prefs.getString("last_message", "Đang khởi động...") ?: "Đang khởi động..."
@@ -60,17 +61,19 @@ class SyncService : Service() {
         val walletId = intent?.getStringExtra("wallet_id") ?: "default_wallet"
         currentWalletId = walletId
 
+        // Nếu kit đang chạy và có wallet, chỉ cần set callback
         if (kit != null && kit?.isRunning == true && kit?.wallet() != null) {
             setProgressCallback(progressCallback)
             return START_NOT_STICKY
         }
 
         if (seedPhrase.isNullOrEmpty()) {
+            // Không có seed, không thể sync
             return START_NOT_STICKY
         }
 
         startBitcoinSync(walletId, seedPhrase)
-        return START_NOT_STICKY
+        return START_NOT_STICKY   // thay vì START_STICKY để tránh restart với seed null
     }
 
     private fun createNotificationChannel() {
@@ -120,6 +123,7 @@ class SyncService : Service() {
     private fun startBitcoinSync(walletId: String, seedPhrase: String) {
         Thread {
             try {
+                // Reset trạng thái sync khi bắt đầu đồng bộ mới
                 isSynced = false
                 prefs.edit().putBoolean("is_synced", false).apply()
 
@@ -129,12 +133,15 @@ class SyncService : Service() {
                 val dir = File(filesDir, "spv_wallets")
                 if (!dir.exists()) dir.mkdirs()
 
-                // Dừng kit cũ
+                // KHÔNG tạo wallet thủ công. Để WalletAppKit tự quản lý.
+                // Bỏ toàn bộ đoạn Wallet.fromSeed(...).saveToFile(...)
+
+                // Dừng kit cũ nếu có
                 try {
                     kit?.stopAsync()
                     kit?.awaitTerminated()
                 } catch (_: Exception) {}
-                kit = null
+                kit = null   // quan trọng
 
                 val newKit = WalletAppKit(params, dir, walletId).apply {
                     setBlockingStartup(false)
@@ -150,8 +157,9 @@ class SyncService : Service() {
                         }
 
                         override fun doneDownload() {
-                            val wallet = kit?.wallet()
-                            val peerGroup = kit?.peerGroup()
+                            // Kiểm tra thêm peer và chain head trước khi đánh dấu sync
+                            val wallet = newKit.wallet()
+                            val peerGroup = newKit.peerGroup()
                             val isReallySynced = wallet != null &&
                                     wallet.lastBlockSeenHeight > 0 &&
                                     peerGroup != null &&
@@ -165,10 +173,11 @@ class SyncService : Service() {
                         }
                     })
                     startAsync()
-                    awaitRunning()
+                    awaitRunning()   // đợi kit chạy xong mới tiếp tục
                 }
                 kit = newKit
                 progressCallback?.invoke(lastProgress, lastMessage)
+
             } catch (e: Exception) {
                 saveProgress(lastProgress, "Lỗi sync: ${e.message}")
                 updateNotification(lastMessage)
