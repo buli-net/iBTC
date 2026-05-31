@@ -31,6 +31,7 @@ class SyncService : Service() {
     private var kit: WalletAppKit? = null
     private lateinit var prefs: SharedPreferences
 
+    // Biến cho tiến độ chi tiết
     private var blocksSoFar = 0
     private var totalBlocks = 0
 
@@ -121,20 +122,6 @@ class SyncService : Service() {
             .apply()
     }
 
-    private fun updateTotalBlocks() {
-        val peerGroup = kit?.peerGroup()
-        val wallet = kit?.wallet()
-        if (peerGroup != null) {
-            val mostCommonHeight = peerGroup.mostCommonChainHeight
-            val walletHeight = wallet?.lastBlockSeenHeight ?: 0
-            totalBlocks = max(mostCommonHeight, walletHeight)
-            if (totalBlocks == 0 && blocksSoFar > 0 && lastProgress > 0) {
-                totalBlocks = (blocksSoFar.toDouble() / (lastProgress / 100.0)).toInt()
-            }
-            if (totalBlocks < blocksSoFar) totalBlocks = blocksSoFar
-        }
-    }
-
     private fun startBitcoinSync(walletId: String, seedPhrase: String) {
         Thread {
             try {
@@ -147,6 +134,7 @@ class SyncService : Service() {
                 val dir = File(filesDir, "spv_wallets")
                 if (!dir.exists()) dir.mkdirs()
 
+                // Dừng kit cũ nếu có
                 try {
                     kit?.stopAsync()
                     kit?.awaitTerminated()
@@ -166,8 +154,17 @@ class SyncService : Service() {
                             updateNotification(lastMessage)
                             progressCallback?.invoke(lastProgress, lastMessage)
 
+                            // Cập nhật blocksSoFar
                             this@SyncService.blocksSoFar = blocksSoFar
-                            updateTotalBlocks()
+                            // Lấy totalBlocks từ chain head (nếu có)
+                            val chainHeight = kitRef.chain()?.chainHead?.height ?: 0
+                            val peerGroup = kitRef.peerGroup()
+                            val mostCommonHeight = peerGroup?.mostCommonChainHeight ?: chainHeight
+                            totalBlocks = max(chainHeight, mostCommonHeight)
+                            // Fallback nếu totalBlocks vẫn 0
+                            if (totalBlocks == 0 && blocksSoFar > 0) {
+                                totalBlocks = (blocksSoFar.toDouble() / (p / 100.0)).toInt()
+                            }
                         }
 
                         override fun doneDownload() {
@@ -184,9 +181,13 @@ class SyncService : Service() {
                                 updateNotification(lastMessage)
                                 progressCallback?.invoke(lastProgress, lastMessage)
                             } else {
+                                // Nếu chưa thực sự đạt chain head, tiếp tục chờ
                                 saveProgress(99, "Đang hoàn thiện đồng bộ...")
                                 progressCallback?.invoke(lastProgress, lastMessage)
-                                updateTotalBlocks()
+                                // Cập nhật lại totalBlocks lần cuối
+                                val chainHeight = kitRef.chain()?.chainHead?.height ?: 0
+                                val mostCommonHeight = peerGroup?.mostCommonChainHeight ?: chainHeight
+                                totalBlocks = max(chainHeight, mostCommonHeight)
                             }
                         }
                     })
@@ -195,7 +196,6 @@ class SyncService : Service() {
                 }
                 kit = newKit
                 progressCallback?.invoke(lastProgress, lastMessage)
-                updateTotalBlocks()
             } catch (e: Exception) {
                 saveProgress(lastProgress, "Lỗi sync: ${e.message}")
                 updateNotification(lastMessage)
