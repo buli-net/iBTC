@@ -210,21 +210,28 @@ class WalletManager(private val ctx: Context) {
     }
 
     fun price(): Double {
-        return try {
-            val url = URL("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT")
-            val conn = url.openConnection() as HttpURLConnection
-            conn.requestMethod = "GET"
-            conn.connectTimeout = 5000
-            conn.readTimeout = 5000
-            val response = conn.inputStream.bufferedReader().readText()
-            conn.disconnect()
-            val price = JSONObject(response).getString("price").toDouble()
-            lastPrice = price
-            prefs.edit().putFloat("last_price", price.toFloat()).commit()
-            price
-        } catch (e: Exception) {
-            if (lastPrice > 0) lastPrice else 0.0
+        repeat(2) { attempt ->
+            try {
+                val url = URL("https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT")
+                val conn = url.openConnection() as HttpURLConnection
+                conn.requestMethod = "GET"
+                conn.connectTimeout = 5000
+                conn.readTimeout = 5000
+                val response = conn.inputStream.bufferedReader().readText()
+                conn.disconnect()
+                val price = JSONObject(response).getString("price").toDouble()
+                lastPrice = price
+                prefs.edit().putFloat("last_price", price.toFloat()).commit()
+                return price
+            } catch (e: Exception) {
+                if (attempt == 1) {
+                    e.printStackTrace()
+                } else {
+                    Thread.sleep(1000)
+                }
+            }
         }
+        return if (lastPrice > 0) lastPrice else 0.0
     }
 
     fun getFeeRates(): FeeRates = FeeRates(5, 10, 20)
