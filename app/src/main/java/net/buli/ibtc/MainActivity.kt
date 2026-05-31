@@ -1063,7 +1063,40 @@ class MainActivity : AppCompatActivity() {
         fetchAndUpdatePrice()
     }
 
-    // ====================== SHOW SEND DIALOG (CÓ CẢNH BÁO) ======================
+    private fun showReceiveDialog() {
+        val address = walletManager.getAddress()
+        if (address.isEmpty()) { toast("Ví chưa sẵn sàng"); return }
+        val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; setPadding(40) }
+        val imageView = ImageView(this).apply { layoutParams = LinearLayout.LayoutParams(512, 512).apply { bottomMargin = 20 } }
+        Thread {
+            try {
+                val writer = QRCodeWriter()
+                val bitMatrix = writer.encode(address, BarcodeFormat.QR_CODE, 512, 512)
+                val bmp = Bitmap.createBitmap(512, 512, Bitmap.Config.RGB_565)
+                for (x in 0 until 512) for (y in 0 until 512) bmp.setPixel(x, y, if (bitMatrix[x, y]) Color.BLACK else Color.WHITE)
+                runOnUiThread { imageView.setImageBitmap(bmp) }
+            } catch (e: Exception) { runOnUiThread { toast("Lỗi tạo QR: ${e.message}") } }
+        }.start()
+        val addressView = TextView(this).apply {
+            text = address
+            textSize = 13f
+            gravity = Gravity.CENTER
+            setTextIsSelectable(true)
+            setPadding(0, 10, 0, 20)
+        }
+        val copyBtn = Button(this).apply { text = "Copy địa chỉ" }
+        copyBtn.setOnClickListener {
+            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            cm.setPrimaryClip(ClipData.newPlainText("btc_address", address))
+            toast("Đã copy - sẽ tự xóa sau 30 giây")
+            handler.postDelayed({ try { cm.clearPrimaryClip() } catch (_: Exception) {} }, 30000)
+        }
+        layout.addView(imageView)
+        layout.addView(addressView)
+        layout.addView(copyBtn)
+        AlertDialog.Builder(this).setTitle("Nhận Bitcoin").setView(layout).setPositiveButton("Đóng", null).show()
+    }
+
     private fun showSendDialog() {
         if (isSyncing) {
             toast("Đang cập nhật SPV, vui lòng đợi")
@@ -1292,7 +1325,6 @@ class MainActivity : AppCompatActivity() {
         dialog.show()
     }
 
-    // ====================== CONFIRM SEND (CÓ CẢNH BÁO CHẾ ĐỘ API) ======================
     private fun confirmSend(to: String, amt: Double, feeRate: Int, estFee: Double, isApiMode: Boolean = false) {
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -1387,40 +1419,6 @@ class MainActivity : AppCompatActivity() {
             }
             .setNegativeButton("Hủy", null)
             .show()
-    }
-
-    private fun showReceiveDialog() {
-        val address = walletManager.getAddress()
-        if (address.isEmpty()) { toast("Ví chưa sẵn sàng"); return }
-        val layout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; setPadding(40) }
-        val imageView = ImageView(this).apply { layoutParams = LinearLayout.LayoutParams(512, 512).apply { bottomMargin = 20 } }
-        Thread {
-            try {
-                val writer = QRCodeWriter()
-                val bitMatrix = writer.encode(address, BarcodeFormat.QR_CODE, 512, 512)
-                val bmp = Bitmap.createBitmap(512, 512, Bitmap.Config.RGB_565)
-                for (x in 0 until 512) for (y in 0 until 512) bmp.setPixel(x, y, if (bitMatrix[x, y]) Color.BLACK else Color.WHITE)
-                runOnUiThread { imageView.setImageBitmap(bmp) }
-            } catch (e: Exception) { runOnUiThread { toast("Lỗi tạo QR: ${e.message}") } }
-        }.start()
-        val addressView = TextView(this).apply {
-            text = address
-            textSize = 13f
-            gravity = Gravity.CENTER
-            setTextIsSelectable(true)
-            setPadding(0, 10, 0, 20)
-        }
-        val copyBtn = Button(this).apply { text = "Copy địa chỉ" }
-        copyBtn.setOnClickListener {
-            val cm = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            cm.setPrimaryClip(ClipData.newPlainText("btc_address", address))
-            toast("Đã copy - sẽ tự xóa sau 30 giây")
-            handler.postDelayed({ try { cm.clearPrimaryClip() } catch (_: Exception) {} }, 30000)
-        }
-        layout.addView(imageView)
-        layout.addView(addressView)
-        layout.addView(copyBtn)
-        AlertDialog.Builder(this).setTitle("Nhận Bitcoin").setView(layout).setPositiveButton("Đóng", null).show()
     }
 
     private fun showSettings() {
