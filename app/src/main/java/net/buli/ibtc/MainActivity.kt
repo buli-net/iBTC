@@ -59,13 +59,16 @@ class MainActivity : AppCompatActivity() {
     private var pendingAddressInput: EditText? = null
     private var viewsReady = false
 
-    // Sparkline nhỏ
     private lateinit var sparkline: LineChart
 
     private val qrScanLauncher = registerForActivityResult(ScanContract()) { result ->
-        result.contents?.let { addr ->
-            pendingAddressInput?.setText(addr)
-            toast("Đã quét: ${addr.take(10)}...")
+        result.contents?.let { raw ->
+            val cleanAddress = raw
+                .removePrefix("bitcoin:")
+                .substringBefore("?")
+                .substringBefore("&")
+            pendingAddressInput?.setText(cleanAddress)
+            toast("Đã quét: ${cleanAddress.take(10)}...")
         }
     }
 
@@ -96,6 +99,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        
         if (viewsReady) {
             SyncService.getInstance()?.setProgressCallback { pct, txt ->
                 runOnUiThread {
@@ -106,14 +110,17 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
-        try {
-            if (walletManager.getActiveId() != null || walletManager.hasWallets()) {
-                showUnlockDialog()
-            } else {
+        
+        if (walletManager.isLocked()) {
+            try {
+                if (walletManager.getActiveId() != null || walletManager.hasWallets()) {
+                    showUnlockDialog()
+                } else {
+                    showWelcome()
+                }
+            } catch (_: Exception) {
                 showWelcome()
             }
-        } catch (_: Exception) {
-            showWelcome()
         }
     }
 
@@ -121,7 +128,6 @@ class MainActivity : AppCompatActivity() {
         handler.removeCallbacksAndMessages(null)
         try { screenReceiver?.let { unregisterReceiver(it) } } catch (_:Exception) {}
         try { walletManager.stop() } catch (_: Exception) {}
-        walletManager.lock()
         super.onDestroy()
     }
 
@@ -148,6 +154,16 @@ class MainActivity : AppCompatActivity() {
 
     private fun refreshWalletFromSPV() {
         if (isSyncing) return
+        
+        if (!walletManager.isWalletSynced()) {
+            runOnUiThread {
+                if (viewsReady) {
+                    spvStatusText.text = "SPV: Đang đồng bộ blockchain..."
+                }
+            }
+            return
+        }
+        
         isSyncing = true
         runOnUiThread {
             if (viewsReady) {
@@ -385,7 +401,6 @@ class MainActivity : AppCompatActivity() {
         statBars[key] = pb
     }
 
-    // ================= SPARKLINE NHỎ =================
     private fun setupSparkline() {
         sparkline = LineChart(this).apply {
             layoutParams = LinearLayout.LayoutParams(dpToPx(120), dpToPx(40))
@@ -409,13 +424,12 @@ class MainActivity : AppCompatActivity() {
         val entries = closePrices.mapIndexed { index, price -> Entry(index.toFloat(), price) }
         val dataSet = LineDataSet(entries, "")
 
-        // Xác định màu dựa trên xu hướng (giá cuối so với giá đầu)
         val firstPrice = closePrices.first()
         val lastPrice = closePrices.last()
         val trendColor = when {
-            lastPrice > firstPrice -> Color.parseColor("#00C853")   // xanh
-            lastPrice < firstPrice -> Color.parseColor("#D50000")   // đỏ
-            else -> Color.parseColor("#F7931A")                    // cam (bằng giá)
+            lastPrice > firstPrice -> Color.parseColor("#00C853")
+            lastPrice < firstPrice -> Color.parseColor("#D50000")
+            else -> Color.parseColor("#F7931A")
         }
 
         dataSet.apply {
@@ -444,7 +458,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun dpToPx(dp: Int): Int = (dp * resources.displayMetrics.density).toInt()
-    // =============================================
 
     private fun showWelcome() {
         rootLayout.removeAllViews()
@@ -642,7 +655,6 @@ class MainActivity : AppCompatActivity() {
             setTextColor(mainColor)
         }
 
-        // Hàng chứa số dư BTC và sparkline
         val balanceRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
@@ -981,7 +993,7 @@ class MainActivity : AppCompatActivity() {
                     rFast.text = "Nhanh (${feeRates.fast} sat/vB) ~ $${"%.2f".format(walletManager.estimateFee(to, amt, feeRates.fast) * priceUsd)}"
                     rCustom.text = "Tùy chỉnh (${feeRate} sat/vB) ~ $${"%.2f".format(estFee * priceUsd)}"
 
-                    if (currentBalance <= total) {
+                    if (currentBalance < total) {
                         btn.isEnabled = false
                         warningTv.text = "⚠️ Số dư không đủ (cần > ${"%.8f".format(total)} BTC)"
                         warningTv.visibility = View.VISIBLE
@@ -1082,10 +1094,17 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton("Xác nhận") { _, _ ->
                 val pass = passInput.text.toString()
                 val id = walletManager.getActiveId() ?: return@setPositiveButton
-                if (!walletManager.unlock(id, pass)) {
+                
+                if (pass.isEmpty()) {
+                    toast("Nhập mật khẩu")
+                    return@setPositiveButton
+                }
+                
+                if (!walletManager.checkPassword(pass)) {
                     toast("Sai mật khẩu")
                     return@setPositiveButton
                 }
+                
                 val delayLayout = LinearLayout(this).apply {
                     orientation = LinearLayout.VERTICAL
                     setPadding(40,30,40,30)
@@ -1174,7 +1193,7 @@ class MainActivity : AppCompatActivity() {
             .setView(pass)
             .setPositiveButton("Xem") { _, _ ->
                 val id = walletManager.getActiveId()?: return@setPositiveButton
-                if (walletManager.unlock(id, pass.text.toString())) {
+                if (walletManager.checkPassword(pass.text.toString())) {
                     val seed = walletManager.getSeed()
                     val tv = TextView(this).apply {
                         text = seed
@@ -1267,7 +1286,7 @@ class MainActivity : AppCompatActivity() {
             .setView(pass)
             .setPositiveButton("XÓA") { _, _ ->
                 val id = walletManager.getActiveId()?: return@setPositiveButton
-                if (walletManager.unlock(id, pass.text.toString())) {
+                if (walletManager.checkPassword(pass.text.toString())) {
                     walletManager.delete(id)
                     showWelcome()
                     toast("Đã xóa")
