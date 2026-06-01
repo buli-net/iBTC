@@ -12,12 +12,19 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import org.bitcoinj.core.Context as BtcContext
+import org.bitcoinj.core.Peer
+import org.bitcoinj.core.PeerAddress
 import org.bitcoinj.kits.WalletAppKit
 import org.bitcoinj.net.discovery.DnsDiscovery
+import org.bitcoinj.net.discovery.PeerDiscovery
 import org.bitcoinj.params.MainNetParams
+import org.bitcoinj.utils.DaemonThreadFactory
 import org.bitcoinj.wallet.DeterministicSeed
 import org.bitcoinj.wallet.Wallet
 import java.io.File
+import java.net.InetSocketAddress
+import java.util.Date
+import java.util.concurrent.TimeUnit
 
 class SyncService : Service() {
 
@@ -31,18 +38,13 @@ class SyncService : Service() {
     @Volatile private var kit: WalletAppKit? = null
     private lateinit var prefs: SharedPreferences
 
+    // Cờ để kiểm soát engine
     @Volatile private var isEngineRunning = false
     private var engineThread: Thread? = null
 
-    // Freeze detection
-    @Volatile private var lastPeerHeight = 0
-    @Volatile private var lastWalletHeight = 0
-    @Volatile private var lastActivityTime = 0L
-    @Volatile private var lastRecoveryTime = 0L
-    @Volatile private var isRecovering = false
-    private val discoverySet = mutableSetOf<String>()
-    @Volatile private var lastUiUpdate = 0L
-    @Volatile private var lastSentPercent = -1
+    // Biến cho progress tracker
+    private var lastPercent = -1
+    private var lastUpdateTime = 0L
 
     companion object {
         private var instance: SyncService? = null
@@ -53,30 +55,41 @@ class SyncService : Service() {
         super.onCreate()
         instance = this
         prefs = getSharedPreferences("sync_state", Context.MODE_PRIVATE)
+        
+        // Khôi phục trạng thái trước đó
         isSynced = prefs.getBoolean("is_synced", false)
         lastProgress = prefs.getInt("last_progress", 0)
         lastMessage = prefs.getString("last_message", "Đang khởi động...") ?: "Đang khởi động..."
-        updateNotification(lastMessage)
-        progressCallback?.invoke(lastProgress, lastMessage)
-
+        
+        // Tạo notification channel
         createNotificationChannel()
+        
+        // Start foreground service
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(NOTIFICATION_ID, buildNotification(lastMessage),
                 android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         } else {
             startForeground(NOTIFICATION_ID, buildNotification(lastMessage))
         }
+        
+        updateNotification(lastMessage)
+        progressCallback?.invoke(lastProgress, lastMessage)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val seedPhrase = intent?.getStringExtra("seed_phrase")
         val walletId = intent?.getStringExtra("wallet_id") ?: "default_wallet"
         currentWalletId = walletId
+        
+        // Nếu đã có wallet đang chạy, chỉ cần update callback
         if (kit != null && kit?.isRunning == true && kit?.wallet() != null) {
             setProgressCallback(progressCallback)
             return START_NOT_STICKY
         }
+        
         if (seedPhrase.isNullOrEmpty()) return START_NOT_STICKY
+        
+        // Bắt đầu sync
         startBitcoinSync(walletId, seedPhrase)
         return START_NOT_STICKY
     }
@@ -108,86 +121,154 @@ class SyncService : Service() {
     }
 
     private fun saveProgress(progress: Int, message: String) {
-        lastProgress = progress
+        val validProgress = progress.coerceIn(0, 100)
+        lastProgress = validProgress
         lastMessage = message
-        prefs.edit().putInt("last_progress", progress).putString("last_message", message).apply()
-        progressCallback?.invoke(progress, message)
+        prefs.edit()
+            .putInt("last_progress", validProgress)
+            .putString("last_message", message)
+            .putBoolean("is_synced", validProgress >= 99)
+            .apply()
+        
+        if (validProgress >= 99 && !isSynced) {
+            isSynced = true
+        }
+        
+        progressCallback?.invoke(validProgress, message)
         updateNotification(message)
     }
 
-    private fun getBestChainHeight(kitRef: WalletAppKit): Int {
-        return kitRef.peerGroup()?.mostCommonChainHeight ?: kitRef.chain()?.chainHead?.height ?: 0
-    }
-
-    private fun isFrozen(peerHeight: Int, walletHeight: Int): Boolean {
-        val now = System.currentTimeMillis()
-        if (peerHeight > lastPeerHeight || walletHeight > lastWalletHeight) {
-            lastPeerHeight = peerHeight
-            lastWalletHeight = walletHeight
-            lastActivityTime = now
-            return false
-        }
-        return (now - lastActivityTime) > 60000
-    }
-
-    private fun rotatePeers(kitRef: WalletAppKit) {
-        try {
-            val peerGroup = kitRef.peerGroup() ?: return
-            if (peerGroup.connectedPeers.size < 2) {
-                val discovery = DnsDiscovery(MainNetParams.get())
-                if (!discoverySet.contains("dns")) {
-                    peerGroup.addPeerDiscovery(discovery)
-                    discoverySet.add("dns")
-                    saveProgress(lastProgress, "Added peer discovery")
+    /**
+     * Progress tracker theo dõi tiến độ đồng bộ realtime
+     */
+    inner class BitcoinDownloadProgressTracker : org.bitcoinj.utils.DownloadProgressTracker() {
+        override fun progress(pct: Double, blocksSoFar: Int, date: Date, speedKbps: Double) {
+            val percent = (pct * 100).toInt().coerceIn(0, 100)
+            val now = System.currentTimeMillis()
+            
+            // Giới hạn tần suất cập nhật UI (mỗi 1 giây)
+            if (percent != lastPercent || now - lastUpdateTime > 1000) {
+                lastPercent = percent
+                lastUpdateTime = now
+                
+                val status = when {
+                    percent >= 100 -> "Đã đồng bộ blockchain"
+                    percent >= 99 -> "Hoàn thiện đồng bộ..."
+                    else -> "Đồng bộ blockchain: ${percent}%"
                 }
+                saveProgress(percent, status)
             }
-        } catch (e: Exception) {
-            saveProgress(lastProgress, "Peer rotate error: ${e.message}")
+        }
+        
+        override fun doneDownload() {
+            saveProgress(100, "Đã đồng bộ blockchain")
+            isSynced = true
+        }
+        
+        override fun startDownload(blocks: Int) {
+            saveProgress(0, "Bắt đầu đồng bộ blockchain (${blocks} blocks)...")
         }
     }
 
-    private fun smartRecovery(kitRef: WalletAppKit) {
-        val now = System.currentTimeMillis()
-        if (now - lastRecoveryTime < 60000 || isRecovering) return
-        isRecovering = true
-        try {
-            val peerGroup = kitRef.peerGroup() ?: return
-            val wallet = kitRef.wallet() ?: return
-            val peers = peerGroup.connectedPeers.size
-            val frozen = isFrozen(getBestChainHeight(kitRef), wallet.lastBlockSeenHeight)
-            if (peers == 0 || frozen) {
-                lastRecoveryTime = now
-                if (peers == 0) {
-                    val discovery = DnsDiscovery(MainNetParams.get())
-                    val key = "dns_recovery_${System.currentTimeMillis()}"
-                    if (!discoverySet.contains(key)) {
-                        peerGroup.addPeerDiscovery(discovery)
-                        discoverySet.add(key)
-                        saveProgress(lastProgress, "Recovery: added new peer discovery")
-                    }
+    /**
+     * Peer discovery chỉ lấy IPv4, bỏ qua IPv6 để tránh lỗi kết nối
+     */
+    class IPv4OnlyDiscovery(params: org.bitcoinj.core.NetworkParameters) : PeerDiscovery {
+        private val dnsDiscovery = DnsDiscovery(params)
+        
+        override fun getPeers(services: Long, timeoutMillis: Long, maxConnections: Int): Array<PeerAddress> {
+            return try {
+                val allPeers = dnsDiscovery.getPeers(services, timeoutMillis, maxConnections)
+                // Lọc chỉ giữ lại IPv4 (không chứa dấu ":")
+                allPeers.filter { peerAddr ->
+                    !peerAddr.addr.hostAddress.contains(":")
+                }.toTypedArray()
+            } catch (e: Exception) {
+                emptyArray()
+            }
+        }
+        
+        override fun shutdown() {
+            dnsDiscovery.shutdown()
+        }
+    }
+
+    private fun startBitcoinSync(walletId: String, seedPhrase: String) {
+        Thread {
+            try {
+                isSynced = false
+                saveProgress(0, "Khởi tạo ví...")
+                prefs.edit().putBoolean("is_synced", false).apply()
+                
+                // Khởi tạo BitcoinJ context
+                val params = MainNetParams.get()
+                BtcContext.propagate(BtcContext(params))
+                
+                // Tạo thư mục lưu wallet
+                val dir = File(filesDir, "spv_wallets")
+                if (!dir.exists()) dir.mkdirs()
+                
+                // Dừng kit cũ nếu có
+                kit?.let { old ->
+                    try {
+                        old.stopAsync()
+                        old.awaitTerminated()
+                    } catch (_: Exception) {}
                 }
-                if (frozen) saveProgress(lastProgress, "Sync frozen, waiting for network...")
+                kit = null
+                isEngineRunning = false
+                engineThread?.interrupt()
+                
+                // Tạo kit mới với cấu hình SPV
+                val newKit = WalletAppKit(params, dir, walletId).apply {
+                    setBlockingStartup(false)  // QUAN TRỌNG: Cho phép callback hoạt động
+                    setDownloadListener(BitcoinDownloadProgressTracker())
+                    setAutoStop(false)  // Không tự động stop
+                    setUserAgent("iBTC", "1.0")
+                    setConnectTimeoutMillis(10000)  // 10s timeout
+                }
+                
+                // Thay thế peer discovery bằng IPv4-only
+                // newKit.setDiscovery(IPv4OnlyDiscovery(params))
+                
+                // Khôi phục wallet từ seed phrase
+                val words = seedPhrase.trim().split(Regex("\\s+"))
+                if (words.size !in listOf(12, 15, 18, 21, 24)) {
+                    saveProgress(0, "Seed phrase không hợp lệ (cần 12-24 từ)")
+                    return@Thread
+                }
+                
+                val seed = DeterministicSeed(words, null, "", System.currentTimeMillis() / 1000)
+                newKit.restoreWalletFromSeed(seed)
+                
+                // Start wallet
+                saveProgress(0, "Đang kết nối mạng Bitcoin...")
+                newKit.startAsync()
+                newKit.awaitRunning()
+                
+                kit = newKit
+                
+                // Chạy engine giám sát
+                startEngine(newKit)
+                
+                saveProgress(lastProgress, lastMessage)
+                
+            } catch (e: Exception) {
+                e.printStackTrace()
+                saveProgress(lastProgress, "Lỗi: ${e.message?.take(100)}")
+                kit = null
             }
-        } catch (e: Exception) {
-            saveProgress(lastProgress, "Auto recovery error: ${e.message}")
-        } finally {
-            isRecovering = false
-        }
-    }
-
-    private fun shouldUpdateUi(percent: Int): Boolean {
-        val now = System.currentTimeMillis()
-        if (now - lastUiUpdate < 2500) return false
-        if (percent == lastSentPercent) return false
-        lastUiUpdate = now
-        lastSentPercent = percent
-        return true
+        }.start()
     }
 
     private fun startEngine(kitRef: WalletAppKit) {
         if (isEngineRunning) return
         isEngineRunning = true
+        
         engineThread = Thread {
+            var lastChainHeight = 0
+            var sameHeightCount = 0
+            
             while (isEngineRunning) {
                 try {
                     val wallet = kitRef.wallet()
@@ -195,43 +276,32 @@ class SyncService : Service() {
                         Thread.sleep(2000)
                         continue
                     }
+                    
+                    val chain = kitRef.chain()
                     val peerGroup = kitRef.peerGroup()
                     val walletHeight = wallet.lastBlockSeenHeight
-                    val chainHeight = getBestChainHeight(kitRef)
-                    val peerHeight = peerGroup?.mostCommonChainHeight ?: 0
-
-                    if (isFrozen(peerHeight, walletHeight)) smartRecovery(kitRef)
-                    if ((peerGroup?.connectedPeers?.size ?: 0) < 2) rotatePeers(kitRef)
-
-                    val isReallySynced = walletHeight >= chainHeight - 1 && walletHeight > 0
-                    val percent = if (isReallySynced) 100 else {
-                        if (chainHeight <= 0) 0 else {
-                            val raw = (walletHeight.toDouble() / chainHeight) * 100
-                            if (raw > 94) 94 else raw.toInt()
+                    val chainHeight = chain?.chainHead?.height ?: peerGroup?.mostCommonChainHeight ?: 0
+                    
+                    // Kiểm tra xem có bị kẹt không
+                    if (chainHeight > 0 && walletHeight == lastChainHeight && chainHeight == lastChainHeight) {
+                        sameHeightCount++
+                        if (sameHeightCount > 6) {  // Kẹt quá 30s
+                            saveProgress(lastProgress, "Đang chờ mạng...")
+                            sameHeightCount = 0
                         }
+                    } else {
+                        sameHeightCount = 0
+                        lastChainHeight = chainHeight
                     }
-
-                    if (isReallySynced && !isSynced) {
-                        isSynced = true
-                        prefs.edit().putBoolean("is_synced", true).apply()
-                        if (shouldUpdateUi(100)) saveProgress(100, "Đã đồng bộ blockchain")
-                        try { wallet.saveToFile(File(filesDir, "wallet_$currentWalletId")) } catch (_: Exception) {}
-                    } else if (!isReallySynced) {
-                        val statusText = if (chainHeight == 0) "Đang kết nối mạng..." else "Đồng bộ blockchain: $percent%"
-                        if (shouldUpdateUi(percent)) saveProgress(percent, statusText)
-                    } else if (isReallySynced && !isSynced) {
-                        if (shouldUpdateUi(100)) {
-                            isSynced = true
-                            prefs.edit().putBoolean("is_synced", true).apply()
-                            saveProgress(100, "Đã đồng bộ blockchain")
-                        }
+                    
+                    // Kiểm tra kết nối peer
+                    val connectedPeers = peerGroup?.connectedPeers?.size ?: 0
+                    if (connectedPeers == 0) {
+                        saveProgress(lastProgress, "Đang tìm peer...")
                     }
-
-                    val sleepTime = when (peerGroup?.connectedPeers?.size ?: 0) {
-                        0 -> 2000L
-                        else -> if (isReallySynced) 8000L else 5000L
-                    }
-                    Thread.sleep(sleepTime)
+                    
+                    Thread.sleep(5000)
+                    
                 } catch (e: Exception) {
                     e.printStackTrace()
                     Thread.sleep(5000)
@@ -240,56 +310,33 @@ class SyncService : Service() {
         }.apply { start() }
     }
 
-    private fun startBitcoinSync(walletId: String, seedPhrase: String) {
-        Thread {
-            try {
-                isSynced = false
-                prefs.edit().putBoolean("is_synced", false).apply()
-                val params = MainNetParams.get()
-                BtcContext.propagate(BtcContext(params))
-                val dir = File(filesDir, "spv_wallets")
-                if (!dir.exists()) dir.mkdirs()
-                kit?.let { old ->
-                    try { old.stopAsync(); old.awaitTerminated() } catch (_: Exception) {}
-                }
-                kit = null
-                isEngineRunning = false
-                engineThread?.interrupt()
-                val newKit = WalletAppKit(params, dir, walletId).apply { setBlockingStartup(false) }
-                val words = seedPhrase.trim().split(Regex("\\s+"))
-                val seed = DeterministicSeed(words, null, "", System.currentTimeMillis() / 1000)
-                newKit.restoreWalletFromSeed(seed)
-                newKit.startAsync()
-                newKit.awaitRunning()
-                kit = newKit
-                discoverySet.clear()
-                lastPeerHeight = 0; lastWalletHeight = 0; lastActivityTime = System.currentTimeMillis()
-                lastRecoveryTime = 0L; lastUiUpdate = 0L; lastSentPercent = -1
-                startEngine(newKit)
-                saveProgress(lastProgress, lastMessage)
-            } catch (e: Exception) {
-                saveProgress(lastProgress, "Lỗi sync: ${e.message}")
-                kit = null
-            }
-        }.start()
+    fun refreshProgress() {
+        progressCallback?.invoke(lastProgress, lastMessage)
     }
-
-    fun refreshProgress() { progressCallback?.invoke(lastProgress, lastMessage) }
-    fun setProgressCallback(callback: ((Int, String) -> Unit)?) { progressCallback = callback; callback?.invoke(lastProgress, lastMessage) }
+    
+    fun setProgressCallback(callback: ((Int, String) -> Unit)?) {
+        progressCallback = callback
+        callback?.invoke(lastProgress, lastMessage)
+    }
+    
     fun getWallet(): Wallet? = try { kit?.wallet() } catch (_: Exception) { null }
     fun getPeerGroup() = try { kit?.peerGroup() } catch (_: Exception) { null }
     fun getWalletId(): String = currentWalletId
     fun isWalletSynced(): Boolean = isSynced
     fun getBlocksSoFar(): Int = kit?.wallet()?.lastBlockSeenHeight ?: 0
-    fun getTotalBlocks(): Int { val k = kit ?: return 0; return getBestChainHeight(k) }
+    fun getTotalBlocks(): Int = try { kit?.chain()?.chainHead?.height ?: 0 } catch (_: Exception) { 0 }
 
     override fun onDestroy() {
         super.onDestroy()
         isEngineRunning = false
         engineThread?.interrupt()
-        try { kit?.stopAsync(); kit?.awaitTerminated() } catch (_: Exception) {}
+        try {
+            kit?.stopAsync()
+            kit?.awaitTerminated(5, TimeUnit.SECONDS)
+        } catch (_: Exception) {}
         kit = null
         instance = null
     }
+    
     override fun onBind(intent: Intent?): IBinder? = null
 }
