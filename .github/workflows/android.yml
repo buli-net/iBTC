@@ -1,4 +1,4 @@
-name: Android APK
+name: Build SBW with Java 17
 
 on:
   workflow_dispatch:
@@ -6,43 +6,24 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-      - name: Install deps
-        run: npm install
-      - name: Setup Java
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
-          distribution: temurin
-          java-version: 17
-      - name: Setup Android SDK
+          distribution: 'temurin'
+          java-version: '17'
+      - name: Set up Android SDK
         uses: android-actions/setup-android@v3
-      - name: Decode Keystore
-        env:
-          KEYSTORE_FILE_HEX: ${{ secrets.KEYSTORE_FILE_HEX }}
-        run: |
-          echo "$KEYSTORE_FILE_HEX" | tr -d '\n\r ' | base64 -d > keystore.jks
-      - name: Build unsigned APK
-        run: |
-          cd android
-          chmod +x gradlew
-          ./gradlew assembleRelease
-      - name: Align & Sign
-        run: |
-          UNSIGNED=android/app/build/outputs/apk/release/app-release-unsigned.apk
-          ALIGNED=android/app/build/outputs/apk/release/app-release-aligned.apk
-          SIGNED=android/app/build/outputs/apk/release/app-release-signed.apk
-          zipalign -v -p 4 "$UNSIGNED" "$ALIGNED"
-          apksigner sign --ks keystore.jks \
-            --ks-pass pass:${{ secrets.KEYSTORE_PASSWORD }} \
-            --key-pass pass:${{ secrets.KEY_PASSWORD }} \
-            --out "$SIGNED" "$ALIGNED"
-          apksigner verify "$SIGNED"
-      - uses: actions/upload-artifact@v4
         with:
-          name: bluewallet-signed-apk
-          path: android/app/build/outputs/apk/release/app-release-signed.apk
+          cmdline-tools-version: 9477386
+          accept-android-sdk-licenses: true
+      - name: Build Debug APK
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbw-debug
+          path: app/build/outputs/apk/debug/*.apk
