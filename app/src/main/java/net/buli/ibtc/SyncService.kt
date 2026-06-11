@@ -134,6 +134,14 @@ class SyncService : Service() {
                 val dir = File(filesDir, "spv_wallets")
                 if (!dir.exists()) dir.mkdirs()
 
+                // ----- Xóa spvchain lỗi (kích thước < 1MB) -----
+                val spvFile = File(dir, "$walletId.spvchain")
+                if (spvFile.exists() && spvFile.length() < 1024 * 1024) {
+                    try {
+                        spvFile.delete()
+                    } catch (_: Exception) {}
+                }
+
                 try {
                     kit?.stopAsync()
                     kit?.awaitTerminated()
@@ -158,35 +166,45 @@ class SyncService : Service() {
                             val peerGroup = kitRef.peerGroup()
                             val mostCommonHeight = peerGroup?.mostCommonChainHeight ?: chainHeight
                             totalBlocks = max(chainHeight, mostCommonHeight)
-                            if (totalBlocks == 0 && blocksSoFar > 0) {
+                            // ----- Sửa lỗi chia cho 0 -----
+                            if (totalBlocks == 0 && blocksSoFar > 0 && p > 0) {
                                 totalBlocks = (blocksSoFar.toDouble() / (p / 100.0)).toInt()
                             }
                         }
 
+                        // ----- Thay toàn bộ doneDownload() theo gợi ý (chờ tối đa 60 giây) -----
                         override fun doneDownload() {
-                            val wallet = kitRef.wallet()
-                            val peerGroup = kitRef.peerGroup()
-                            val isReallySynced = wallet != null &&
-                                    peerGroup != null &&
-                                    wallet.lastBlockSeenHeight >= peerGroup.mostCommonChainHeight &&
-                                    peerGroup.connectedPeers.isNotEmpty()
-                            if (isReallySynced) {
-                                isSynced = true
-                                prefs.edit().putBoolean("is_synced", true).apply()
-                                saveProgress(100, "Đã đồng bộ blockchain")
-                                updateNotification(lastMessage)
-                                progressCallback?.invoke(lastProgress, lastMessage)
-                            } else {
+                            Thread {
+                                repeat(60) { // chờ tối đa 60 giây (mỗi lần 1s)
+                                    try {
+                                        val wallet = kitRef.wallet()
+                                        val peerGroup = kitRef.peerGroup()
+                                        val walletHeight = wallet?.lastBlockSeenHeight ?: 0
+                                        val networkHeight = peerGroup?.mostCommonChainHeight ?: walletHeight
+                                        if (networkHeight > 0 && walletHeight >= (networkHeight - 2)) {
+                                            isSynced = true
+                                            prefs.edit().putBoolean("is_synced", true).apply()
+                                            saveProgress(100, "Đã đồng bộ blockchain")
+                                            updateNotification(lastMessage)
+                                            progressCallback?.invoke(lastProgress, lastMessage)
+                                            return@Thread
+                                        }
+                                        Thread.sleep(1000)
+                                    } catch (_: Exception) {}
+                                }
+                                // Sau 60 giây vẫn chưa đạt, đặt về 99% và tiếp tục
                                 saveProgress(99, "Đang hoàn thiện đồng bộ...")
                                 progressCallback?.invoke(lastProgress, lastMessage)
-                                val chainHeight = kitRef.chain()?.chainHead?.height ?: 0
-                                val mostCommonHeight = peerGroup?.mostCommonChainHeight ?: chainHeight
-                                totalBlocks = max(chainHeight, mostCommonHeight)
-                            }
+                            }.start()
                         }
                     })
                     startAsync()
                     awaitRunning()
+
+                    // ----- Tăng số kết nối peer -----
+                    try {
+                        peerGroup()?.setMaxConnections(8)
+                    } catch (_: Exception) {}
                 }
                 kit = newKit
                 progressCallback?.invoke(lastProgress, lastMessage)
