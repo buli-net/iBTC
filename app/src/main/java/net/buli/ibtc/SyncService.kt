@@ -12,10 +12,12 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.google.common.util.concurrent.Service as GuavaService
-import org.bitcoinj.core.Context as BtcContext
+import org.bitcoinj.core.NetworkParameters
 import org.bitcoinj.core.listeners.DownloadProgressTracker
 import org.bitcoinj.kits.WalletAppKit
 import org.bitcoinj.params.MainNetParams
+import org.bitcoinj.params.RegTestParams
+import org.bitcoinj.script.Script
 import org.bitcoinj.utils.Threading
 import org.bitcoinj.wallet.DeterministicSeed
 import org.bitcoinj.wallet.Wallet
@@ -44,7 +46,7 @@ class SyncService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) startForeground(NOTIFICATION_ID, buildNotification(lastMessage), android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC) else startForeground(NOTIFICATION_ID, buildNotification(lastMessage))
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+    override fun onStartCommand(intent: Intent?, f: Int, s: Int): Int {
         val seed = intent?.getStringExtra("seed_phrase")
         val walletId = intent?.getStringExtra("wallet_id") ?: "default_wallet"
         currentWalletId = walletId
@@ -59,35 +61,52 @@ class SyncService : Service() {
             getSystemService(NotificationManager::class.java).createNotificationChannel(ch)
         }
     }
-    private fun buildNotification(msg: String): Notification {
+    private fun buildNotification(m: String): Notification {
         val pi = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        return NotificationCompat.Builder(this, CHANNEL_ID).setContentTitle("iBTC Wallet").setContentText(msg).setSmallIcon(android.R.drawable.stat_sys_download).setContentIntent(pi).setOngoing(true).build()
+        return NotificationCompat.Builder(this, CHANNEL_ID).setContentTitle("iBTC Wallet").setContentText(m).setSmallIcon(android.R.drawable.stat_sys_download).setContentIntent(pi).setOngoing(true).build()
     }
-    private fun updateNotification(msg: String) { getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification(msg)) }
+    private fun updateNotification(m: String) { getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification(m)) }
     private fun saveProgress(p: Int, m: String) { lastProgress = p; lastMessage = m; prefs.edit().putInt("last_progress", p).putString("last_message", m).apply(); progressCallback?.invoke(p, m) }
 
+    // Y nguyên WalletApplication.java 0.16.3 bạn gửi
     private fun startWalletAppKit(walletId: String, seedPhrase: String?) {
         Thread {
             try {
-                val params = MainNetParams.get()
-                BtcContext.propagate(BtcContext(params))
+                // this.applicationName = walletId
+                // this.params = MainNetParams.get()
+                // this.preferredOutputScriptType = Script.ScriptType.P2WPKH
+                // this.walletFileName = applicationName.replaceAll(...) + "-" + params.getPaymentProtocolId()
+                val applicationName = "iBTC"
+                val params: NetworkParameters = MainNetParams.get()
+                val preferredOutputScriptType = Script.ScriptType.P2WPKH
+                val walletFileName = walletId + "-" + params.paymentProtocolId
 
-                val appDataDir = File(filesDir, "spv_wallets").apply { if (!exists()) mkdirs() }
+                // File appDataDirectory = AppDataDirectory.get(applicationName).toFile();
+                val appDataDirectory = File(filesDir, "spv_wallets").apply { if (!exists()) mkdirs() }
 
-                // Y nguyên WalletApplication.java bạn gửi
-                walletAppKit = object : WalletAppKit(params, appDataDir, walletId) {
+                // setupWalletKit(null) - y nguyên
+                val seed: DeterministicSeed? = if (!seedPhrase.isNullOrBlank()) DeterministicSeed(seedPhrase, null, "", 0L) else null
+
+                Threading.USER_THREAD = Threading.SAME_THREAD
+
+                walletAppKit = object : WalletAppKit(params, preferredOutputScriptType, null, appDataDirectory, walletFileName) {
                     override fun onSetupCompleted() {
-                        // gốc chỉ gọi controller::onBitcoinSetup, không set synced
-                        saveProgress(0, "Đã kết nối ví, đang tìm peers...")
-                        updateNotification(lastMessage)
+                        // Platform.runLater(controller::onBitcoinSetup); - gốc chỉ init UI, không set synced
+                        saveProgress(lastProgress, "Đã khởi tạo ví, đang kết nối...")
                     }
                 }
 
+                // if (params == RegTestParams.get()) walletAppKit.connectToLocalHost();
+                if (params === RegTestParams.get()) {
+                    walletAppKit!!.connectToLocalHost()
+                }
+
+                // y nguyên: setDownloadListener(controller.progressBarUpdater()).setBlockingStartup(false).setUserAgent(applicationName, "1.0");
                 val downloadListener = object : DownloadProgressTracker() {
                     override fun progress(pct: Double, blocksSoFar: Int, date: Date?) {
                         super.progress(pct, blocksSoFar, date)
                         val p = pct.toInt().coerceIn(0, 99)
-                        saveProgress(p, "Đồng bộ blockchain: $p% ($blocksSoFar blocks)")
+                        saveProgress(p, "Đồng bộ blockchain: $p%")
                         updateNotification(lastMessage)
                     }
                     override fun doneDownload() {
@@ -100,34 +119,34 @@ class SyncService : Service() {
 
                 walletAppKit!!.setDownloadListener(downloadListener)
                     .setBlockingStartup(false)
-                    .setUserAgent("iBTC", "1.0")
+                    .setUserAgent(applicationName, "1.0")
 
-                if (!seedPhrase.isNullOrBlank()) {
-                    val seed = DeterministicSeed(seedPhrase, null, "", 0L)
-                    walletAppKit!!.restoreWalletFromSeed(seed)
-                }
+                // if (seed != null) walletAppKit.restoreWalletFromSeed(seed);
+                if (seed != null) walletAppKit!!.restoreWalletFromSeed(seed)
 
+                // if (walletAppKit.isChainFileLocked()) { informationalAlert...; return; }
                 if (walletAppKit!!.isChainFileLocked) {
-                    saveProgress(lastProgress, "Ví đang chạy ở tiến trình khác")
+                    saveProgress(lastProgress, "Already running")
                     return@Thread
                 }
 
+                // walletAppKit.addListener(... failed -> crashAlert ...)
                 walletAppKit!!.addListener(object : GuavaService.Listener() {
                     override fun failed(from: GuavaService.State, failure: Throwable) {
                         saveProgress(lastProgress, "Lỗi sync: ${failure.message}")
-                        updateNotification(lastMessage)
                     }
                 }, Threading.SAME_THREAD)
 
+                // walletAppKit.startAsync();
                 walletAppKit!!.startAsync()
 
             } catch (e: Exception) {
                 saveProgress(lastProgress, "Lỗi sync: ${e.javaClass.simpleName}: ${e.message}")
-                updateNotification(lastMessage)
             }
         }.start()
     }
 
+    // y nguyên stop()
     override fun onDestroy() {
         try { walletAppKit?.stopAsync(); walletAppKit?.awaitTerminated() } catch (_: Exception) {}
         super.onDestroy()
@@ -139,7 +158,5 @@ class SyncService : Service() {
     fun getPeerGroup() = try { walletAppKit?.peerGroup() } catch (_: Exception) { null }
     fun getWalletId() = currentWalletId
     fun isWalletSynced() = isSynced
-    fun getBlocksSoFar() = try { walletAppKit?.chain()?.chainHead?.height ?: 0 } catch (_: Exception) { 0 }
-    fun getTotalBlocks() = try { walletAppKit?.peerGroup()?.mostCommonChainHeight ?: 0 } catch (_: Exception) { 0 }
-    override fun onBind(intent: Intent?): IBinder? = null
+    override fun onBind(i: Intent?): IBinder? = null
 }
