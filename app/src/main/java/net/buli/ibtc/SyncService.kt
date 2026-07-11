@@ -11,13 +11,10 @@ import android.content.SharedPreferences
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
-import org.bitcoinj.core.BlockChain
 import org.bitcoinj.core.Context as BtcContext
-import org.bitcoinj.core.PeerGroup
 import org.bitcoinj.core.listeners.DownloadProgressTracker
-import org.bitcoinj.net.discovery.DnsDiscovery
+import org.bitcoinj.kits.WalletAppKit
 import org.bitcoinj.params.MainNetParams
-import org.bitcoinj.store.SPVBlockStore
 import org.bitcoinj.wallet.Wallet
 import java.io.File
 
@@ -30,12 +27,8 @@ class SyncService : Service() {
     @Volatile private var isSynced = false
     private var lastProgress = 0
     private var lastMessage = "Đang khởi động..."
+    private var kit: WalletAppKit? = null
     private lateinit var prefs: SharedPreferences
-
-    private var peerGroup: PeerGroup? = null
-    private var blockChain: BlockChain? = null
-    private var blockStore: SPVBlockStore? = null
-    private var wallet: Wallet? = null
 
     companion object { private var instance: SyncService? = null; fun getInstance() = instance }
 
@@ -43,14 +36,19 @@ class SyncService : Service() {
         super.onCreate()
         instance = this
         prefs = getSharedPreferences("sync_state", Context.MODE_PRIVATE)
+        lastProgress = prefs.getInt("last_progress", 0)
+        lastMessage = prefs.getString("last_message", "Đang khởi động...") ?: "Đang khởi động..."
         createNotificationChannel()
-        startForeground(NOTIFICATION_ID, buildNotification("Đang khởi động..."), if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC else 0)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) startForeground(NOTIFICATION_ID, buildNotification(lastMessage), android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC) else startForeground(NOTIFICATION_ID, buildNotification(lastMessage))
     }
 
     override fun onStartCommand(intent: Intent?, f: Int, s: Int): Int {
+        val seed = intent?.getStringExtra("seed_phrase")
         val walletId = intent?.getStringExtra("wallet_id") ?: "default_wallet"
         currentWalletId = walletId
-        startSchildbachSync(walletId)
+        if (kit != null && kit?.isRunning == true) { setProgressCallback(progressCallback); return START_NOT_STICKY }
+        if (seed.isNullOrEmpty()) return START_NOT_STICKY
+        startBitcoinSync(walletId)
         return START_NOT_STICKY
     }
 
@@ -67,69 +65,79 @@ class SyncService : Service() {
     private fun updateNotification(m: String) { getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification(m)) }
     private fun saveProgress(p: Int, m: String) { lastProgress = p; lastMessage = m; prefs.edit().putInt("last_progress", p).putString("last_message", m).apply(); progressCallback?.invoke(p, m) }
 
-    // Logic y hệt Schildbach wallet: https://github.com/bitcoin-wallet/bitcoin-wallet/blob/master/wallet/src/de/schildbach/wallet/service/BlockchainService.java
-    private fun startSchildbachSync(walletId: String) {
+    private fun startBitcoinSync(walletId: String) {
         Thread {
             try {
                 val params = MainNetParams.get()
                 BtcContext.propagate(BtcContext(params))
                 val dir = File(filesDir, "spv_wallets").apply { if (!exists()) mkdirs() }
 
-                // 1. Load wallet như Schildbach
-                val walletFile = File(dir, "$walletId.wallet")
-                wallet = if (walletFile.exists()) Wallet.loadFromFile(walletFile) else Wallet.createDeterministic(params, org.bitcoinj.script.Script.ScriptType.P2WPKH)
+                try { kit?.stopAsync()?.awaitTerminated() } catch (e: Exception) {}
+                kit = null
+                isSynced = false
 
-                // 2. SPVBlockStore như Schildbach
-                val chainFile = File(dir, "$walletId.spvchain")
-                blockStore = SPVBlockStore(params, chainFile)
-                blockChain = BlockChain(params, wallet, blockStore)
+                val kit = WalletAppKit(params, dir, walletId).apply {
+                    setBlockingStartup(false)
+                    setAutoSave(true)
+                    setCheckpoints(null) // sync từ block 1 để đọc hết lịch sử ví
 
-                // 3. PeerGroup như Schildbach - đây là chỗ fix 97%
-                val pg = PeerGroup(params, blockChain)
-                pg.addWallet(wallet)
-                pg.setDownloadTxDependencies(0) // Schildbach: không tải tx phụ thuộc
-                pg.setFastCatchupTimeSecs(wallet!!.earliestKeyCreationTime) // Schildbach: fast catchup theo key time
-                pg.addPeerDiscovery(DnsDiscovery(params))
-                pg.maxConnections = 10
-                pg.setStallThreshold(120, 5)
-                pg.setConnectTimeoutMillis(15000)
+                    setDownloadListener(object : DownloadProgressTracker() {
+                        override fun progress(pct: Double, blocksSoFar: Int, date: java.util.Date?) {
+                            super.progress(pct, blocksSoFar, date)
+                            // % thật, không fake
+                            val chainHead = chain()?.chainHead?.height ?: 0
+                            val mostCommon = peerGroup()?.mostCommonChainHeight ?: 0
+                            val p = if (mostCommon > 0) {
+                                // tính thật theo height, không coerce về 99
+                                (chainHead * 100L / mostCommon).toInt()
+                            } else {
+                                pct.toInt()
+                            }
+                            val msg = "Đồng bộ: $chainHead / $mostCommon ($p%)"
+                            saveProgress(p, msg)
+                            updateNotification(msg)
+                        }
 
-                pg.addDownloadProgressListener(object : DownloadProgressTracker() {
-                    override fun progress(pct: Double, blocksSoFar: Int, date: java.util.Date?) {
-                        val chainHead = blockChain?.chainHead?.height ?: 0
-                        val mostCommon = pg.mostCommonChainHeight
-                        val left = if (mostCommon > chainHead) mostCommon - chainHead else 0
-                        // Schildbach không dùng pct thời gian, nó hiện blocks left
-                        val p = if (mostCommon > 0) (chainHead * 100 / mostCommon).coerceIn(0, 99) else pct.toInt().coerceIn(0, 99)
-                        val msg = if (left > 0) "Đang khai thác block #${mostCommon} - còn $left block" else "Đồng bộ blockchain: $p%"
-                        saveProgress(p, msg); updateNotification(msg)
-                    }
-                    override fun doneDownload() {
-                        isSynced = true
-                        saveProgress(100, "Đã đồng bộ blockchain")
-                        updateNotification(lastMessage)
-                    }
-                })
+                        override fun doneDownload() {
+                            super.doneDownload()
+                            // chỉ khi bitcoinj báo xong thật mới set 100
+                            isSynced = true
+                            prefs.edit().putBoolean("is_synced", true).apply()
+                            val chainHead = chain()?.chainHead?.height ?: 0
+                            val mostCommon = peerGroup()?.mostCommonChainHeight ?: chainHead
+                            saveProgress(100, "Đã đồng bộ: $chainHead / $mostCommon (100%)")
+                            updateNotification(lastMessage)
+                        }
+                    })
+                }
 
-                peerGroup = pg
-                pg.startAsync()
-                pg.awaitRunning()
-                pg.downloadBlockChain()
+                kit.startAsync()
+                kit.awaitRunning()
+
+                try {
+                    val pg = kit.peerGroup()
+                    pg?.setFastCatchupTimeSecs(0) // sync full, không cắt ngày
+                    pg?.setDownloadTxDependencies(0)
+                    pg?.setMaxConnections(12)
+                    pg?.setStallThreshold(300, 10)
+                } catch (e: Exception) {}
+
+                this.kit = kit
 
             } catch (e: Exception) {
-                saveProgress(lastProgress, "Lỗi sync: ${e.javaClass.simpleName}: ${e.message}")
+                saveProgress(lastProgress, "Lỗi sync: ${e.toString()}")
             }
         }.start()
     }
 
-    fun setProgressCallback(cb: ((Int, String) -> Unit)?) { progressCallback = cb; cb?.invoke(lastProgress, lastMessage) }
     fun refreshProgress() { progressCallback?.invoke(lastProgress, lastMessage) }
-    fun getWallet() = wallet
-    fun getPeerGroup() = peerGroup
+    fun setProgressCallback(cb: ((Int, String) -> Unit)?) { progressCallback = cb; cb?.invoke(lastProgress, lastMessage) }
+    fun getWallet(): Wallet? = try { kit?.wallet() } catch (e: Exception) { null }
+    fun getPeerGroup() = try { kit?.peerGroup() } catch (e: Exception) { null }
     fun getWalletId() = currentWalletId
     fun isWalletSynced() = isSynced
-    fun getBlocksSoFar() = blockChain?.chainHead?.height ?: 0
-    fun getTotalBlocks() = peerGroup?.mostCommonChainHeight ?: 0
-    override fun onDestroy() { try { peerGroup?.stopAsync()?.awaitTerminated(); blockStore?.close() } catch (e: Exception) {}; super.onDestroy() }
+    fun getBlocksSoFar() = try { kit?.chain()?.chainHead?.height ?: 0 } catch (e: Exception) { 0 }
+    fun getTotalBlocks() = try { kit?.peerGroup()?.mostCommonChainHeight ?: 0 } catch (e: Exception) { 0 }
+    override fun onDestroy() { try { kit?.stopAsync()?.awaitTerminated() } catch (e: Exception) {}; super.onDestroy() }
     override fun onBind(i: Intent?): IBinder? = null
 }
