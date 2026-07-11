@@ -12,13 +12,14 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.google.common.util.concurrent.Service as GuavaService
-import org.bitcoinj.base.ScriptType
 import org.bitcoinj.core.Context as BtcContext
+import org.bitcoinj.core.listeners.DownloadProgressTracker
 import org.bitcoinj.kits.WalletAppKit
 import org.bitcoinj.params.MainNetParams
 import org.bitcoinj.wallet.DeterministicSeed
 import org.bitcoinj.wallet.Wallet
 import java.io.File
+import java.util.Date
 
 class SyncService : Service() {
 
@@ -64,7 +65,6 @@ class SyncService : Service() {
     private fun updateNotification(m: String) { getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification(m)) }
     private fun saveProgress(p: Int, m: String) { lastProgress = p; lastMessage = m; prefs.edit().putInt("last_progress", p).putString("last_message", m).apply(); progressCallback?.invoke(p, m) }
 
-    // Y nguyên WalletApplication.java bạn gửi
     private fun startWalletAppKit(walletId: String, seedPhrase: String?) {
         Thread {
             try {
@@ -72,41 +72,46 @@ class SyncService : Service() {
                 BtcContext.propagate(BtcContext(params))
 
                 val appDataDirectory = File(filesDir, "spv_wallets").apply { if (!exists()) mkdirs() }
-                val walletFileName = walletId // = applicationName.replace... + suffix
+                val walletFileName = walletId
 
-                // setupWalletKit(@Nullable DeterministicSeed seed) - y nguyên
                 walletAppKit = object : WalletAppKit(params, appDataDirectory, walletFileName) {
                     override fun onSetupCompleted() {
-                        // Platform.runLater(controller::onBitcoinSetup) -> Android callback
                         isSynced = true
                         saveProgress(100, "Đã đồng bộ blockchain")
                         updateNotification(lastMessage)
                     }
                 }
 
-                // .setDownloadListener(controller.progressBarUpdater()) -> progressCallback của bạn
-                // .setBlockingStartup(false) -> y nguyên
-                // .setUserAgent(applicationName, "1.0") -> y nguyên
-                walletAppKit!!.setDownloadListener { pct, blocksSoFar, date ->
-                    val p = pct.toInt()
-                    saveProgress(p, "Đồng bộ blockchain: $p%")
-                    updateNotification(lastMessage)
-                }.setBlockingStartup(false)
-                 .setUserAgent("iBTC", "1.0")
+                // Fix lỗi biên dịch 0.16.3: phải dùng DownloadProgressTracker, không dùng lambda
+                val downloadListener = object : DownloadProgressTracker() {
+                    override fun progress(pct: Double, blocksSoFar: Int, date: Date?) {
+                        super.progress(pct, blocksSoFar, date)
+                        val p = pct.toInt()
+                        saveProgress(p, "Đồng bộ blockchain: $p%")
+                        updateNotification(lastMessage)
+                    }
+                    override fun doneDownload() {
+                        super.doneDownload()
+                        isSynced = true
+                        saveProgress(100, "Đã đồng bộ blockchain")
+                        updateNotification(lastMessage)
+                    }
+                }
+
+                walletAppKit!!.setDownloadListener(downloadListener)
+                    .setBlockingStartup(false)
+                    .setUserAgent("iBTC", "1.0")
 
                 if (seedPhrase != null) {
-                    // if (seed != null) walletAppKit.restoreWalletFromSeed(seed) - y nguyên
                     val seed = DeterministicSeed(seedPhrase, null, "", 0L)
                     walletAppKit!!.restoreWalletFromSeed(seed)
                 }
 
-                // if (walletAppKit.isChainFileLocked()) - y nguyên
                 if (walletAppKit!!.isChainFileLocked) {
                     saveProgress(lastProgress, "Already running")
                     return@Thread
                 }
 
-                // walletAppKit.addListener failed -> crashAlert - y nguyên
                 walletAppKit!!.addListener(object : GuavaService.Listener() {
                     override fun failed(from: GuavaService.State, failure: Throwable) {
                         saveProgress(lastProgress, "Lỗi sync: ${failure.message}")
@@ -114,7 +119,6 @@ class SyncService : Service() {
                     }
                 }, org.bitcoinj.utils.Threading.SAME_THREAD)
 
-                // walletAppKit.startAsync() - y nguyên
                 walletAppKit!!.startAsync()
 
             } catch (e: Exception) {
@@ -123,8 +127,6 @@ class SyncService : Service() {
         }.start()
     }
 
-    // stop() - y nguyên WalletApplication.java
-    // walletAppKit.stopAsync(); walletAppKit.awaitTerminated();
     override fun onDestroy() {
         try { walletAppKit?.stopAsync(); walletAppKit?.awaitTerminated() } catch (e: Exception) {}
         super.onDestroy()
